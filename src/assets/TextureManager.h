@@ -1,6 +1,6 @@
 #pragma once
 #include <GLES3/gl32.h>
-#include <tiny_gltf.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -17,19 +17,19 @@ public:
     GLuint white() { return white_ ? white_ : (white_ = solid(255, 255, 255, 255, false)); }
     GLuint flatNormal() { return flat_ ? flat_ : (flat_ = solid(128, 128, 255, 255, false)); }
 
-    // Imagem decodificada pelo tinygltf (8 bits/canal)
-    GLuint fromImage(const tinygltf::Image& img, bool srgb) {
+    // Pixels 8 bits/canal já decodificados (ex.: do tinygltf). comp = 1..4 canais.
+    GLuint fromPixels(const uint8_t* pixels, int width, int height, int comp, bool srgb) {
         GLuint t = 0;
         glGenTextures(1, &t);
         glBindTexture(GL_TEXTURE_2D, t);
-        GLenum fmt = img.component == 4 ? GL_RGBA : img.component == 3 ? GL_RGB : GL_RG;
-        GLenum internal = img.component == 4 ? (srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8)
-                        : img.component == 3 ? (srgb ? GL_SRGB8 : GL_RGB8) : GL_RG8;
+        GLenum fmt = comp == 4 ? GL_RGBA : comp == 3 ? GL_RGB : GL_RG;
+        GLenum internal = comp == 4 ? (srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8)
+                        : comp == 3 ? (srgb ? GL_SRGB8 : GL_RGB8) : GL_RG8;
         int levels = 1;
-        for (int s = std::max(img.width, img.height); s > 1; s >>= 1) ++levels;
+        for (int s = std::max(width, height); s > 1; s >>= 1) ++levels;
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexStorage2D(GL_TEXTURE_2D, levels, internal, img.width, img.height);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, img.width, img.height, fmt, GL_UNSIGNED_BYTE, img.image.data());
+        glTexStorage2D(GL_TEXTURE_2D, levels, internal, width, height);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, fmt, GL_UNSIGNED_BYTE, pixels);
         glGenerateMipmap(GL_TEXTURE_2D);
         setParams();
         return t;

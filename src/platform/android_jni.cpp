@@ -15,6 +15,7 @@ JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeCreate(JNIEnv* env, 
     g_engine = engine_create(dir);  // shaders copiados dos assets para o storage interno antes
     env->ReleaseStringUTFChars(shaderDir, dir);
 }
+JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeLoadDemo(JNIEnv*, jclass) { if (g_engine) engine_load_demo(g_engine); }
 JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeResize(JNIEnv*, jclass, jint w, jint h) { if (g_engine) engine_resize(g_engine, w, h); }
 JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeFrame(JNIEnv*, jclass, jfloat dt) { if (g_engine) engine_frame(g_engine, dt); }
 JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeTouch(JNIEnv* env, jclass, jint action, jintArray ids, jfloatArray xy) {

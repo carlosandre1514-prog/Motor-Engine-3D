@@ -15,6 +15,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # O runner já traz o Android SDK; só garante licenças e componentes (falhas aqui não param o build)
       - name: Preparar SDK/NDK
         run: |
           yes | sdkmanager --licenses > /dev/null || true

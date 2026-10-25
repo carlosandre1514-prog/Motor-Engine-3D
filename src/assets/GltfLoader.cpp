@@ -1,6 +1,5 @@
 #define TINYGLTF_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
-#define STB_IMAGE_IMPLEMENTATION
 #include <tiny_gltf.h>
 #include <cstdio>
 #include <cstring>
@@ -79,7 +78,9 @@ bool loadGltf(const char* path, Renderer& renderer, Scene& scene, LoadedModel& o
         m.metallic = float(pbr.metallicFactor);
         m.emissive_factor = glm::vec3(gm.emissiveFactor[0], gm.emissiveFactor[1], gm.emissiveFactor[2]);
         auto texOf = [&](int ti, bool srgb, GLuint fallback) {
-            return ti >= 0 ? tex.fromImage(model.images[model.textures[ti].source], srgb) : fallback;
+            if (ti < 0) return fallback;
+            const auto& im = model.images[model.textures[ti].source];
+            return tex.fromPixels(im.image.data(), im.width, im.height, im.component, srgb);
         };
         m.albedo = texOf(pbr.baseColorTexture.index, true, tex.white());
         m.normal = texOf(gm.normalTexture.index, false, tex.flatNormal());
