@@ -18,6 +18,7 @@ int     engine_is_playing(Engine*);
 
 // Assets / cena
 int     engine_load_model(Engine*, const char* path);           // .glb/.gltf; retorna id do 1º objeto raiz ou -1
+void    engine_load_demo(Engine*);                              // cubos PBR + chão (teste do renderer)
 int     engine_object_count(Engine*);
 const char* engine_object_name(Engine*, int index);
 
