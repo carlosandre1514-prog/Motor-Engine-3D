@@ -1,5 +1,6 @@
 #define TINYGLTF_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
+#define STB_IMAGE_IMPLEMENTATION
 #include <tiny_gltf.h>
 #include <cstdio>
 #include <cstring>

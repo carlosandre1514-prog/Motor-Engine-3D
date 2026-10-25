@@ -58,24 +58,10 @@ bool Renderer::init(const char* shaderDir) {
     for (Program* p : {&pbr_, &pbrInst_, &pbrSkin_, &shadow_, &shadowInst_, &shadowSkin_}) {
         p->uModel = glGetUniformLocation(p->id, "uModel");
         p->uLightVP = glGetUniformLocation(p->id, "uLightVP");
-        p->uAlbedoF = glGetUniformLocation(p->id, "uAlbedoFactor");
-        p->uRough = glGetUniformLocation(p->id, "uRoughnessFactor");
-        p->uMetal = glGetUniformLocation(p->id, "uMetallicFactor");
-        p->uEmis = glGetUniformLocation(p->id, "uEmissiveFactor");
         GLuint bi = glGetUniformBlockIndex(p->id, "SceneBlock");
         if (bi != GL_INVALID_INDEX) glUniformBlockBinding(p->id, bi, 0);
         bi = glGetUniformBlockIndex(p->id, "JointBlock");
         if (bi != GL_INVALID_INDEX) glUniformBlockBinding(p->id, bi, 1);
-    }
-
-    // Unidades de textura dos samplers (fixas): 0 albedo, 1 normal, 2 ORM, 3 emissivo, 4 sombra
-    for (Program* p : {&pbr_, &pbrInst_, &pbrSkin_}) {
-        glUseProgram(p->id);
-        glUniform1i(glGetUniformLocation(p->id, "uAlbedoMap"), 0);
-        glUniform1i(glGetUniformLocation(p->id, "uNormalMap"), 1);
-        glUniform1i(glGetUniformLocation(p->id, "uOrmMap"), 2);
-        glUniform1i(glGetUniformLocation(p->id, "uEmissiveMap"), 3);
-        glUniform1i(glGetUniformLocation(p->id, "uShadowMap"), 4);
     }
 
     glGenBuffers(1, &sceneUbo_);
@@ -156,11 +142,7 @@ void Renderer::submit(const GameObject& go, const glm::mat4* palette) {
                             palette, mr.castShadows};
 }
 
-void Renderer::bindMaterial(const Program& p, const Material& m) {
-    glUniform4fv(p.uAlbedoF, 1, &m.albedoFactor[0]);
-    glUniform1f(p.uRough, m.roughness);
-    glUniform1f(p.uMetal, m.metallic);
-    glUniform3fv(p.uEmis, 1, &m.emissive_factor[0]);
+void Renderer::bindMaterial(const Material& m) {
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, m.albedo);
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, m.normal);
     glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, m.orm);
@@ -228,7 +210,7 @@ void Renderer::drawBatches(bool shadowOnly, int, const glm::mat4* lightVP) {
             const Program& p = shadowOnly ? shadowSkin_ : pbrSkin_;
             glUseProgram(p.id);
             if (shadowOnly) glUniformMatrix4fv(p.uLightVP, 1, GL_FALSE, &(*lightVP)[0][0]);
-            else bindMaterial(p, materials_[first.material]);
+            else bindMaterial(materials_[first.material]);
             glUniformMatrix4fv(p.uModel, 1, GL_FALSE, &first.model[0][0]);
             glBindBuffer(GL_UNIFORM_BUFFER, jointUbo_);
             glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(glm::mat4) * kMaxJoints, first.jointPalette);
@@ -249,7 +231,7 @@ void Renderer::drawBatches(bool shadowOnly, int, const glm::mat4* lightVP) {
         const Program& p = shadowOnly ? shadowInst_ : pbrInst_;
         glUseProgram(p.id);
         if (shadowOnly) glUniformMatrix4fv(p.uLightVP, 1, GL_FALSE, &(*lightVP)[0][0]);
-        else bindMaterial(p, materials_[first.material]);
+        else bindMaterial(materials_[first.material]);
 
         glBindBuffer(GL_ARRAY_BUFFER, instanceVbo_);
         glBufferData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * kMaxDraws, nullptr, GL_STREAM_DRAW);  // orphaning

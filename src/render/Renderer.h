@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
-#include <glm/gtc/type_precision.hpp>
 #include "core/Pool.h"
 #include "render/Camera.h"
 #include "render/Lights.h"
@@ -66,15 +65,11 @@ public:
     Frustum cullFrustum;
 
 private:
-    struct Program {
-        GLuint id = 0;
-        GLint uModel = -1, uLightVP = -1;
-        GLint uAlbedoF = -1, uRough = -1, uMetal = -1, uEmis = -1;
-    };
+    struct Program { GLuint id = 0; GLint uModel = -1, uLightVP = -1; };
 
     void shadowPass(const CascadeSet& cs);
     void drawBatches(bool shadowOnly, int cascade, const glm::mat4* lightVP);
-    void bindMaterial(const Program& p, const Material& m);
+    void bindMaterial(const Material& m);
 
     Program pbr_, pbrInst_, pbrSkin_, shadow_, shadowInst_, shadowSkin_;
     GLuint sceneUbo_ = 0, jointUbo_ = 0, instanceVbo_ = 0;

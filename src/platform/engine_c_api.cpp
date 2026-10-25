@@ -1,7 +1,6 @@
 #include "platform/engine_c_api.h"
 #include <vector>
 #include "assets/GltfLoader.h"
-#include "assets/TextureManager.h"
 #include "editor/EditorCamera.h"
 #include "editor/Gizmo.h"
 #include "physics/Physics.h"
@@ -26,7 +25,6 @@ struct Engine {
     std::vector<LoadedModel> models;       // carregamento: fora do loop
     std::vector<Scene::Handle> objects;    // índice público -> handle
     std::vector<Animator*> animators;
-    MeshRenderer demoMR[4];
 
     bool playing = false;
     int width = 1, height = 1;
@@ -133,63 +131,4 @@ void engine_touch(Engine* e, int action, int n, const int* ids, const float* xy)
         e->gizmo.onTouchUp();
         e->editorCam.onTouchEnd(t, m);
     }
-}
-
-// ---------- cena de demonstração ----------
-static void makeCube(std::vector<Vertex>& v, std::vector<uint32_t>& idx) {
-    const glm::vec3 N[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-    const glm::vec3 T[6] = {{0, 0, -1}, {0, 0, 1}, {1, 0, 0}, {1, 0, 0}, {1, 0, 0}, {-1, 0, 0}};
-    const glm::vec2 corner[4] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
-    const glm::vec2 uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
-    for (int f = 0; f < 6; ++f) {
-        glm::vec3 n = N[f], t = T[f], b = glm::cross(n, t);
-        uint32_t base = uint32_t(v.size());
-        for (int k = 0; k < 4; ++k) {
-            Vertex vx{};
-            vx.pos = (n + t * corner[k].x + b * corner[k].y) * 0.5f;
-            vx.normal = n;
-            vx.uv = uv[k];
-            vx.tangent = glm::vec4(t, 1.f);
-            vx.weights = glm::vec4(1, 0, 0, 0);
-            v.push_back(vx);
-        }
-        for (uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) idx.push_back(base + i);
-    }
-}
-
-void engine_load_demo(Engine* e) {
-    std::vector<Vertex> v;
-    std::vector<uint32_t> idx;
-    makeCube(v, idx);
-    MeshId mesh = e->renderer.createMesh(v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()), false);
-
-    TextureManager& tx = TextureManager::instance();
-    auto mat = [&](glm::vec4 albedo, float rough, float metal) {
-        Material m;
-        m.albedo = tx.white(); m.normal = tx.flatNormal(); m.orm = tx.white(); m.emissive = tx.white();
-        m.albedoFactor = albedo; m.roughness = rough; m.metallic = metal;
-        return e->renderer.createMaterial(m);
-    };
-    MaterialId orange = mat({0.9f, 0.35f, 0.1f, 1.f}, 0.35f, 0.f);
-    MaterialId steel = mat({0.8f, 0.8f, 0.85f, 1.f}, 0.25f, 1.f);
-    MaterialId floorM = mat({0.45f, 0.5f, 0.45f, 1.f}, 0.9f, 0.f);
-
-    int n = 0;
-    auto add = [&](const char* name, MaterialId m, glm::vec3 pos, glm::vec3 scale, glm::vec3 eulerDeg) {
-        Scene::Handle h = e->scene.create(name);
-        GameObject* go = e->scene.get(h);
-        go->transform.setPosition(pos);
-        go->transform.setScale(scale);
-        go->transform.setEulerDegrees(eulerDeg);
-        e->demoMR[n].mesh = mesh;
-        e->demoMR[n].material = m;
-        go->meshRenderer = &e->demoMR[n++];
-        e->objects.push_back(h);
-    };
-    add("Cubo laranja", orange, {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, {0.f, 20.f, 0.f});
-    add("Cubo metal", steel, {1.6f, -0.1f, 0.6f}, {0.8f, 0.8f, 0.8f}, {0.f, 35.f, 0.f});
-    add("Chão", floorM, {0.f, -0.6f, 0.f}, {12.f, 0.2f, 12.f}, {0.f, 0.f, 0.f});
-
-    e->editorCam.distance = 6.f;
-    engine_select(e, 0);
 }
