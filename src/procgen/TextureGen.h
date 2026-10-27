@@ -28,6 +28,11 @@ enum class Mat : uint8_t {
     Terrain,       // terreno (modo 1 no shader: grama/rocha/areia/neve)
     Painted,       // branco liso para cor por vértice (personagens, árvores, caixas d'água)
     Glass,         // vidro escuro (carros)
+    RedBrick,      // tijolo vermelho aparente (tile 2 x 2 m)
+    FacadeBrick,   // fachada de tijolo vermelho com janela e sala iluminada (tile 3.2 x 3 m)
+    Slate,         // telhado de ardósia (tile 2 x 2 m)
+    Marble,        // piso de mármore (tile 2 x 2 m)
+    Dirt,          // terra batida (tile 3 x 3 m)
     Count
 };
 
@@ -37,6 +42,10 @@ struct TexData {
     int w = 0, h = 0;
     std::vector<uint8_t> albedo, orm, normal;  // RGBA8; normal vazio = normal plana
 };
+
+// Pasta com as texturas de material (shaders/materials): concreto, tijolo, interiores das janelas...
+// Sem ela (ou faltando arquivo), o material é gerado só por código.
+void setMaterialTextureDir(const char* dir);
 
 // Gera (uma vez, com cache) as texturas de um material
 const TexData& proceduralTexture(Mat m);

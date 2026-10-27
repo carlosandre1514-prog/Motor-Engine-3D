@@ -159,8 +159,9 @@ void buildHouse(Geo& g, Rng& r, float w, float d, int floors, glm::vec4 color, b
     // telhado de duas águas (cumeeira ao longo do lado maior)
     float roofH = std::min(w, d) * 0.28f;
     g.offset({-w / 2, 0, -d / 2});
-    MeshBuilder& roof = g[Mat::RoofTile];
-    roof.gableRoof(w, d, H, roofH, 0.45f, {1.f, 1.f});
+    bool slate = (int(w * 10.f) + int(d * 10.f)) % 4 == 0;  // algumas casas com telhado de ardósia
+    MeshBuilder& roof = g[slate ? Mat::Slate : Mat::RoofTile];
+    roof.gableRoof(w, d, H, roofH, 0.45f, slate ? glm::vec2(2.f, 2.f) : glm::vec2(1.f, 1.f));
     MeshBuilder& gable = g[Mat::Plaster];
     gable.color = color; gable.uvTile = {2.f, 2.f};
     gable.gableEnds(w, d, H, roofH);
@@ -267,7 +268,8 @@ void buildApartment(Geo& g, Rng& r, float w, float d, int floors, glm::vec4 colo
         MeshBuilder& glass = g[Mat::Glass];
         for (float x0 : {-2.6f, 0.8f}) { glass.box({x0, 0, zf + 0.1f}, {1.8f, 2.9f, 0.05f}); g.collider({x0, 0, zf + 0.1f}, {1.8f, 2.9f, 0.05f}); }
         g.door({-0.8f, 0, zf + 0.12f}, 1.6f, 2.9f, 1);
-        g[Mat::Concrete].box({-w / 2 + t, 0, -d / 2 + t}, {w - 2 * t, 0.03f, d - 2 * t});
+        g[Mat::Marble].uvTile = {2.f, 2.f};
+        g[Mat::Marble].box({-w / 2 + t, 0, -d / 2 + t}, {w - 2 * t, 0.03f, d - 2 * t});  // piso de mármore
         {
             DetailScope ds(g);
             g[Mat::Concrete].box({-2.6f, 2.9f, d / 2}, {5.2f, 0.25f, 1.6f});  // marquise
@@ -277,8 +279,10 @@ void buildApartment(Geo& g, Rng& r, float w, float d, int floors, glm::vec4 colo
         g.teleport({0.f, 0.05f, -d / 2 + t + 1.3f}, {-w / 2 + 2.f, lobby + fh * floors + 0.05f, d / 2 - 2.f}, "🛗 Subir para o terraço",
                    "🛗 Descer para a recepção");
     }
-    MeshBuilder& f = g[Mat::FacadeApt];
-    f.color = color; f.uvTile = {3.2f, 3.f};
+    // parte dos prédios é de tijolo vermelho aparente (escolha pelo tamanho: não mexe no sorteio da cidade)
+    bool brick = (int(w * 10.f) + int(d * 7.f) + floors) % 3 == 0;
+    MeshBuilder& f = g[brick ? Mat::FacadeBrick : Mat::FacadeApt];
+    f.color = brick ? glm::vec4(1.f) : color; f.uvTile = {3.2f, 3.f};
     f.box({-w / 2, lobby, -d / 2}, {w, fh * floors, d});
     // platibanda e casa de máquinas / caixa d'água (detalhe)
     float tw = std::min(6.f, w * 0.35f), tx = r.range(-w * 0.2f, w * 0.2f);
@@ -328,7 +332,8 @@ void buildSkyscraper(Geo& g, Rng& r, float w, float d, int floors) {
         c.box({-1.2f, 3.f, zf}, {2.4f, lobbyH - 3.f, t}); g.collider({-1.2f, 3.f, zf}, {2.4f, lobbyH - 3.f, t});
         g.door({-1.2f, 0, zf + t * 0.5f}, 2.4f, 3.f, 1);
         for (float x : {-w / 2, w / 2 - 0.6f}) c.box({x, 0, zf - 0.3f}, {0.6f, lobbyH, 0.6f});  // pilares da frente
-        g[Mat::Concrete].box({-w / 2 + t, 0, -d / 2 + t}, {w - 2 * t, 0.03f, d - 2 * t});
+        g[Mat::Marble].uvTile = {2.f, 2.f};
+        g[Mat::Marble].box({-w / 2 + t, 0, -d / 2 + t}, {w - 2 * t, 0.03f, d - 2 * t});
         lobbyFurniture(g, r, w, d, t);
     }
     int tiers = r.irange(1, 3);

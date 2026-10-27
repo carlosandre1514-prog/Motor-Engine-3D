@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <string>
+#include <stb_image.h>
 #include "procgen/Noise.h"
 
 namespace eng {
@@ -9,7 +11,8 @@ namespace eng {
 const char* matName(Mat m) {
     static const char* names[] = {"Reboco", "Fachada casa", "Fachada prédio", "Vidro de escritório", "Tijolo", "Tijolo com janela",
                                   "Telha", "Concreto", "Asfalto", "Rua", "Calçada", "Grama", "Madeira", "Metal", "Metal escuro",
-                                  "Plástico", "Quadra", "Água", "Terreno", "Pintura lisa", "Vidro"};
+                                  "Plástico", "Quadra", "Água", "Terreno", "Pintura lisa", "Vidro", "Tijolo vermelho",
+                                  "Fachada de tijolo", "Ardósia", "Mármore", "Terra"};
     return names[int(m)];
 }
 
@@ -20,11 +23,54 @@ MatParams matParams(Mat m) {
         case Mat::Water: return {1.f, 0.f, 0, false};
         case Mat::Terrain: return {1.f, 0.f, 1, false};
         case Mat::RoofTile: return {1.f, 0.f, 0, true};   // telhado visto por baixo também
+        case Mat::Slate: return {1.f, 0.f, 0, true};
         default: return {1.f, 1.f, 0, false};
     }
 }
 
 namespace {
+
+std::string gTexDir;
+TexData gCache[int(Mat::Count)];
+
+// Imagem de arquivo (RGBA8, valores como estão no arquivo: sRGB para cor)
+struct Pic {
+    int w = 0, h = 0;
+    std::vector<uint8_t> px;
+    explicit operator bool() const { return w > 0; }
+    glm::vec4 at(float u, float v) const {  // bilinear, repetindo nas bordas
+        float x = u * w - 0.5f, y = v * h - 0.5f;
+        int x0 = int(std::floor(x)), y0 = int(std::floor(y));
+        float fx = x - x0, fy = y - y0;
+        auto P = [&](int xx, int yy) {
+            const uint8_t* p = &px[(((yy % h) + h) % h * w + ((xx % w) + w) % w) * 4];
+            return glm::vec4(p[0], p[1], p[2], p[3]) / 255.f;
+        };
+        return glm::mix(glm::mix(P(x0, y0), P(x0 + 1, y0), fx), glm::mix(P(x0, y0 + 1), P(x0 + 1, y0 + 1), fx), fy);
+    }
+};
+
+Pic loadPic(const char* name) {
+    Pic p;
+    if (gTexDir.empty()) return p;
+    int comp;
+    if (unsigned char* d = stbi_load((gTexDir + "/" + name).c_str(), &p.w, &p.h, &comp, 4)) {
+        p.px.assign(d, d + p.w * p.h * 4);
+        stbi_image_free(d);
+    } else p.w = p.h = 0;
+    return p;
+}
+
+// Material PBR completo de arquivo: <base>_alb.jpg, _nrm.jpg, _orm.jpg (o mesmo tamanho). normalFrom: outro conjunto
+bool fromFiles(TexData& t, const char* base, const char* normalFrom = nullptr) {
+    std::string b = base, nb = normalFrom ? normalFrom : base;
+    Pic a = loadPic((b + "_alb.jpg").c_str()), n = loadPic((nb + "_nrm.jpg").c_str()), o = loadPic((nb + "_orm.jpg").c_str());
+    if (!a || !n || !o || n.w != a.w || o.w != a.w || n.h != a.h || o.h != a.h) return false;
+    t.w = a.w; t.h = a.h;
+    t.albedo = std::move(a.px); t.normal = std::move(n.px); t.orm = std::move(o.px);
+    for (size_t i = 0; i < t.orm.size(); i += 4) t.orm[i] = 255;  // R = AO do kit: o motor usa AO separado
+    return true;
+}
 
 struct Img {
     int w, h;
@@ -83,7 +129,11 @@ TexData finish(const Img& im, bool withNormal, float bump = 2.f) {
 glm::vec3 rgb(int r, int g, int b) { return glm::vec3(r, g, b) / 255.f; }
 
 // Janela desenhada no retângulo [x0,x1]x[y0,y1] (em fração do tile). Retorna true se o pixel é da janela.
-bool window(Img& im, int i, float u, float v, float x0, float x1, float y0, float y1, float frame, glm::vec3 frameCol, bool grid) {
+// Sala vista pela janela (imagem do interior) e cortina na frente; nulos = vidro liso
+struct WindowLook { const Pic* room = nullptr; const Pic* curtain = nullptr; };
+
+bool window(Img& im, int i, float u, float v, float x0, float x1, float y0, float y1, float frame, glm::vec3 frameCol, bool grid,
+            WindowLook look = {}) {
     if (u < x0 || u > x1 || v < y0 || v > y1) return false;
     bool isFrame = u < x0 + frame || u > x1 - frame || v < y0 + frame || v > y1 - frame;
     if (grid) {
@@ -94,6 +144,15 @@ bool window(Img& im, int i, float u, float v, float x0, float x1, float y0, floa
     // vidro: gradiente de "céu refletido" + escurecido embaixo
     float t = (v - y0) / (y1 - y0);
     im.col[i] = glm::mix(rgb(70, 92, 110), rgb(22, 30, 38), t);
+    if (look.room && *look.room) {
+        float s = (u - x0) / (x1 - x0);
+        glm::vec3 room = glm::vec3(look.room->at(s, t));
+        if (look.curtain && *look.curtain) {
+            glm::vec4 c = look.curtain->at(s, t);
+            room = glm::mix(room, glm::vec3(c) * 1.6f, c.a);
+        }
+        im.col[i] = glm::mix(room * 0.85f, rgb(90, 110, 125), 0.12f);  // um pouco do céu refletido no vidro
+    }
     im.rough[i] = 0.06f;
     im.metal[i] = 0.f;
     im.height[i] = -0.4f;
@@ -112,22 +171,32 @@ void plasterBase(Img& im, glm::vec3 base, uint32_t seed, float dirt = 0.25f) {
 
 TexData genPlaster() { Img im(256, 256); plasterBase(im, rgb(236, 232, 224), 11, 0.15f); return finish(im, true, 1.5f); }
 
+// Sujeira escorrendo da laje/peitoril (imagem do kit), mais forte embaixo das janelas
+void grime(Img& im, const Pic& drips, float amount) {
+    if (!drips) return;
+    im.each([&](int, int, int i, float u, float v) { im.col[i] *= 1.f - amount * (1.f - drips.at(u, v * 0.5f).r) * (0.4f + 0.6f * v); });
+}
+
 TexData genFacadeHouse() {
-    Img im(256, 256);
+    Img im(512, 512);
     plasterBase(im, rgb(236, 232, 224), 21);
+    grime(im, loadPic("escorrido.jpg"), 0.12f);
+    Pic room = loadPic("interior_2.jpg"), cur = loadPic("cortina_lados.png");
     im.each([&](int, int, int i, float u, float v) {
-        window(im, i, u, v, 0.3f, 0.7f, 0.25f, 0.68f, 0.035f, rgb(245, 245, 245), true);
+        window(im, i, u, v, 0.3f, 0.7f, 0.25f, 0.68f, 0.035f, rgb(245, 245, 245), true, {&room, &cur});
         if (u > 0.27f && u < 0.73f && v > 0.68f && v < 0.71f) { im.col[i] = rgb(200, 198, 192); im.height[i] = 0.5f; }  // peitoril
     });
     return finish(im, true, 1.5f);
 }
 
 TexData genFacadeApt() {
-    Img im(256, 256);
+    Img im(512, 512);
     plasterBase(im, rgb(236, 232, 224), 31, 0.1f);
+    grime(im, loadPic("escorrido.jpg"), 0.15f);
+    Pic room = loadPic("interior_1.jpg"), cur = loadPic("cortina_aberta.png");
     im.each([&](int, int, int i, float u, float v) {
         if (v > 0.9f) { im.col[i] = rgb(190, 188, 182) * (0.95f + 0.05f * tileNoise(u, v, 16, 2, 5)); im.height[i] = 0.4f; return; }  // faixa da laje
-        if (window(im, i, u, v, 0.18f, 0.82f, 0.22f, 0.7f, 0.025f, rgb(60, 62, 66), true)) return;
+        if (window(im, i, u, v, 0.18f, 0.82f, 0.22f, 0.7f, 0.025f, rgb(60, 62, 66), true, {&room, &cur})) return;
         if (v > 0.7f && v < 0.9f && u > 0.12f && u < 0.88f) {  // guarda-corpo da varanda
             bool bar = std::fmod(u * 40.f, 1.f) < 0.25f || v < 0.715f;
             if (bar) { im.col[i] = rgb(55, 58, 62); im.metal[i] = 0.8f; im.rough[i] = 0.4f; im.height[i] = 0.4f; }
@@ -137,7 +206,8 @@ TexData genFacadeApt() {
 }
 
 TexData genFacadeOffice() {
-    Img im(128, 256);
+    Img im(256, 512);
+    Pic room = loadPic("interior_1.jpg");
     im.each([&](int, int, int i, float u, float v) {
         bool mullion = u < 0.04f || u > 0.96f || v < 0.025f || v > 0.975f;
         bool spandrel = v > 0.8f;  // faixa opaca entre andares
@@ -146,6 +216,7 @@ TexData genFacadeOffice() {
         else {
             float g = tileNoise(u, v, 3, 2, 41);
             im.col[i] = glm::mix(rgb(60, 92, 120), rgb(28, 44, 62), v) * (0.9f + 0.2f * g);
+            if (room) im.col[i] = glm::mix(im.col[i], glm::vec3(room.at((u - 0.04f) / 0.92f, (v - 0.025f) / 0.775f)) * 1.2f, 0.28f);
             im.metal[i] = 0.6f; im.rough[i] = 0.05f;
         }
     });
@@ -207,6 +278,7 @@ TexData genRoofTile() {
 }
 
 TexData genConcrete() {
+    if (TexData t; fromFiles(t, "concreto")) return t;
     Img im(256, 256);
     im.each([&](int, int, int i, float u, float v) {
         float n = tileNoise(u, v, 6, 5, 81), p = tileNoise(u, v, 48, 2, 82);
@@ -224,9 +296,36 @@ void asphaltBase(Img& im, uint32_t seed) {
     });
 }
 
-TexData genAsphalt() { Img im(256, 256); asphaltBase(im, 91); return finish(im, true, 1.f); }
+// asfalto do kit (cor) com o relevo do concreto
+bool asphaltFiles(TexData& t) {
+    if (!fromFiles(t, "concreto")) return false;
+    Pic a = loadPic("asfalto_alb.jpg");
+    if (a.w != t.w || a.h != t.h) return false;
+    t.albedo = std::move(a.px);
+    return true;
+}
+
+TexData genAsphalt() {
+    if (TexData t; asphaltFiles(t)) return t;
+    Img im(256, 256); asphaltBase(im, 91); return finish(im, true, 1.f);
+}
 
 TexData genRoad() {
+    TexData real;
+    if (asphaltFiles(real)) {  // asfalto do kit + faixas pintadas (u atravessa a pista, v = 6 m)
+        for (int y = 0; y < real.h; ++y)
+            for (int x = 0; x < real.w; ++x) {
+                float u = (x + 0.5f) / real.w, v = (y + 0.5f) / real.h;
+                bool center = std::abs(u - 0.5f) < 0.012f && v < 0.55f, edge = std::abs(u - 0.06f) < 0.008f || std::abs(u - 0.94f) < 0.008f;
+                if (!center && !edge) continue;
+                uint8_t* p = &real.albedo[(y * real.w + x) * 4];
+                float wear = 0.75f + 0.25f * hashf(x / 3, y / 3, 7);  // tinta gasta
+                glm::vec3 c = center ? glm::vec3(225, 190, 40) : glm::vec3(220, 220, 215);
+                for (int k = 0; k < 3; ++k) p[k] = uint8_t(glm::mix(float(p[k]), c[k], wear));
+                real.orm[(y * real.w + x) * 4 + 1] = 150;
+            }
+        return real;
+    }
     Img im(256, 256);
     asphaltBase(im, 101);
     im.each([&](int, int, int i, float u, float v) {
@@ -316,6 +415,32 @@ TexData genCourt() {
     return finish(im, false);
 }
 
+// Prédio de tijolo vermelho: tijolo do kit, laje de concreto, janela com sala iluminada e cortina
+TexData genFacadeBrick() {
+    Pic brick = loadPic("tijolo_vermelho_alb.jpg"), bn = loadPic("tijolo_vermelho_nrm.jpg");
+    if (!brick || !bn) return genFacadeApt();
+    Pic room = loadPic("interior_1.jpg"), cur = loadPic("cortina_lados.png"), drips = loadPic("escorrido.jpg");
+    Img im(512, 512);
+    std::vector<glm::vec3> nrm(im.w * im.h, glm::vec3(0.5f, 0.5f, 1.f));
+    im.each([&](int, int, int i, float u, float v) {
+        float bu = u * 1.6f, bv = v * 1.5f;  // o tijolo do kit cobre 2 x 2 m; o tile da fachada é 3.2 x 3 m
+        im.col[i] = glm::vec3(brick.at(bu, bv));
+        nrm[i] = glm::vec3(bn.at(bu, bv));
+        im.rough[i] = 0.85f;
+        if (drips) im.col[i] *= 1.f - 0.15f * (1.f - drips.at(u, v * 0.5f).r) * v;
+        if (v > 0.9f) { im.col[i] = rgb(175, 172, 165) * (0.95f + 0.05f * tileNoise(u, v, 16, 2, 5)); nrm[i] = {0.5f, 0.5f, 1.f}; return; }
+        if (u > 0.15f && u < 0.85f && v > 0.7f && v < 0.74f) { im.col[i] = rgb(190, 186, 178); nrm[i] = {0.5f, 0.5f, 1.f}; return; }  // peitoril
+        if (window(im, i, u, v, 0.18f, 0.82f, 0.18f, 0.7f, 0.03f, rgb(235, 232, 225), true, {&room, &cur})) nrm[i] = {0.5f, 0.5f, 1.f};
+    });
+    TexData t = finish(im, false);
+    t.normal.resize(im.w * im.h * 4);
+    for (int i = 0; i < im.w * im.h; ++i) {
+        for (int k = 0; k < 3; ++k) t.normal[i * 4 + k] = to8(nrm[i][k]);
+        t.normal[i * 4 + 3] = 255;
+    }
+    return t;
+}
+
 TexData generate(Mat m) {
     switch (m) {
         case Mat::Plaster: return genPlaster();
@@ -339,15 +464,25 @@ TexData generate(Mat m) {
         case Mat::Water: return genSolid(rgb(18, 52, 70), 0.04f, 0.f, 191, 0.1f);
         case Mat::Painted: return genSolid(rgb(255, 255, 255), 0.75f, 0.f, 201, 0.04f);
         case Mat::Glass: return genSolid(rgb(30, 38, 46), 0.05f, 0.3f, 211, 0.f);
+        case Mat::RedBrick: { if (TexData t; fromFiles(t, "tijolo_vermelho")) return t; return genBrick(); }
+        case Mat::FacadeBrick: return genFacadeBrick();
+        case Mat::Slate: { if (TexData t; fromFiles(t, "ardosia")) return t; return genRoofTile(); }
+        case Mat::Marble: { if (TexData t; fromFiles(t, "marmore")) return t; return genSolid(rgb(215, 200, 170), 0.3f, 0.f, 221, 0.1f); }
+        case Mat::Dirt: { if (TexData t; fromFiles(t, "terra")) return t; return genSolid(rgb(110, 85, 60), 0.95f, 0.f, 231, 0.3f); }
         default: return genSolid(rgb(200, 200, 200), 0.8f, 0.f, 1, 0.f);
     }
 }
 
 }  // namespace
 
+void setMaterialTextureDir(const char* dir) {
+    if (gTexDir == dir) return;
+    gTexDir = dir;
+    for (TexData& t : gCache) t = TexData{};  // regenera com as imagens novas
+}
+
 const TexData& proceduralTexture(Mat m) {
-    static TexData cache[int(Mat::Count)];
-    TexData& t = cache[int(m)];
+    TexData& t = gCache[int(m)];
     if (t.albedo.empty()) t = generate(m);
     return t;
 }

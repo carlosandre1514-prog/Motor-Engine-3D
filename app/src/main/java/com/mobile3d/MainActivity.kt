@@ -400,13 +400,14 @@ class MainActivity : Activity() {
             if (!(name.endsWith(".vert") || name.endsWith(".frag") || name.endsWith(".glsl") || name.endsWith(".jpg"))) continue
             assets.open(name).use { input -> File(dir, name).outputStream().use { input.copyTo(it) } }
         }
-        // texturas do terreno (alguns MB): copiadas só na instalação/atualização do app
-        val terrain = File(dir, "terrain").apply { mkdirs() }
-        val stamp = File(terrain, ".versao")
+        // texturas do terreno e dos materiais (alguns MB): copiadas só na instalação/atualização do app
         val installed = packageManager.getPackageInfo(packageName, 0).lastUpdateTime.toString()
-        if (!stamp.exists() || stamp.readText() != installed) {
-            for (name in assets.list("terrain").orEmpty())
-                assets.open("terrain/$name").use { input -> File(terrain, name).outputStream().use { input.copyTo(it) } }
+        for (sub in listOf("terrain", "materials")) {
+            val folder = File(dir, sub).apply { mkdirs() }
+            val stamp = File(folder, ".versao")
+            if (stamp.exists() && stamp.readText() == installed) continue
+            for (name in assets.list(sub).orEmpty())
+                assets.open("$sub/$name").use { input -> File(folder, name).outputStream().use { input.copyTo(it) } }
             stamp.writeText(installed)
         }
         return dir.absolutePath

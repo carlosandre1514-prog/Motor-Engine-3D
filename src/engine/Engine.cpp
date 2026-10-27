@@ -114,7 +114,8 @@ void ensureBasics(Engine* e) {
     e->matPalette[4] = mat({0.55f, 0.36f, 0.22f, 1.f}, 0.8f, 0.f);  // madeira
     e->matPalette[5] = mat({0.5f, 0.5f, 0.52f, 1.f}, 0.9f, 0.f);    // pedra
 
-    // Biblioteca procedural (texturas geradas uma vez e reenviadas à GPU a cada cena)
+    // Biblioteca procedural (texturas geradas uma vez e reenviadas à GPU a cada cena); usa as imagens de shaders/materials
+    setMaterialTextureDir((e->renderer.shaderDir() + "/materials").c_str());
     for (int k = 0; k < int(Mat::Count); ++k) {
         const TexData& t = proceduralTexture(Mat(k));
         MatParams mp = matParams(Mat(k));

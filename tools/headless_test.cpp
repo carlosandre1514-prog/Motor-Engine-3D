@@ -401,7 +401,7 @@ int main(int argc, char** argv) {
     std::printf("[9] construções\n");
     engine_new_scene(e);
     const char* bnames[] = {"casa", "sobrado", "barraco", "predio", "arranha-ceu", "escola", "arvore", "pinheiro", "palmeira", "carro", "poste", "muro"};
-    float x = -60.f;
+    float x = -60.f, bx[12] = {};
     for (int k = 0; k < 12; ++k) {
         int id = engine_create_building(e, k, 7 + k);
         float p[3], rr[3], ss[3];
@@ -409,6 +409,7 @@ int main(int argc, char** argv) {
         float wdt = k == 4 ? 34.f : k == 3 || k == 5 ? 24.f : 12.f;
         x += wdt * 0.5f;
         p[0] = x; p[2] = k == 5 ? -10.f : 0.f;
+        bx[k] = x;
         x += wdt * 0.5f + 2.f;
         engine_set_transform(e, id, p, rr, ss);
     }
@@ -416,6 +417,12 @@ int main(int argc, char** argv) {
     engine_focus_selected(e);
     frames(e, 2);
     save(out, "8_construcoes.png");
+    // fachadas de perto: salas nas janelas, tijolo, concreto
+    for (int k : {0, 3, 4}) {
+        engine_set_camera(e, bx[k], k == 0 ? 2.5f : 8.f, 0.f, 0.25f, 0.08f, k == 0 ? 11.f : 16.f);
+        frames(e, 2);
+        save(out, (std::string("8_fachada_") + bnames[k] + ".png").c_str());
+    }
     stats(e, "construcoes");
 
     std::printf("[11] efeitos\n");
