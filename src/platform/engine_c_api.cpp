@@ -29,6 +29,7 @@ Engine* engine_create(const char* shader_dir) {
     eng::TextureManager::instance().forgetAll();  // contexto GL novo: ids antigos não valem
     Engine* e = new Engine();
     if (!e->renderer.init(shader_dir)) { delete e; return nullptr; }
+    if (e->particles.init(e->renderer)) e->renderer.particles = &e->particles;
     e->objects.reserve(Scene::kMaxObjects);
     eng::ensureBasics(e);
     return e;
@@ -39,6 +40,7 @@ void engine_destroy(Engine* e) {
     eng::clearWorld(e);
     e->scene.forEach([&](GameObject& g, Scene::Handle) { eng::releaseComponents(e, g); });
     eng::TextureManager::instance().releaseAll();
+    e->particles.shutdown();
     e->renderer.shutdown();
     delete e;
 }
@@ -65,6 +67,7 @@ void engine_frame(Engine* e, float dt) {
     }
     for (Animator* a : e->animators) a->update(dt, e->playing);
     eng::updateWorld(e);
+    eng::updateEffects(e, dt);
 
     // Câmera: near/far e distância de sombra acompanham o zoom e o tamanho do mapa
     float d = e->editorCam.distance;
@@ -119,10 +122,12 @@ void engine_frame(Engine* e, float dt) {
             e->gizmo.draw(e->renderer, e->camera);
         }
     }
-    for (auto& t : e->tracers)
-        if (t.life > 0.f) e->renderer.line(vp, t.a, t.b, {1.f, 0.85f, 0.4f, std::min(1.f, t.life * 12.f)}, 3.f, true);
+    eng::drawEffectsOverlay(e, vp, !e->playing);
 
-    e->renderer.render(e->camera, e->sun, e->env, e->points, e->pointCount);
+    // luzes: as da cena + as mais relevantes dos efeitos (fogo, magia, explosões)
+    eng::PointLight lights[eng::kMaxPointLights];
+    int nLights = eng::gatherLights(e, lights, eng::kMaxPointLights);
+    e->renderer.render(e->camera, e->sun, e->env, lights, nLights);
 
     // estatísticas (janela de 0,5 s)
     float cpu = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -495,6 +500,10 @@ void engine_set_object_material(Engine* e, int i) {
 void engine_set_object_color(Engine* e, float r, float g, float b) {
     if (!e) return;
     glm::vec3 c(std::clamp(r, 0.f, 1.f), std::clamp(g, 0.f, 1.f), std::clamp(b, 0.f, 1.f));
+    if (GameObject* sel = e->scene.get(e->selected))  // efeito: cor livre
+        Scene::forEachInSubtree(*sel, [&](GameObject& g2) {
+            if (g2.emitter) { g2.emitter->customColor = true; g2.emitter->color = c; }
+        });
     forSelectedRenderers(e, [&](eng::MeshRenderer& mr) { mr.material = eng::tintedMaterial(e, mr.material, c); });
 }
 
@@ -551,6 +560,7 @@ static void handleTap(Engine* e, glm::vec2 p) {
     // Editor: objeto mais próximo (raio x AABB). Cenário de mapa (sem id) não é selecionável.
     float best = 1e30f;
     GameObject* hitGo = nullptr;
+    eng::pickEmitter(e, o, d, best, hitGo);  // efeitos não têm malha: esfera em volta do emissor
     e->scene.forEach([&](GameObject& g, Scene::Handle) {
         if (!g.meshRenderer || !g.active || g.id < 0) return;
         const eng::Mesh* m = e->renderer.mesh(g.meshRenderer->mesh);
@@ -603,4 +613,32 @@ void engine_touch(Engine* e, int action, int n, const int* ids, const float* xy)
         e->gizmo.onTouchUp();
         e->editorCam.onTouchEnd(t, m);
     }
+}
+
+// ---------- efeitos ----------
+int engine_create_effect(Engine* e, int kind, int element) {
+    if (!e) return -1;
+    int id = eng::createEffect(e, kind, element);
+    if (id >= 0) eng::selectHandle(e, e->objects[id]);
+    return id;
+}
+void engine_spawn_effect(Engine* e, int kind, int element, float x, float y, float z) {
+    if (e) eng::spawnEffect(e, kind, element, {x, y, z});
+}
+void engine_set_effect_element(Engine* e, int element) {
+    if (!e) return;
+    GameObject* sel = e->scene.get(e->selected);
+    if (!sel) return;
+    Scene::forEachInSubtree(*sel, [&](GameObject& g) {
+        if (g.emitter) { g.emitter->element = std::clamp(element, 0, int(eng::EL_Count) - 1); g.emitter->customColor = false; }
+    });
+}
+void engine_player_cast(Engine* e, int element) { if (e && e->playing) eng::castSpell(e, element); }
+
+void engine_set_camera(Engine* e, float tx, float ty, float tz, float yaw, float pitch, float distance) {
+    if (!e) return;
+    e->editorCam.target = {tx, ty, tz};
+    e->editorCam.yaw = yaw;
+    e->editorCam.pitch = std::clamp(pitch, -1.5f, 1.5f);
+    e->editorCam.distance = std::clamp(distance, 0.3f, 5000.f);
 }

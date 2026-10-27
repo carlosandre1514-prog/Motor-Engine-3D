@@ -25,6 +25,8 @@ FetchContent_MakeAvailable(glm tinygltf bullet)
 
 add_library(mobile3d SHARED
   src/render/Renderer.cpp
+  src/render/Particles.cpp
+  src/render/Effects.cpp
   src/assets/GltfLoader.cpp
   src/procgen/TextureGen.cpp
   src/procgen/Buildings.cpp

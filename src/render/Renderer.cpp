@@ -1,4 +1,5 @@
 #include "render/Renderer.h"
+#include "render/Particles.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -66,8 +67,19 @@ static GLuint link(const std::string& vs, const std::string& fs, const char* def
     return p;
 }
 
+GLuint Renderer::loadProgram(const char* vsFile, const char* fsFile) {
+    std::string vs = readFile(shaderDir_ + "/" + vsFile), fs = readFile(shaderDir_ + "/" + fsFile);
+    if (vs.empty() || fs.empty()) return 0;
+    GLuint p = link(vs, fs, "EXTRA", vsFile);
+    if (!p) return 0;
+    GLuint bi = glGetUniformBlockIndex(p, "SceneBlock");
+    if (bi != GL_INVALID_INDEX) glUniformBlockBinding(p, bi, 0);
+    return p;
+}
+
 bool Renderer::init(const char* shaderDir) {
     std::string d = shaderDir;
+    shaderDir_ = d;
     g_common = readFile(d + "/common.glsl");
     std::string pv = readFile(d + "/pbr.vert"), pf = readFile(d + "/pbr.frag");
     std::string sv = readFile(d + "/shadow.vert"), sf = readFile(d + "/shadow.frag");
@@ -404,7 +416,11 @@ void Renderer::render(const Camera& cam, const DirectionalLight& sun, const Envi
     drawSky(glm::inverse(cam.proj() * viewNoT), env, false);
     glDepthMask(GL_TRUE);
 
-    // 5) linhas do editor
+    // 5) partículas (fogo, fumaça, magia...) e linhas do editor
+    if (particles) {
+        stats_.drawCalls += particles->draw(cam);
+        glEnable(GL_CULL_FACE);
+    }
     flushLines();
 
     // GPUs tiled: não precisamos gravar o depth de volta na memória

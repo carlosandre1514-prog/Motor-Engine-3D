@@ -81,6 +81,7 @@ void releaseComponents(Engine* e, GameObject& g) {
         e->bodies.release(rb);
     }
     if (g.meshRenderer) { e->meshRenderers.release(g.meshRenderer); g.meshRenderer = nullptr; }
+    if (g.emitter) { e->emitters.release(g.emitter); g.emitter = nullptr; }
 }
 
 void ensureBasics(Engine* e) {
@@ -264,6 +265,11 @@ void clearScene(Engine* e) {
     e->scene.forEach([&](GameObject& g, Scene::Handle) { releaseComponents(e, g); });
     e->scene.clear();
     e->meshRenderers.clear();
+    e->emitters.clear();
+    e->particles.clear();
+    for (auto& f : e->flashes) f.life = 0.f;
+    for (auto& p : e->projectiles) p.active = false;
+    for (auto& b : e->bolts) b.life = 0.f;
     e->animatorPool.clear();
     e->bodies.clear();
     e->objects.clear();
@@ -419,10 +425,16 @@ void updateAttachments(Engine* e) {
 }
 
 // ---------------- jogador ----------------
+// Mira de terceira pessoa: um pouco acima do centro da câmera (a câmera fica inclinada para baixo)
+static glm::vec3 aimDirection(Engine* e) {
+    glm::vec3 f = glm::normalize(e->camera.rotation * glm::vec3(0, 0, -1));
+    return glm::normalize(f + glm::vec3(0.f, 0.28f, 0.f));
+}
+
 static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* self) {
     int kind = c.weaponKind;
     bool melee = !isGun(kind);
-    glm::vec3 camFwd = glm::normalize(e->camera.rotation * glm::vec3(0, 0, -1));
+    glm::vec3 camFwd = aimDirection(e);
     glm::vec3 from, dir;
     float range, power, cooldown;
     if (melee) {
@@ -451,8 +463,16 @@ static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* sel
     if (!melee) {
         glm::vec3 muzzle = end;
         if (GameObject* w = e->scene.get(c.weapon)) muzzle = glm::vec3(w->transform.world() * glm::vec4(c.muzzle, 1.f));
-        for (auto& t : e->tracers)
-            if (t.life <= 0.f) { t = {muzzle, end, 0.08f}; break; }
+        glm::vec3 shotDir = glm::normalize(end - muzzle);
+        addFlash(e, fxMuzzleFlash(e->particles, e->fxRng, muzzle, shotDir), 0.06f);
+        int pellets = kind == WK_Shotgun ? 6 : 1;
+        for (int k = 0; k < pellets; ++k) {
+            glm::vec3 jitter = k ? glm::vec3(e->fxRng.range(-1.f, 1.f), e->fxRng.range(-1.f, 1.f), e->fxRng.range(-1.f, 1.f)) * 0.04f * glm::length(end - muzzle) : glm::vec3(0.f);
+            fxBullet(e->particles, muzzle, end + jitter);
+        }
+        if (any) fxImpact(e->particles, e->fxRng, hit, dir);
+    } else if (any) {
+        fxImpact(e->particles, e->fxRng, hit, dir);
     }
     if (any && obj && obj->rigidBody && obj->rigidBody->mass > 0.f) {
         RigidBody* rb = obj->rigidBody;
@@ -514,6 +534,217 @@ void updatePlayer(Engine* e, float dt) {
     // câmera em terceira pessoa segue o jogador
     glm::vec3 focus = go->transform.position + glm::vec3(0, c.height * 0.85f, 0);
     e->editorCam.target = glm::mix(e->editorCam.target, focus, 1.f - std::exp(-10.f * dt));
+}
+
+// ---------------- efeitos ----------------
+int createEffect(Engine* e, int kind, int element) {
+    kind = std::clamp(kind, 0, FX_Count - 1);
+    char name[32];
+    std::snprintf(name, sizeof(name), "%s (%s)", fxName(kind), elementName(std::clamp(element, 0, EL_Count - 1)));
+    Scene::Handle h = e->scene.create(name);
+    GameObject* go = e->scene.get(h);
+    auto eh = e->emitters.acquire();
+    Emitter* em = e->emitters.get(eh);
+    if (!go || !em) { e->lastError = "limite de efeitos"; return -1; }
+    em->kind = kind;
+    em->element = std::clamp(element, 0, EL_Count - 1);
+    em->owner = go;
+    go->emitter = em;
+    glm::vec3 pos = e->editorCam.target;
+    pos.y = e->mapKind >= 0 ? mapHeight(e, pos.x, pos.z) : 0.f;
+    go->transform.setPosition(pos);
+    return registerObject(e, h);
+}
+
+void addFlash(Engine* e, const FxLight& l, float life) {
+    if (l.intensity <= 0.f) return;
+    FxFlash* slot = &e->flashes[0];
+    for (auto& f : e->flashes) {
+        if (f.life <= 0.f) { slot = &f; break; }
+        if (f.life < slot->life) slot = &f;
+    }
+    *slot = {l, life, life};
+}
+
+void spawnEffect(Engine* e, int kind, int element, glm::vec3 pos) {
+    FxPalette pal = fxPalette(element);
+    if (kind == FX_Explosion) { addFlash(e, fxExplosion(e->particles, e->fxRng, pal, pos, 1.f), 0.35f); return; }
+    float acc = 0.f, timer = 0.f;
+    for (int i = 0; i < 30; ++i) fxContinuous(e->particles, e->fxRng, kind, pal, pos, 1.f, 1.f / 30.f, acc, timer);
+}
+
+static void radialImpulse(Engine* e, glm::vec3 c, float radius, float power, const btCollisionObject* ignore) {
+    e->bodies.forEach([&](RigidBody& rb, RigidBodyPool::Handle) {
+        if (!rb.body || rb.mass <= 0.f || rb.body == ignore) return;
+        btVector3 p = rb.body->getCenterOfMassPosition();
+        glm::vec3 d = glm::vec3(p.x(), p.y(), p.z()) - c;
+        float dist = glm::length(d);
+        if (dist > radius) return;
+        glm::vec3 dir = dist > 1e-3f ? d / dist : glm::vec3(0, 1, 0);
+        dir = glm::normalize(dir + glm::vec3(0, 0.5f, 0));
+        float k = power * (1.f - dist / radius) * rb.mass;
+        rb.body->activate(true);
+        rb.body->applyCentralImpulse({dir.x * k, dir.y * k, dir.z * k});
+    });
+}
+
+static void lightningBolt(Engine* e, glm::vec3 a, glm::vec3 b, glm::vec3 color) {
+    Bolt* slot = &e->bolts[0];
+    for (auto& bl : e->bolts) if (bl.life <= 0.f) { slot = &bl; break; }
+    Bolt& bl = *slot;
+    bl.n = 14;
+    glm::vec3 d = b - a;
+    float len = glm::length(d);
+    glm::vec3 side = glm::normalize(glm::cross(d, glm::vec3(0, 1, 0)) + glm::vec3(1e-4f));
+    glm::vec3 up = glm::normalize(glm::cross(side, d));
+    for (int i = 0; i < bl.n; ++i) {
+        float t = float(i) / (bl.n - 1);
+        float jit = (i == 0 || i == bl.n - 1) ? 0.f : len * 0.05f;
+        bl.pts[i] = a + d * t + side * e->fxRng.range(-jit, jit) + up * e->fxRng.range(-jit, jit);
+    }
+    bl.color = color;
+    bl.life = 0.18f;
+}
+
+void castSpell(Engine* e, int element) {
+    if (e->castCooldown > 0.f || e->player < 0 || e->player >= int(e->characters.size())) return;
+    CharacterInfo& c = e->characters[e->player];
+    GameObject* go = e->scene.get(c.root);
+    if (!go || !go->rigidBody || !go->rigidBody->body) return;
+    element = std::clamp(element, 0, EL_Count - 1);
+    FxPalette pal = fxPalette(element);
+    glm::vec3 dir = aimDirection(e);
+    // vira o personagem para a mira e lança da altura do peito, à frente do corpo
+    float yaw = std::atan2(dir.x, dir.z);
+    glm::quat q = glm::angleAxis(yaw, glm::vec3(0, 1, 0));
+    btTransform t = go->rigidBody->body->getWorldTransform();
+    t.setRotation({q.x, q.y, q.z, q.w});
+    go->rigidBody->body->setWorldTransform(t);
+    go->transform.setRotation(q);
+    glm::vec3 from = go->transform.position + glm::vec3(0, c.height * 0.72f, 0) + glm::normalize(glm::vec3(dir.x, 0, dir.z)) * 0.6f;
+    e->castCooldown = 0.45f;
+    if (element == EL_Lightning) {  // raio: instantâneo
+        glm::vec3 hit; GameObject* obj = nullptr; float frac;
+        glm::vec3 aimFrom = e->camera.position;
+        bool any = e->physics.raycastIgnoring(aimFrom, aimFrom + dir * 80.f, go->rigidBody->body, hit, obj, frac);
+        glm::vec3 end = any ? hit : aimFrom + dir * 80.f;
+        lightningBolt(e, from, end, pal.glow);
+        addFlash(e, fxExplosion(e->particles, e->fxRng, pal, end, 0.5f), 0.2f);
+        addFlash(e, {from, pal.light, 15.f, 10.f}, 0.18f);
+        radialImpulse(e, end, 3.f, 7.f, go->rigidBody->body);
+        return;
+    }
+    for (auto& p : e->projectiles) {
+        if (p.active) continue;
+        p.active = true;
+        p.pos = from;
+        p.vel = dir * 24.f;
+        p.pal = pal;
+        p.element = element;
+        p.life = 3.f;
+        p.ignore = go->rigidBody->body;
+        break;
+    }
+}
+
+void updateEffects(Engine* e, float dt) {
+    e->castCooldown -= dt;
+    // emissores (rodam também no editor, para ver o efeito enquanto monta a cena)
+    e->emitters.forEach([&](Emitter& em, EmitterPool::Handle) {
+        GameObject* o = em.owner;
+        if (!o || !o->active) return;
+        glm::vec3 pos = o->transform.worldPosition();
+        float s = std::max(0.1f, o->transform.scale.x);
+        FxLight l = fxContinuous(e->particles, e->fxRng, em.kind, em.palette(), pos, s, dt, em.accum, em.timer);
+        if (em.kind == FX_Explosion && l.intensity > 0.f) addFlash(e, l, 0.35f);
+    });
+    // projéteis de magia
+    for (auto& p : e->projectiles) {
+        if (!p.active) continue;
+        if (!e->playing) { p.active = false; continue; }
+        glm::vec3 next = p.pos + p.vel * dt;
+        glm::vec3 hit; GameObject* obj = nullptr; float frac;
+        bool any = e->physics.raycastIgnoring(p.pos, next, p.ignore, hit, obj, frac);
+        p.life -= dt;
+        if (any || p.life <= 0.f) {
+            glm::vec3 at = any ? hit : next;
+            addFlash(e, fxExplosion(e->particles, e->fxRng, p.pal, at, any ? 0.8f : 0.4f), 0.4f);
+            if (any) radialImpulse(e, at, 4.5f, 9.f, p.ignore);
+            p.active = false;
+            continue;
+        }
+        p.pos = next;
+        fxSpellTrail(e->particles, e->fxRng, p.pal, p.pos, p.vel, dt);
+    }
+    for (auto& f : e->flashes) f.life -= dt;
+    for (auto& b : e->bolts) b.life -= dt;
+    e->particles.update(dt);
+}
+
+int gatherLights(Engine* e, PointLight* out, int max) {
+    int n = std::min(e->pointCount, max);
+    for (int i = 0; i < n; ++i) out[i] = e->points[i];
+    struct Cand { FxLight l; float score; };
+    Cand c[64];
+    int nc = 0;
+    glm::vec3 cam = e->camera.position;
+    auto push = [&](const FxLight& l) {
+        if (l.intensity <= 0.f || nc >= 64) return;
+        glm::vec3 d = l.pos - cam;
+        c[nc++] = {l, glm::dot(d, d) / (l.intensity + 1e-3f)};
+    };
+    e->emitters.forEach([&](Emitter& em, EmitterPool::Handle) {
+        GameObject* o = em.owner;
+        if (!o || !o->active || em.kind == FX_Smoke || em.kind == FX_Explosion) return;
+        float s = std::max(0.1f, o->transform.scale.x);
+        float flick = 0.85f + 0.3f * std::sin(em.timer * 23.f) * std::sin(em.timer * 7.3f);
+        float inten = (em.kind == FX_Torch ? 2.5f : em.kind == FX_Sparks ? 3.f : 6.f) * s * flick;
+        push({o->transform.worldPosition() + glm::vec3(0, 0.8f * s, 0), em.palette().light, inten, 7.f * s});
+    });
+    for (auto& p : e->projectiles) if (p.active) push({p.pos, p.pal.light, 8.f, 8.f});
+    for (auto& f : e->flashes)
+        if (f.life > 0.f) { FxLight l = f.light; l.intensity *= f.life / f.maxLife; push(l); }
+    for (auto& b : e->bolts) if (b.life > 0.f) push({b.pts[b.n / 2], b.color, 20.f, 14.f});
+    std::sort(c, c + nc, [](const Cand& a, const Cand& b) { return a.score < b.score; });
+    for (int i = 0; i < nc && n < max; ++i) out[n++] = {c[i].l.pos, c[i].l.radius, c[i].l.color, c[i].l.intensity};
+    return n;
+}
+
+void drawEffectsOverlay(Engine* e, const glm::mat4& vp, bool editor) {
+    for (auto& b : e->bolts) {
+        if (b.life <= 0.f) continue;
+        float a = std::min(1.f, b.life * 10.f);
+        for (int i = 0; i + 1 < b.n; ++i) {
+            e->renderer.line(vp, b.pts[i], b.pts[i + 1], glm::vec4(b.color, 0.35f * a), 14.f, true);
+            e->renderer.line(vp, b.pts[i], b.pts[i + 1], glm::vec4(glm::mix(b.color, glm::vec3(1.f), 0.7f), a), 3.5f, true);
+        }
+    }
+    if (!editor) return;
+    // marcador dos emissores (para achar e selecionar no editor)
+    e->emitters.forEach([&](Emitter& em, EmitterPool::Handle) {
+        if (!em.owner) return;
+        glm::vec3 p = em.owner->transform.worldPosition();
+        glm::vec4 col(em.palette().glow, 0.9f);
+        float s = 0.35f;
+        e->renderer.line(vp, p + glm::vec3(-s, 0, 0), p + glm::vec3(s, 0, 0), col, 2.f, false);
+        e->renderer.line(vp, p + glm::vec3(0, 0, -s), p + glm::vec3(0, 0, s), col, 2.f, false);
+        e->renderer.line(vp, p, p + glm::vec3(0, 2.f * s, 0), col, 2.f, false);
+    });
+}
+
+bool pickEmitter(Engine* e, glm::vec3 o, glm::vec3 d, float& best, GameObject*& hit) {
+    bool any = false;
+    e->emitters.forEach([&](Emitter& em, EmitterPool::Handle) {
+        if (!em.owner || em.owner->id < 0) return;
+        glm::vec3 c = em.owner->transform.worldPosition() + glm::vec3(0, 0.5f, 0);
+        float r = 0.8f * std::max(0.3f, em.owner->transform.scale.x);
+        glm::vec3 oc = o - c;
+        float b = glm::dot(oc, d), cc = glm::dot(oc, oc) - r * r, disc = b * b - cc;
+        if (disc < 0.f) return;
+        float t = -b - std::sqrt(disc);
+        if (t > 0.f && t < best) { best = t; hit = em.owner; any = true; }
+    });
+    return any;
 }
 
 }  // namespace eng

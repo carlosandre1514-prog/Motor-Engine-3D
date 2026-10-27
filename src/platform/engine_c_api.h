@@ -86,6 +86,17 @@ void    engine_player_jump(Engine*);
 void    engine_player_fire(Engine*);
 int     engine_player_weapon(Engine*);                          // tipo da arma ou -1
 
+// Câmera do editor: alvo, ângulos (radianos) e distância
+void    engine_set_camera(Engine*, float tx, float ty, float tz, float yaw, float pitch, float distance);
+
+// ---- Efeitos (partículas)
+// kind: 0 fogueira, 1 tocha, 2 fumaça, 3 faíscas, 4 aura mágica, 5 portal, 6 explosão (repete), 7 orbe, 8 coluna de luz
+// element: 0 fogo, 1 gelo, 2 trevas, 3 luz, 4 veneno, 5 raio, 6 arcano. Cor livre: engine_set_object_color.
+int     engine_create_effect(Engine*, int kind, int element);
+void    engine_spawn_effect(Engine*, int kind, int element, float x, float y, float z);  // instantâneo
+void    engine_set_effect_element(Engine*, int element);        // muda o elemento do efeito selecionado
+void    engine_player_cast(Engine*, int element);               // magia do jogador (Play)
+
 // Touch: action 0=down 1=move 2=up; ids/xy em arrays de n dedos (pixels)
 void    engine_touch(Engine*, int action, int n, const int* ids, const float* xy);
 

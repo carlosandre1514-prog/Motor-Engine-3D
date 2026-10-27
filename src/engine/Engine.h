@@ -10,6 +10,8 @@
 #include "procgen/Buildings.h"
 #include "procgen/Character.h"
 #include "procgen/TextureGen.h"
+#include "render/Effects.h"
+#include "render/Particles.h"
 #include "render/Renderer.h"
 #include "scene/Animator.h"
 #include "scene/Scene.h"
@@ -64,6 +66,19 @@ enum MapKind { MAP_None = -1, MAP_Infinite = 0, MAP_City, MAP_Favela, MAP_School
 
 struct Tracer { glm::vec3 a, b; float life = 0.f; };
 
+// Efeitos em andamento
+struct FxFlash { FxLight light{}; float life = 0.f, maxLife = 0.f; };
+struct Projectile {
+    bool active = false;
+    glm::vec3 pos{0.f}, vel{0.f};
+    FxPalette pal{};
+    int element = 0;
+    float life = 0.f;
+    const btCollisionObject* ignore = nullptr;
+};
+struct Bolt { glm::vec3 pts[14]; int n = 0; glm::vec3 color{1.f}; float life = 0.f; };
+using EmitterPool = ObjectPool<Emitter, 256>;
+
 struct Engine {
     Renderer renderer;
     Scene scene;
@@ -80,6 +95,15 @@ struct Engine {
     MeshRendererPool meshRenderers;
     AnimatorPool animatorPool;
     RigidBodyPool bodies;
+    EmitterPool emitters;
+
+    // Efeitos
+    ParticleSystem particles;
+    Rng fxRng{7};
+    FxFlash flashes[16];
+    Projectile projectiles[32];
+    Bolt bolts[8];
+    float castCooldown = 0.f;
 
     std::vector<std::unique_ptr<LoadedModel>> models;  // glTF e personagens procedurais
     std::vector<Scene::Handle> objects;                // id público -> handle
@@ -168,6 +192,16 @@ int characterOfSelection(Engine* e);
 void setPlayer(Engine* e, int character);
 void updatePlayer(Engine* e, float dt);
 void updateAttachments(Engine* e);
+
+// ---- efeitos (Effects no Engine.cpp)
+int createEffect(Engine* e, int kind, int element);              // objeto com emissor contínuo
+void spawnEffect(Engine* e, int kind, int element, glm::vec3 pos); // efeito instantâneo (explosão...)
+void castSpell(Engine* e, int element);                          // magia do jogador
+void addFlash(Engine* e, const FxLight& l, float life);
+void updateEffects(Engine* e, float dt);
+int gatherLights(Engine* e, PointLight* out, int max);           // luzes da cena + luzes dos efeitos
+void drawEffectsOverlay(Engine* e, const glm::mat4& vp, bool editor);
+bool pickEmitter(Engine* e, glm::vec3 o, glm::vec3 d, float& t, GameObject*& hit);
 
 // ---- mundo (World.cpp)
 void loadMap(Engine* e, int kind, uint32_t seed);

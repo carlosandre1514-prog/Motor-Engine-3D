@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_precision.hpp>
+#include <string>
 #include "core/Pool.h"
 #include "render/Camera.h"
 #include "render/Lights.h"
@@ -12,6 +13,8 @@
 #include "scene/Scene.h"
 
 namespace eng {
+
+class ParticleSystem;  // render/Particles.h
 
 constexpr uint32_t kInvalidId = 0xFFFFFFFFu;
 
@@ -91,6 +94,9 @@ public:
 
     const FrameStats& stats() const { return stats_; }
     float fogDensity = 0.f;       // neblina exponencial (cor = horizonte do céu); 0 = desligada
+    // Compila "<dir>/<vs>" + "<dir>/<fs>" com o common.glsl (para outros sistemas, ex.: partículas)
+    GLuint loadProgram(const char* vsFile, const char* fsFile);
+    ParticleSystem* particles = nullptr;  // desenhado depois do céu, antes das linhas do editor
     GLuint targetFbo = 0;         // 0 = tela. Outro valor: renderiza em FBO (ex.: textura do Flutter)
     float shadowDistance = 40.f;
 
@@ -120,6 +126,7 @@ private:
     bool envValid_ = false;
     glm::vec4 sh_[9] = {};
     int width_ = 1, height_ = 1;
+    std::string shaderDir_;
 
     // Estado do frame
     CascadeSet cascades_{};

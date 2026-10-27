@@ -219,6 +219,70 @@ int main(int argc, char** argv) {
     save(out, "8_construcoes.png");
     stats(e, "construcoes");
 
+    std::printf("[11] efeitos\n");
+    engine_new_scene(e);
+    engine_set_sun_intensity(e, 1.2f);
+    engine_set_exposure(e, 0.9f);
+    for (int k = 0; k < 9; ++k) {           // todos os tipos, elemento variando
+        int id = engine_create_effect(e, k, k % 7);
+        float p[3], rr[3], ss[3];
+        engine_get_transform(e, id, p, rr, ss);
+        p[0] = (k - 4) * 3.f; p[2] = 0.f;
+        engine_set_transform(e, id, p, rr, ss);
+    }
+    for (int el = 0; el < 7; ++el) {        // fogueiras dos 7 elementos
+        int id = engine_create_effect(e, 0, el);
+        float p[3], rr[3], ss[3];
+        engine_get_transform(e, id, p, rr, ss);
+        p[0] = (el - 3) * 3.f; p[2] = 6.f;
+        engine_set_transform(e, id, p, rr, ss);
+    }
+    {
+        int id = engine_create_effect(e, 4, 0);   // aura com cor livre (rosa)
+        engine_set_object_color(e, 1.f, 0.4f, 0.7f);
+        float p[3], rr[3], ss[3];
+        engine_get_transform(e, id, p, rr, ss);
+        p[0] = 0.f; p[2] = -6.f;
+        engine_set_transform(e, id, p, rr, ss);
+    }
+    engine_select(e, -1);
+    engine_set_camera(e, 0.f, 1.f, 2.f, 3.14159f + 0.25f, 0.32f, 19.f);
+    frames(e, 60);
+    save(out, "10_efeitos.png");
+    stats(e, "efeitos");
+    // magia e tiro no Play
+    engine_new_scene(e);
+    for (int i = 0; i < 6; ++i) {  // alvos à frente do jogador (+Z)
+        int id = engine_add_object(e, i % 4, 1);
+        float p[3], rr[3], ss[3];
+        engine_get_transform(e, id, p, rr, ss);
+        p[0] = (i % 3 - 1) * 1.5f; p[1] = 0.6f + (i / 3) * 1.1f; p[2] = 9.f;
+        engine_set_transform(e, id, p, rr, ss);
+    }
+    engine_set_camera(e, 0.f, 1.f, 0.f, 0.f, 0.f, 8.f);
+    engine_create_random_character(e, 5, 1);
+    engine_create_weapon(e, 1);
+    engine_set_play(e, 1);
+    frames(e, 20);
+    engine_player_cast(e, 0);
+    frames(e, 9);
+    save(out, "11_magia_fogo.png");
+    frames(e, 60);
+    engine_player_cast(e, 2);
+    frames(e, 26);
+    save(out, "11_magia_trevas.png");
+    frames(e, 60);
+    engine_player_cast(e, 5);
+    frames(e, 2);
+    save(out, "11_magia_raio.png");
+    frames(e, 30);
+    engine_player_fire(e);
+    frames(e, 1);
+    save(out, "11_tiro.png");
+    engine_set_play(e, 0);
+    engine_set_sun_intensity(e, 3.2f);
+    engine_set_exposure(e, 1.f);
+
     const char* maps[] = {"infinito", "cidade", "favela", "colegio", "bairro"};
     for (int mk = 0; mk < 5; ++mk) {
         std::printf("[10] mapa %s\n", maps[mk]);
