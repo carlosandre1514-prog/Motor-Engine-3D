@@ -220,6 +220,34 @@ int main(int argc, char** argv) {
         }
         if (nCities < 3) { std::printf("  [ERRO] poucas cidades\n"); ++g_fail; }
     };
+    auto water = [&]() {
+        std::printf("[22] água\n");
+        for (int mk : {0, 5}) {
+            engine_load_map(e, mk, 3);
+            // procura mar perto do jogador
+            float best[3] = {0, 0, 0};
+            bool found = false;
+            for (float rad = 40.f; rad < 1200.f && !found; rad += 40.f)
+                for (int k = 0; k < 24 && !found; ++k) {
+                    float a = k * 0.2618f;
+                    float x = std::cos(a) * rad, z = std::sin(a) * rad;
+                    if (mk == 5) { x += -1822.f; z += 274.f; }
+                    char in[96];
+                    std::snprintf(in, sizeof(in), "{\"pontos\":[[%.1f,%.1f]]}", x, z);
+                    std::string r = engine_tool_call(e, "altura_terreno", in);
+                    float h = std::atof(r.c_str() + r.find('[') + 1);
+                    if (h < -3.f) { best[0] = x; best[2] = z; found = true; }
+                }
+            for (int k = 0; k < 3; ++k) {
+                engine_set_camera(e, best[0], 0.f, best[2], 0.4f + k * 0.9f, 0.12f + 0.08f * k, 18.f + k * 10.f);
+                frames(e, 40, 1.f / 20.f);
+                char name[64];
+                std::snprintf(name, sizeof(name), "22_agua_%d_%d.png", mk, k);
+                save(out, name);
+            }
+        }
+    };
+    if (std::getenv("SO_AGUA")) { water(); engine_destroy(e); return g_fail ? 1 : 0; }
     if (std::getenv("SO_PLANETA")) { planet(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_INTERIORES")) { interiors(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
 

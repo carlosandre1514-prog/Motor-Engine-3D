@@ -110,6 +110,7 @@ bool Renderer::init(const char* shaderDir) {
         p->uAlphaCut = glGetUniformLocation(p->id, "uAlphaCutoff");
         p->uOccStrength = glGetUniformLocation(p->id, "uOcclusionStrength");
         p->uMode = glGetUniformLocation(p->id, "uMode");
+        p->uTime = glGetUniformLocation(p->id, "uTime");
         GLuint bi = glGetUniformBlockIndex(p->id, "SceneBlock");
         if (bi != GL_INVALID_INDEX) glUniformBlockBinding(p->id, bi, 0);
         bi = glGetUniformBlockIndex(p->id, "JointBlock");
@@ -360,6 +361,7 @@ void Renderer::bindMaterial(const Program& p, const Material& m) {
     glUniform3fv(p.uEmis, 1, &m.emissive_factor[0]);
     glUniform1f(p.uAlphaCut, m.alphaCutoff);
     glUniform1i(p.uMode, m.mode);
+    if (p.uTime >= 0) glUniform1f(p.uTime, time);
     glUniform1f(p.uOccStrength, m.occlusion ? m.occlusionStrength : 0.f);
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, m.albedo);
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, m.normal);

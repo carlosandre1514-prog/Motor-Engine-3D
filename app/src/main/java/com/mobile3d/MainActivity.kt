@@ -397,7 +397,7 @@ class MainActivity : Activity() {
     private fun copyShaders(): String {
         val dir = File(filesDir, "shaders").apply { mkdirs() }
         for (name in assets.list("").orEmpty()) {
-            if (!(name.endsWith(".vert") || name.endsWith(".frag") || name.endsWith(".glsl"))) continue
+            if (!(name.endsWith(".vert") || name.endsWith(".frag") || name.endsWith(".glsl") || name.endsWith(".jpg"))) continue
             assets.open(name).use { input -> File(dir, name).outputStream().use { input.copyTo(it) } }
         }
         return dir.absolutePath

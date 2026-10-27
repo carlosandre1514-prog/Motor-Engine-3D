@@ -23,7 +23,8 @@ uniform float uMetallicFactor;
 uniform vec3 uEmissiveFactor;
 uniform float uAlphaCutoff;       // 0 = opaco
 uniform float uOcclusionStrength; // 0 = sem textura de AO
-uniform int uMode;                // 0 padrão, 1 terreno
+uniform int uMode;                // 0 padrão, 1 terreno, 2 água (oceano)
+uniform float uTime;              // segundos (ondas da água)
 
 out vec4 oColor;
 
@@ -95,7 +96,45 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float rough, float
     return (kd * albedo / PI + spec) * radiance * NdotL;
 }
 
+// Água realista (técnica do projeto "ocean" de Jérémy Bouny, MIT): 4 camadas da textura de normais
+// andando em velocidades diferentes, brilho do sol, Fresnel e cor de espalhamento. O reflexo vem do céu
+// (cubemap do ambiente) em vez de redesenhar a cena espelhada: muito mais leve no celular.
+vec3 waterNoise(vec2 uv) {
+    float t = uTime;
+    vec2 uv0 = uv / 41.0 + vec2(t / 17.0, t / 29.0);
+    vec2 uv1 = uv / 47.0 - vec2(t / -19.0, t / 31.0);
+    vec2 uv2 = uv / vec2(9.1, 10.3) + vec2(t / 101.0, t / 97.0);
+    vec2 uv3 = uv / vec2(13.7, 12.9) - vec2(t / 109.0, t / -113.0);
+    vec4 n = texture(uNormalMap, uv0) + texture(uNormalMap, uv1) + texture(uNormalMap, uv2) + texture(uNormalMap, uv3);
+    return n.xyz * 0.5 - 1.0;
+}
+
+vec3 waterColor() {
+    vec3 up = vec3(0.0, 1.0, 0.0);
+    vec3 noise = waterNoise(vWorldPos.xz);
+    vec3 N = normalize(vec3(noise.x, 1.0, noise.y));     // superfície plana + perturbação das ondas
+    vec3 toEye = uCamPos.xyz - vWorldPos;
+    vec3 V = normalize(toEye);
+    if (dot(V, up) < 0.0) N = -N;                          // olhando de baixo d'água
+    float sunI = max(max(uDirColor.r, uDirColor.g), uDirColor.b);
+    vec3 sun = uDirColor.rgb / max(sunI, 1e-3) * min(sunI, 4.0) * 0.45;
+    vec3 L = normalize(-uDirDir.xyz);
+    vec3 refl = normalize(reflect(-L, N));
+    vec3 specular = pow(max(0.0, dot(V, refl)), 100.0) * sun * 2.0;
+    vec3 diffuse = max(dot(L, N), 0.0) * sun * 0.5;
+    vec3 R = reflect(-V, N);
+    R.y = abs(R.y);                                         // não reflete o "chão" do céu
+    vec3 sky = textureLod(uEnvMap, R, 1.0).rgb * uEnvParams.z;
+    float theta = max(dot(V, N), 0.0);
+    float reflectance = 0.06 + 0.94 * pow(1.0 - theta, 4.0);   // de cima vê a água funda; de lado, o céu
+    vec3 scatter = (0.35 + 0.65 * max(0.0, dot(N, V))) * uAlbedoFactor.rgb * (0.5 + shIrradiance(up) * 2.0);
+    vec3 c = mix(sun * diffuse * 0.08 + scatter, sky * 0.75 + sky * specular * 0.5, reflectance) + specular * 0.9;
+    if (uFog.w > 0.0) c = mix(c, uFog.rgb, 1.0 - exp(-uFog.w * length(toEye)));
+    return c;
+}
+
 void main() {
+    if (uMode == 2) { oColor = vec4(toDisplay(waterColor()), 1.0); return; }
     vec4 albedoS = texture(uAlbedoMap, vUV) * uAlbedoFactor * vColor;  // textura em sRGB: o GL já linearizou
     if (albedoS.a < uAlphaCutoff) discard;
     if (uMode == 1) {

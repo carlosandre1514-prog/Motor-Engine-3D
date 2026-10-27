@@ -93,6 +93,7 @@ public:
     void line(const glm::mat4& viewProj, glm::vec3 a, glm::vec3 b, glm::vec4 color, float thicknessPx, bool depthTest);
 
     const FrameStats& stats() const { return stats_; }
+    float time = 0.f;             // segundos desde o início (ondas da água)
     float fogDensity = 0.f;       // neblina exponencial (cor = horizonte do céu); 0 = desligada
     // Compila "<dir>/<vs>" + "<dir>/<fs>" com o common.glsl (para outros sistemas, ex.: partículas)
     GLuint loadProgram(const char* vsFile, const char* fsFile);
@@ -104,7 +105,7 @@ private:
     struct Program {
         GLuint id = 0;
         GLint uModel = -1, uLightVP = -1;
-        GLint uAlbedoF = -1, uRough = -1, uMetal = -1, uEmis = -1, uAlphaCut = -1, uOccStrength = -1, uMode = -1;
+        GLint uAlbedoF = -1, uRough = -1, uMetal = -1, uEmis = -1, uAlphaCut = -1, uOccStrength = -1, uMode = -1, uTime = -1;
     };
 
     void updateEnvironment(const Environment& env);
@@ -127,6 +128,9 @@ private:
     glm::vec4 sh_[9] = {};
     int width_ = 1, height_ = 1;
     std::string shaderDir_;
+public:
+    const std::string& shaderDir() const { return shaderDir_; }
+private:
 
     // Estado do frame
     CascadeSet cascades_{};

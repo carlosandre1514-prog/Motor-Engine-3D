@@ -88,6 +88,7 @@ void engine_frame(Engine* e, float dt) {
     if (!e) return;
     auto t0 = std::chrono::steady_clock::now();
     dt = std::clamp(dt, 0.f, 0.1f);
+    e->renderer.time = std::fmod(e->renderer.time + dt, 3600.f);
 
     if (e->playing) {
         eng::updatePlayer(e, dt);

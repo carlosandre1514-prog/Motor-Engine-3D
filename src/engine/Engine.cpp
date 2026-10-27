@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include "assets/MeshUtils.h"
+#include <stb_image.h>
 #include "assets/TextureManager.h"
 #include "scene/Humanoid.h"
 #include <glm/gtx/matrix_decompose.hpp>
@@ -123,6 +124,18 @@ void ensureBasics(Engine* e) {
         m.normal = t.normal.empty() ? tx.flatNormal() : tx.fromPixels(t.normal.data(), t.w, t.h, 4, false);
         m.emissive = tx.white();
         m.roughness = mp.roughness; m.metallic = mp.metallic; m.mode = mp.mode; m.doubleSided = mp.doubleSided;
+        if (Mat(k) == Mat::Water) {
+            // água padrão: oceano animado (shader "ocean"); as ondas vêm de waternormals.jpg, junto dos shaders
+            int w, h, comp;
+            std::string path = e->renderer.shaderDir() + "/waternormals.jpg";
+            if (unsigned char* px = stbi_load(path.c_str(), &w, &h, &comp, 4)) {
+                m.normal = tx.fromPixels(px, w, h, 4, false);
+                stbi_image_free(px);
+            }
+            m.mode = 2;
+            m.albedoFactor = glm::vec4(0.01f, 0.07f, 0.12f, 1.f);  // cor da água funda (azul-esverdeado escuro)
+            m.doubleSided = true;
+        }
         e->mats[k] = e->renderer.createMaterial(m);
     }
     e->tintCache.clear();
