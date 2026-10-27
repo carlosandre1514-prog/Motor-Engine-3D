@@ -702,22 +702,26 @@ void setTimeOfDay(Engine* e, float hour) {
     glm::vec2 hz(h0.x * std::cos(az) - h0.y * std::sin(az), h0.x * std::sin(az) + h0.y * std::cos(az));
     float day = glm::smoothstep(-0.08f, 0.2f, el);
     float warm = 1.f - glm::smoothstep(0.05f, 0.45f, el);
+    // vendo o globo, o céu e o sol "de verdade" ficam guardados (o globo usa céu de espaço e sol atrás da câmera)
+    glm::vec3& sunDir = e->globeMode ? e->globeSavedSun : e->sun.direction;
     if (el > -0.02f) {
         float ce = std::cos(std::max(el, 0.03f)), se = std::sin(std::max(el, 0.03f));
-        e->sun.direction = -glm::vec3(hz.x * ce, se, hz.y * ce);
+        sunDir = -glm::vec3(hz.x * ce, se, hz.y * ce);
         e->sun.color = glm::mix(glm::vec3(1.f, 0.95f, 0.88f), glm::vec3(1.f, 0.55f, 0.3f), warm);
         e->sun.intensity = 0.3f + 2.9f * day;
     } else {  // noite: luar azulado
-        e->sun.direction = glm::normalize(glm::vec3(-0.3f, -1.f, 0.2f));
+        sunDir = glm::normalize(glm::vec3(-0.3f, -1.f, 0.2f));
         e->sun.color = {0.55f, 0.65f, 1.f};
         e->sun.intensity = 0.3f;
     }
-    Environment env = e->env;
+    Environment& target = e->globeMode ? e->globeSavedEnv : e->env;
+    Environment env = target;
+    env.ground = Environment{}.ground;
     glm::vec3 nightZ(0.01f, 0.015f, 0.05f), nightH(0.04f, 0.05f, 0.1f);
     env.zenith = glm::mix(nightZ, glm::mix(glm::vec3(0.18f, 0.36f, 0.75f), glm::vec3(0.25f, 0.3f, 0.6f), warm), day);
     env.horizon = glm::mix(nightH, glm::mix(glm::vec3(0.70f, 0.78f, 0.88f), glm::vec3(0.95f, 0.6f, 0.4f), warm), day);
     env.skyIntensity = 0.12f + 0.43f * day;
-    e->env = env;
+    target = env;
     ++e->revision;
 }
 

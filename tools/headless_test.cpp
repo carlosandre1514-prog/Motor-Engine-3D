@@ -396,6 +396,65 @@ int main(int argc, char** argv) {
         frames(e, 3);
         save(out, "25_lado.png");
     };
+    // Play direto do globo (como no celular): o jogador tem que estar em terra, com céu de dia
+    auto globePlay = [&]() {
+        std::printf("[26] play direto do globo\n");
+        engine_load_map(e, 5, 7);
+        frames(e, 3);
+        save(out, "26_globo.png");
+        engine_set_play(e, 1);
+        for (int k = 0; k < 90; ++k) frames(e, 1);
+        save(out, "26_play.png");
+        int pl = -1;
+        for (int i = 0; i < engine_object_count(e) && pl < 0; ++i)
+            if (std::strcmp(engine_object_name(e, i), "Jogador") == 0) pl = i;
+        float p[3] = {0, 0, 0}, r[3], s[3];
+        if (pl >= 0) engine_get_transform(e, pl, p, r, s);
+        std::printf("  jogador %d em %.1f %.1f %.1f, região %s\n", pl, p[0], p[1], p[2], engine_region_name(e));
+        engine_player_input(e, 0.f, 1.f, 1);
+        for (int k = 0; k < 60; ++k) frames(e, 1);
+        engine_player_input(e, 0.f, 0.f, 0);
+        save(out, "26_play_andou.png");
+        if (pl >= 0) engine_get_transform(e, pl, p, r, s);
+        std::printf("  depois de correr: %.1f %.1f %.1f\n", p[0], p[1], p[2]);
+        if (p[1] < 0.5f) { std::printf("  [ERRO] jogador caiu na água/embaixo do chão\n"); ++g_fail; }
+        engine_set_play(e, 0);
+        // projeto salvo em outra cidade, com regras de jogo, reaberto (como o app faz ao abrir)
+        engine_planet_goto(e, 2);
+        for (int k = 0; k < 40; ++k) frames(e, 1);
+        engine_tool_call(e, "definir_regras", "{\"tempo\":120,\"vida\":100}");
+        std::string proj = engine_export_project(e);
+        std::printf("  projeto: %zu bytes\n", proj.size());
+        engine_new_scene(e);
+        frames(e, 2);
+        if (!engine_import_project(e, proj.c_str())) { std::printf("  [ERRO] reabrir: %s\n", engine_last_error(e)); ++g_fail; }
+        for (int k = 0; k < 5; ++k) frames(e, 1);
+        save(out, "26_reaberto.png");
+        engine_set_play(e, 1);
+        for (int k = 0; k < 90; ++k) frames(e, 1);
+        save(out, "26_reaberto_play.png");
+        pl = -1;
+        for (int i = 0; i < engine_object_count(e) && pl < 0; ++i)
+            if (std::strcmp(engine_object_name(e, i), "Jogador") == 0) pl = i;
+        if (pl >= 0) engine_get_transform(e, pl, p, r, s);
+        std::printf("  reaberto: jogador %d em %.1f %.1f %.1f, região %s\n", pl, p[0], p[1], p[2], engine_region_name(e));
+        if (pl < 0 || p[1] < 0.5f) { std::printf("  [ERRO] reaberto: jogador sumiu ou caiu\n"); ++g_fail; }
+        engine_set_play(e, 0);
+        // reabrir o projeto com o globo na tela (céu de espaço) e dar Play: o céu tem que voltar a ser de dia
+        engine_load_map(e, 5, 7);
+        frames(e, 3);
+        engine_import_project(e, proj.c_str());
+        frames(e, 3);
+        engine_set_play(e, 1);
+        for (int k = 0; k < 60; ++k) frames(e, 1);
+        save(out, "26_reaberto_do_globo.png");
+        std::vector<unsigned char> px(4);
+        glReadPixels(W / 2, H - 4, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        std::printf("  céu no topo da tela: %d %d %d\n", px[0], px[1], px[2]);
+        if (px[2] < 90) { std::printf("  [ERRO] céu escuro depois de reabrir do globo\n"); ++g_fail; }
+        engine_set_play(e, 0);
+    };
+    if (std::getenv("SO_GLOBO_PLAY")) { globePlay(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ARMAS")) { weapons(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_DESEMPENHO")) { perf(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_KIT")) { kit(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
@@ -1055,6 +1114,7 @@ int main(int argc, char** argv) {
 
     interiors();
     planet();
+    globePlay();
     kit();
     weapons();
 

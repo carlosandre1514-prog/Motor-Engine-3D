@@ -832,6 +832,7 @@ float mapHeight(Engine* e, float x, float z) {
 void clearWorld(Engine* e) {
     for (auto& c : e->chunks) if (c.used) releaseChunk(e, c);
     e->chunks.clear();
+    e->freeGeoMeshes.clear();  // as malhas somem junto com a cena: reaproveitar ids velhos apagava as cidades
     for (auto& s : e->statics) freeStatic(e, s);
     e->statics.clear();
     e->mapKind = MAP_None;

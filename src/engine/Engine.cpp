@@ -344,6 +344,10 @@ void clearScene(Engine* e) {
     e->doors.clear();
     e->teles.clear();
     e->doorMesh = kInvalidId;
+    if (e->globeMode) {  // saindo da cena vendo o globo: volta o céu do planeta (senão o próximo mapa fica com céu de espaço)
+        e->env = e->globeSavedEnv;
+        e->sun.direction = e->globeSavedSun;
+    }
     e->globeMode = false;
     e->globe = {};
     e->editorCam.maxDistance = 500.f;
