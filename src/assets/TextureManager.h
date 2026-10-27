@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <map>
+#include <string>
 #include <vector>
 
 namespace eng {
@@ -69,9 +71,14 @@ public:
     void releaseAll() {
         if (!created_.empty()) glDeleteTextures(GLsizei(created_.size()), created_.data());
         created_.clear();
+        named_.clear();
     }
     // Contexto GL perdido/recriado: os ids antigos não valem mais
-    void forgetAll() { created_.clear(); white_ = flat_ = 0; }
+    void forgetAll() { created_.clear(); named_.clear(); white_ = flat_ = 0; }
+
+    // Textura já enviada, pelo caminho do arquivo (modelos que dividem as mesmas imagens, ex.: o kit da cidade)
+    GLuint named(const std::string& key) const { auto it = named_.find(key); return it == named_.end() ? 0 : it->second; }
+    void setNamed(const std::string& key, GLuint id) { named_[key] = id; }
 
     static bool supportsAstc() {
         const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
@@ -96,6 +103,7 @@ private:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     }
     GLuint white_ = 0, flat_ = 0;
+    std::map<std::string, GLuint> named_;
     std::vector<GLuint> created_;
 };
 

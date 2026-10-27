@@ -402,12 +402,19 @@ class MainActivity : Activity() {
         }
         // texturas do terreno e dos materiais (alguns MB): copiadas só na instalação/atualização do app
         val installed = packageManager.getPackageInfo(packageName, 0).lastUpdateTime.toString()
-        for (sub in listOf("terrain", "materials")) {
-            val folder = File(dir, sub).apply { mkdirs() }
+        fun copyTree(path: String, to: File) {
+            to.mkdirs()
+            for (name in assets.list(path).orEmpty()) {
+                val child = "$path/$name"
+                if (assets.list(child).orEmpty().isNotEmpty()) copyTree(child, File(to, name))
+                else assets.open(child).use { input -> File(to, name).outputStream().use { input.copyTo(it) } }
+            }
+        }
+        for (sub in listOf("terrain", "materials", "kit")) {
+            val folder = File(dir, sub)
             val stamp = File(folder, ".versao")
             if (stamp.exists() && stamp.readText() == installed) continue
-            for (name in assets.list(sub).orEmpty())
-                assets.open("$sub/$name").use { input -> File(folder, name).outputStream().use { input.copyTo(it) } }
+            copyTree(sub, folder)
             stamp.writeText(installed)
         }
         return dir.absolutePath
@@ -478,7 +485,8 @@ class MainActivity : Activity() {
 
     // ---------------- criar ----------------
     private fun createMenu() {
-        val items = arrayOf("Personagem", "Arma", "Efeito (fogo, magia, explosão...)", "Construção", "Natureza e objetos", "Formas básicas (com física)")
+        val items = arrayOf("Personagem", "Arma", "Efeito (fogo, magia, explosão...)", "Construção", "🏙 Kit Cidade (prédios, ruas, peças 3D)",
+                            "Natureza e objetos", "Formas básicas (com física)")
         dialog().setTitle("Criar").setItems(items) { _, which ->
             when (which) {
                 0 -> characterMenu()
@@ -500,7 +508,8 @@ class MainActivity : Activity() {
                         gl { NativeBridge.nativeCreateBuilding(kinds[k], seed()) }
                     }
                 }
-                4 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
+                4 -> kitMenu()
+                5 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
                     gl { NativeBridge.nativeCreateBuilding(6 + k, seed()) }
                 }
                 else -> list("Formas básicas", arrayOf("Cubo", "Esfera", "Cápsula", "Pedra (collider convexo)")) { k ->
@@ -508,6 +517,39 @@ class MainActivity : Activity() {
                 }
             }
         }.show()
+    }
+
+    // Kit Cidade (Downtown City MegaKit, Quaternius, CC0): peças .gltf que vêm no app, salvas no projeto como "kit:Nome"
+    private val kitGroups = listOf(
+        "🏢 Prédios prontos" to listOf("Building_"),
+        "🛣 Ruas e cruzamentos" to listOf("Street_"),
+        "🚶 Calçadas" to listOf("Sidewalk_"),
+        "↗ Faixas e placas no chão" to listOf("Decal_"),
+        "🧱 Paredes de tijolo" to listOf("Brick_"),
+        "🪟 Paredes de metal e vitrines" to listOf("Metal_", "Trim_"),
+        "🚪 Portas, entradas e escadas" to listOf("Door", "Entrance_", "Stairs_"),
+        "🏠 Telhados, pisos e beirais" to listOf("Roof_", "Floor_", "Cornice_"),
+        "🧯 Objetos (ar-condicionado, bueiro, vaso...)" to listOf("Prop_"))
+
+    private fun kitName(file: String) = file.removeSuffix(".gltf").replace('_', ' ')
+        .replace("Building", "Prédio").replace("Small", "pequeno").replace("Medium", "médio").replace("Large", "grande")
+        .replace("Street", "Rua").replace("Sidewalk", "Calçada").replace("Intersection", "cruzamento").replace("Lane", " faixas")
+        .replace("Brick", "Tijolo").replace("Window", "janela").replace("Door", "Porta").replace("Roof", "Telhado")
+        .replace("Floor", "Piso").replace("Stairs", "Escada").replace("Corner", "canto").replace("Curve", "curva")
+
+    private fun kitMenu() {
+        val all = assets.list("kit").orEmpty().filter { it.endsWith(".gltf") }.sorted()
+        if (all.isEmpty()) { toast("O kit não veio neste APK"); return }
+        list("Kit Cidade (${all.size} peças)", kitGroups.map { it.first }.toTypedArray()) { g ->
+            val files = all.filter { f -> kitGroups[g].second.any { f.startsWith(it) } }
+            list(kitGroups[g].first, files.map { kitName(it) }.toTypedArray()) { k ->
+                val name = files[k].removeSuffix(".gltf")
+                gl {
+                    val id = NativeBridge.nativeLoadModel("kit:$name")
+                    if (id < 0) toast("Não deu: ${NativeBridge.nativeLastError()}")
+                }
+            }
+        }
     }
 
     private fun characterMenu() {

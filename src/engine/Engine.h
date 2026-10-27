@@ -215,6 +215,7 @@ struct Engine {
     std::vector<MeshId> freeGeoMeshes;   // malhas de cidade de chunks descarregados (reaproveitadas)
     std::vector<MeshId> freeChunkMeshes;
     Prototype treeProto[3], rockProto, houseProto[3];
+    Prototype kitBuilding[3];          // prédios prontos do kit da cidade (planeta); vazio = não carregou
     Scene::Handle water;
     // Mapa editável: cada construção/árvore/poste vira objeto ("peça"); o projeto guarda só as mudanças
     struct MapPiece { Scene::Handle h; glm::vec3 p, s; glm::quat r; std::string name; };
@@ -365,6 +366,10 @@ void recipeSet(Engine* e, GameObject& root, const char* key, const std::string& 
 void recipePartSet(Engine* e, GameObject& root, int partIndex, const char* key, const std::string& valueJson);
 std::string jsonString(const std::string& s);   // "texto" com escapes JSON
 GameObject* rootOf(Engine* e, GameObject* g);   // raiz editável (com id) acima de g
+// Peça do kit da cidade (shaders/kit/<nome>.gltf) como protótipo: centrada, base no chão, collider na caixa
+bool kitPrototype(Engine* e, const char* name, Prototype& out, float lodFar);
+void spawnPrototype(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float scale, std::vector<Scene::Handle>* out,
+                std::vector<BoxCollider>* colliders);
 int loadModelFile(Engine* e, const char* path); // .glb/.gltf/.fbx -> id da raiz (-1 = erro em lastError)
 std::string gameStatusText(Engine* e);
 // Exporta para .glb: rootId >= 0 = só esse objeto (na origem), -1 = cena inteira (Export.cpp)

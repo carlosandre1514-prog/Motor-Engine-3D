@@ -162,6 +162,8 @@ static const char* baseName(const char* path) {
 
 bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out) {
     tinygltf::TinyGLTF loader;
+    std::string baseDir = path;
+    baseDir = baseDir.substr(0, baseDir.find_last_of("/\\") == std::string::npos ? 0 : baseDir.find_last_of("/\\"));
     tinygltf::Model model;
     std::string err, warn;
     bool ok = endsWithNoCase(path, ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path)
@@ -181,7 +183,11 @@ bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out) {
         auto it = texCache.find(key);
         if (it != texCache.end()) return it->second;
         const auto& im = model.images[src];
+        // imagem externa: a mesma do disco é enviada uma vez só, mesmo entre arquivos diferentes
+        std::string named = im.uri.empty() ? std::string() : baseDir + "/" + im.uri + (srgb ? "#s" : "#l");
+        if (GLuint id = named.empty() ? 0 : tex.named(named)) return texCache[key] = id;
         GLuint id = im.image.empty() ? fallback : tex.fromPixels(im.image.data(), im.width, im.height, im.component, srgb);
+        if (!named.empty() && !im.image.empty()) tex.setNamed(named, id);
         texCache[key] = id;
         return id;
     };

@@ -276,6 +276,33 @@ int main(int argc, char** argv) {
         }
     };
     if (std::getenv("SO_AGUA")) { water(); engine_destroy(e); return g_fail ? 1 : 0; }
+    auto kit = [&]() {
+        std::printf("[23] kit cidade\n");
+        engine_new_scene(e);
+        const char* pieces[] = {"Building_Small_1", "Building_Medium_2_001", "Building_Large_2", "Street_4WayIntersection", "Prop_ACUnit"};
+        float x = -30.f;
+        for (const char* pc : pieces) {
+            int id = engine_load_model(e, (std::string("kit:") + pc).c_str());
+            if (id < 0) { std::printf("  [ERRO] kit %s: %s\n", pc, engine_last_error(e)); ++g_fail; continue; }
+            float p[3], rr[3], ss[3];
+            engine_get_transform(e, id, p, rr, ss);
+            p[0] = x; p[2] = 0.f; p[1] += 0.06f;  // acima do chão da cena (sem z-fighting)
+            engine_set_transform(e, id, p, rr, ss);
+            x += 24.f;
+        }
+        engine_select(e, -1);
+        engine_set_camera(e, 0.f, 8.f, 0.f, 0.35f, 0.15f, 60.f);
+        frames(e, 3);
+        stats(e, "kit");
+        save(out, "23_kit.png");
+        engine_set_camera(e, -30.f, 6.f, 0.f, 0.2f, 0.05f, 22.f);
+        frames(e, 2);
+        save(out, "23_kit_perto.png");
+        engine_set_camera(e, 42.f, 0.f, 0.f, 0.6f, 0.7f, 26.f);  // cruzamento visto de cima
+        frames(e, 2);
+        save(out, "23_kit_rua.png");
+    };
+    if (std::getenv("SO_KIT")) { kit(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_PLANETA")) { planet(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_INTERIORES")) { interiors(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
 
@@ -932,6 +959,7 @@ int main(int argc, char** argv) {
 
     interiors();
     planet();
+    kit();
 
     engine_destroy(e);
     check("destroy");

@@ -262,7 +262,15 @@ void planetDecorateChunk(Engine* e, TerrainChunk& chunk, float x0, float z0, flo
                     for (int k = 0; k < 4; ++k) {
                         if (r.chance(0.12f)) continue;
                         glm::vec3 p(bx0 + kBlock * ((k & 1) ? 0.73f : 0.27f), top, bz0 + kBlock * ((k & 2) ? 0.73f : 0.27f));
-                        g.place(p, (k & 2) ? 0.f : 3.14159265f);
+                        float yaw = (k & 2) ? 0.f : 3.14159265f;
+                        // prédio pronto do kit em parte dos lotes (sorteio próprio: não muda o resto da cidade)
+                        uint32_t kh = hash2(i * 4 + k, j + ci * 97, e->mapSeed + 515);
+                        const Prototype& kp = e->kitBuilding[kh % 5 == 0 ? 2 : kh % 2];  // o grande (45 mil triângulos) é mais raro
+                        if (!kp.parts.empty() && int((kh >> 8) % 100) < (c.kind == 0 ? 25 : 15)) {
+                            spawnPrototype(e, kp, p, yaw, 1.f, &chunk.objects, &boxes);
+                            continue;
+                        }
+                        g.place(p, yaw);
                         buildApartment(g, r, r.range(15.f, 20.f), r.range(13.f, 18.f), r.irange(3, c.kind == 0 ? 12 : 7), buildingPaint(r));
                     }
                 } else {

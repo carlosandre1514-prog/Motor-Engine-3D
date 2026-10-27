@@ -311,7 +311,12 @@ void recipePartSet(Engine* e, GameObject& root, int partIndex, const char* key, 
 
 std::string jsonString(const std::string& s) { return json(s).dump(-1, ' ', false, json::error_handler_t::replace); }
 
-int loadModelFile(Engine* e, const char* path) {
+std::string kitPath(Engine* e, const std::string& name) { return e->renderer.shaderDir() + "/kit/" + name + ".gltf"; }
+
+int loadModelFile(Engine* e, const char* pathIn) {
+    // "kit:Nome" = peça do kit de cidade que vem com o app (shaders/kit/Nome.gltf): o projeto guarda só o nome
+    std::string resolved = std::strncmp(pathIn, "kit:", 4) == 0 ? kitPath(e, pathIn + 4) : std::string(pathIn);
+    const char* path = resolved.c_str();
     auto model = std::make_unique<LoadedModel>();
     LoadContext ctx{e->renderer, e->scene, e->meshRenderers, e->animatorPool};
     std::string ext = path;
@@ -381,6 +386,31 @@ static bool protoFromModel(Engine* e, const std::string& path, Prototype& proto)
     if (parts.empty()) return false;
     proto.parts = parts;
     return true;
+}
+
+bool kitPrototype(Engine* e, const char* name, Prototype& out, float lodFar) {
+    int id = loadModelFile(e, (std::string("kit:") + name).c_str());
+    GameObject* root = objectById(e, id);
+    if (!root) return false;
+    root->transform.setPosition(glm::vec3(0.f));
+    e->scene.updateTransforms();
+    AABB b;
+    if (!subtreeBounds(e, *root, b)) { deleteObject(e, Scene::handleOf(*root)); return false; }
+    glm::vec3 base((b.min.x + b.max.x) * 0.5f, b.min.y, (b.min.z + b.max.z) * 0.5f);
+    glm::mat4 fix = glm::translate(glm::mat4(1.f), -base);
+    out = Prototype{};
+    out.name = name;
+    Scene::forEachInSubtree(*root, [&](GameObject& g) {
+        if (!g.meshRenderer) return;
+        const Mesh* m = e->renderer.mesh(g.meshRenderer->mesh);
+        if (!m || m->skinned) return;
+        const glm::mat4* pal;
+        out.parts.push_back({g.meshRenderer->mesh, g.meshRenderer->material, 0.f, lodFar, fix * renderMatrix(e, g, &pal)});
+    });
+    deleteObject(e, Scene::handleOf(*root));
+    out.colliderHalf = (b.max - b.min) * 0.5f;
+    out.colliderY = out.colliderHalf.y;
+    return !out.parts.empty();
 }
 
 void applyMapSwaps(Engine* e, bool textures, bool models) {

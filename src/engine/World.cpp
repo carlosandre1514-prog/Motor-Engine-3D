@@ -841,6 +841,10 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
         }
         case MAP_Planet: {
             planetGenerate(e);
+            {   // prédios prontos do kit de cidade (Quaternius) em parte dos lotes das cidades
+                const char* kit[3] = {"Building_Small_1", "Building_Medium_2_001", "Building_Large_2"};
+                for (int k = 0; k < 3; ++k) if (!kitPrototype(e, kit[k], e->kitBuilding[k], 240.f)) e->kitBuilding[k] = Prototype{};
+            }
             e->renderer.fogDensity = 0.0022f;
             e->chunks.reserve(160);
             MeshBuilder wb;
@@ -1010,6 +1014,11 @@ void drawMapOverlay(Engine* e, const glm::mat4& vp) {
         e->renderer.line(vp, {a.x, y, b.y}, {a.x, y, a.y}, col, 2.5f, true);
     }
     for (glm::vec2 c : {a, b, glm::vec2(a.x, b.y), glm::vec2(b.x, a.y)}) e->renderer.line(vp, {c.x, 0.f, c.y}, {c.x, 4.f, c.y}, col, 2.5f, true);
+}
+
+void spawnPrototype(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float scale, std::vector<Scene::Handle>* out,
+                    std::vector<BoxCollider>* colliders) {
+    spawnProto(e, p, pos, yaw, scale, out, colliders);
 }
 
 }  // namespace eng
