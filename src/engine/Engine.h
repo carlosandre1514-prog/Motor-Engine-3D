@@ -1,4 +1,5 @@
 #pragma once
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
@@ -46,8 +47,9 @@ struct CharacterInfo {
 };
 
 // Modelo reaproveitado várias vezes (árvores, casas do mundo infinito): instancing automático
-struct ProtoPart { MeshId mesh; MaterialId mat; float lodNear = 0.f, lodFar = 1e30f; };
+struct ProtoPart { MeshId mesh; MaterialId mat; float lodNear = 0.f, lodFar = 1e30f; glm::mat4 local{1.f}; };
 struct Prototype {
+    std::string name;
     std::vector<ProtoPart> parts;
     glm::vec3 colliderHalf{0.f};
     float colliderY = 0.f;     // centro do collider acima da base
@@ -104,6 +106,24 @@ struct GameState {
     std::vector<Scene::Handle> hidden;            // escondidos durante o Play (voltam no Stop)
     std::vector<RigidBody*> disabledBodies;
     std::string message;                          // aviso curto (ex.: "Vitória!")
+};
+// Animações criadas no editor (ou carregadas do projeto) acrescentadas à lista de um Animator
+struct ClipStore {
+    Animator* anim = nullptr;
+    std::vector<AnimationClip> own;               // clips do modelo + personalizados (a lista que o Animator usa)
+    std::deque<std::vector<Channel>> channels;
+    std::deque<std::vector<float>> data;
+};
+// Estado do editor de animação (pose osso a osso + quadros-chave)
+struct AnimEditState {
+    bool active = false;
+    Scene::Handle root;
+    Animator* anim = nullptr;
+    int bone = -1;
+    std::vector<std::pair<float, std::vector<glm::quat>>> keys;  // tempo -> rotação local de cada osso
+    AnimationClip previewClip;
+    std::vector<Channel> previewChannels;
+    std::vector<float> previewData;
 };
 struct LightObject { Scene::Handle obj; glm::vec3 color{1.f}; float intensity = 8.f, radius = 10.f; };
 
@@ -176,6 +196,12 @@ struct Engine {
     std::vector<MeshId> freeChunkMeshes;
     Prototype treeProto[3], rockProto, houseProto[3];
     Scene::Handle water;
+    // Mapa editável: cada construção/árvore/poste vira objeto ("peça"); o projeto guarda só as mudanças
+    struct MapPiece { Scene::Handle h; glm::vec3 p, s; glm::quat r; std::string name; };
+    bool mapEditable = false;
+    std::vector<MapPiece> mapPieces;
+    // Trocas do mapa: modelo (arquivo 3D) no lugar de árvores/pedras/casas e textura no lugar de um material
+    std::map<std::string, std::string> protoSwaps, texSwaps;
 
     // Jogador
     int player = -1;                 // índice em characters
@@ -194,6 +220,8 @@ struct Engine {
     GameRules rules;
     GameState game;
     std::string toolResult;             // resposta da última chamada de ferramenta (IA)
+    std::vector<std::unique_ptr<ClipStore>> clipStores;
+    AnimEditState animEdit;
 
     bool playing = false;
     bool showGrid = true;
@@ -267,6 +295,27 @@ bool pickEmitter(Engine* e, glm::vec3 o, glm::vec3 d, float& t, GameObject*& hit
 bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt);
 void deleteObject(Engine* e, Scene::Handle h);
 
+// ---- animações (AnimEdit.cpp)
+// Modelo humanoide importado: liga as animações do motor (retarget) sem precisar virar personagem.
+bool setupHumanoid(Engine* e, GameObject& root, Animator* anim);
+Animator* animatorOf(GameObject& root);
+void applyCustomAnims(Engine* e, GameObject& root, const std::string& arrJson);  // "animacoes" da receita
+void forgetClipStores(Engine* e, const std::vector<Animator*>& gone);
+int animEditBegin(Engine* e);                       // ossos ou -1 (lastError)
+std::string animEditBones(Engine* e);
+void animEditSelect(Engine* e, int bone);
+void animEditGet(Engine* e, int bone, float* euler3);
+void animEditSet(Engine* e, int bone, const float* euler3);
+int animEditKey(Engine* e, float t);                // grava a pose no tempo t; retorna nº de quadros
+void animEditDeleteKey(Engine* e, float t);
+void animEditGoto(Engine* e, float t);               // volta para a pose gravada em t (para ajustar)
+std::string animEditKeys(Engine* e);
+void animEditResetPose(Engine* e);
+bool animEditPreview(Engine* e, bool on);
+int animEditSave(Engine* e, const std::string& name);  // índice da animação nova ou -1
+void animEditEnd(Engine* e);
+void drawAnimEditOverlay(Engine* e, const glm::mat4& vp);
+
 // ---- jogo (Game.cpp)
 void gameStart(Engine* e);
 void gameStop(Engine* e);
@@ -293,7 +342,13 @@ std::string gameStatusText(Engine* e);
 bool exportGlb(Engine* e, int rootId, const std::string& path, std::string* err);         // texto do objetivo para o HUD
 
 // ---- mundo (World.cpp)
-void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer = true);
+void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer = true, bool editable = false);
+void addBoxCollider(Engine* e, Scene::Handle root, glm::vec3 centerLocal, glm::vec3 half);  // collider estático do objeto
+// Aplica as trocas (protoSwaps/texSwaps) nos protótipos e materiais do mapa atual
+void applyMapSwaps(Engine* e, bool textures = true, bool models = true);
+bool setMapEditable(Engine* e, bool on);                                     // refaz o mapa com peças editáveis
+bool setMapSwap(Engine* e, bool texture, const std::string& key, const std::string& path);  // path vazio = desfaz
+int matIndexByName(const std::string& name);
 void clearWorld(Engine* e);
 void updateWorld(Engine* e);           // streaming do mundo infinito
 float mapHeight(Engine* e, float x, float z);

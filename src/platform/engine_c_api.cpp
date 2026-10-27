@@ -154,6 +154,7 @@ void engine_frame(Engine* e, float dt) {
         }
     }
     eng::drawEffectsOverlay(e, vp, !e->playing);
+    if (!e->playing) eng::drawAnimEditOverlay(e, vp);
 
     // luzes: as da cena + as mais relevantes dos efeitos (fogo, magia, explosões)
     eng::PointLight lights[eng::kMaxPointLights];
@@ -364,7 +365,7 @@ void engine_set_grid(Engine* e, int v) { if (e) { e->showGrid = v != 0; ++e->rev
 // ---------- animação ----------
 static void animatorsOfSelection(Engine* e, std::vector<Animator*>& out) {
     out.clear();
-    if (GameObject* sel = e->scene.get(e->selected))
+    if (GameObject* sel = eng::rootOf(e, e->scene.get(e->selected)))  // toque numa peça vale pelo modelo inteiro
         Scene::forEachInSubtree(*sel, [&](GameObject& g) {
             if (g.animator && std::find(out.begin(), out.end(), g.animator) == out.end()) out.push_back(g.animator);
         });
@@ -385,14 +386,12 @@ const char* engine_animation_list(Engine* e) {
     e->toolResult.clear();
     for (Animator* a : list) {
         if (a->clipCount <= 0) continue;
-        int keep = a->clipIndex;
         for (int i = 0; i < a->clipCount; ++i) {
-            a->clipIndex = i;
-            const AnimationClip* c = a->clip();
+            const AnimationClip* c = a->clipAt(i);
             e->toolResult += c && c->name[0] ? std::string(c->name) : "Animação " + std::to_string(i + 1);
+            if (a->retarget && i < a->refCount) e->toolResult += " (motor)";
             e->toolResult += '\n';
         }
-        a->clipIndex = keep;
         break;
     }
     return e->toolResult.c_str();
@@ -411,6 +410,21 @@ void engine_set_animation(Engine* e, int index) {
     for (Animator* a : list) if (a->clipCount > 0) a->setClip(index);
 }
 void engine_set_anim_preview(Engine* e, int on) { if (e) e->previewAnim = on != 0; }
+
+// ---------- editor de animação ----------
+int engine_anim_edit_begin(Engine* e) { return e ? eng::animEditBegin(e) : -1; }
+const char* engine_anim_edit_bones(Engine* e) { if (!e) return ""; e->toolResult = eng::animEditBones(e); return e->toolResult.c_str(); }
+void engine_anim_edit_select(Engine* e, int bone) { if (e) eng::animEditSelect(e, bone); }
+void engine_anim_edit_get(Engine* e, int bone, float* euler3) { if (e && euler3) eng::animEditGet(e, bone, euler3); }
+void engine_anim_edit_set(Engine* e, int bone, const float* euler3) { if (e && euler3) eng::animEditSet(e, bone, euler3); }
+void engine_anim_edit_reset_pose(Engine* e) { if (e) eng::animEditResetPose(e); }
+int engine_anim_edit_key(Engine* e, float t) { return e ? eng::animEditKey(e, t) : 0; }
+void engine_anim_edit_delete_key(Engine* e, float t) { if (e) eng::animEditDeleteKey(e, t); }
+void engine_anim_edit_goto(Engine* e, float t) { if (e) eng::animEditGoto(e, t); }
+const char* engine_anim_edit_keys(Engine* e) { if (!e) return ""; e->toolResult = eng::animEditKeys(e); return e->toolResult.c_str(); }
+int engine_anim_edit_preview(Engine* e, int on) { return e && eng::animEditPreview(e, on != 0); }
+int engine_anim_edit_save(Engine* e, const char* name) { return e ? eng::animEditSave(e, name ? name : "") : -1; }
+void engine_anim_edit_end(Engine* e) { if (e) eng::animEditEnd(e); }
 
 const char* engine_animation_name(Engine* e) {
     if (!e) return "";
@@ -467,14 +481,17 @@ int engine_create_weapon(Engine* e, int kind) {
 
 int engine_create_building(Engine* e, int kind, uint32_t seed) {
     if (!e) return -1;
-    static const char* names[] = {"casa", "sobrado", "barraco", "predio", "arranha_ceu", "escola", "arvore", "pinheiro", "palmeira", "carro", "poste", "muro"};
+    static const char* names[] = {"casa", "sobrado", "barraco", "predio", "arranha_ceu", "escola", "arvore", "pinheiro", "palmeira", "carro",
+                                  "poste", "muro", "rua", "cruzamento", "calcada", "escada", "rampa", "piso", "parede", "cerca", "banco",
+                                  "caixa_dagua"};
     char spec[120];
-    std::snprintf(spec, sizeof(spec), R"({"tipo":"construcao","modelo":"%s","semente":%u})", names[std::clamp(kind, 0, 11)], seed ? seed : 1u);
+    std::snprintf(spec, sizeof(spec), R"({"tipo":"construcao","modelo":"%s","semente":%u})", names[std::clamp(kind, 0, 21)], seed ? seed : 1u);
     return createSpec(e, spec);
 }
 
 void engine_load_map(Engine* e, int kind, uint32_t seed) {
     if (!e) return;
+    e->protoSwaps.clear(); e->texSwaps.clear();  // mapa base novo: sem trocas
     eng::loadMap(e, std::clamp(kind, 0, int(eng::MAP_Count) - 1), seed ? seed : 1);
 }
 int engine_map_kind(Engine* e) { return e ? e->mapKind : -1; }
@@ -688,6 +705,16 @@ const char* engine_tool_call(Engine* e, const char* name, const char* input) {
 int engine_add_spec(Engine* e, const char* json) { return e && json ? createSpec(e, json) : -1; }
 void engine_set_time_of_day(Engine* e, float hour) { if (e) eng::setTimeOfDay(e, hour); }
 float engine_get_time_of_day(Engine* e) { return e ? e->timeOfDay : 13.f; }
+
+int engine_map_set_editable(Engine* e, int on) { return e && eng::setMapEditable(e, on != 0); }
+int engine_map_editable(Engine* e) { return e && e->mapEditable; }
+int engine_map_swap_model(Engine* e, const char* kind, const char* path) {
+    return e && kind && eng::setMapSwap(e, false, kind, path ? path : "");
+}
+int engine_map_swap_texture(Engine* e, int material, const char* path) {
+    if (!e || material < 0 || material >= int(Mat::Count)) return 0;
+    return eng::setMapSwap(e, true, eng::matName(Mat(material)), path ? path : "");
+}
 
 int engine_export_glb(Engine* e, int object_id, const char* path) {
     if (!e || !path) return 0;

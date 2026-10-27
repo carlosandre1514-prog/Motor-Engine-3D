@@ -59,11 +59,15 @@ const char* mapKindName(int k) {
 int buildingOf(const std::string& s) {
     return lookup(s, {{"casa", 0}, {"sobrado", 1}, {"barraco", 2}, {"predio", 3}, {"apartamento", 3}, {"arranha_ceu", 4},
                       {"arranha", 4}, {"escola", 5}, {"colegio", 5}, {"arvore", 6}, {"pinheiro", 7}, {"palmeira", 8},
-                      {"carro", 9}, {"poste", 10}, {"muro", 11}});
+                      {"carro", 9}, {"poste", 10}, {"muro", 11}, {"rua", 12}, {"pista", 12}, {"estrada", 12}, {"cruzamento", 13},
+                      {"calcada", 14}, {"escada", 15}, {"rampa", 16}, {"piso", 17}, {"laje", 17}, {"plataforma", 17},
+                      {"parede", 18}, {"cerca", 19}, {"banco", 20}, {"caixa_dagua", 21}, {"caixa_d_agua", 21}});
 }
 const char* buildingName(int k) {
-    static const char* n[] = {"casa", "sobrado", "barraco", "predio", "arranha_ceu", "escola", "arvore", "pinheiro", "palmeira", "carro", "poste", "muro"};
-    return k >= 0 && k < 12 ? n[k] : "casa";
+    static const char* n[] = {"casa", "sobrado", "barraco", "predio", "arranha_ceu", "escola", "arvore", "pinheiro", "palmeira", "carro",
+                              "poste", "muro", "rua", "cruzamento", "calcada", "escada", "rampa", "piso", "parede", "cerca", "banco",
+                              "caixa_dagua"};
+    return k >= 0 && k < 22 ? n[k] : "casa";
 }
 int weaponOf(const std::string& s) {
     return lookup(s, {{"pistola", WK_Pistol}, {"revolver", WK_Pistol}, {"fuzil", WK_Rifle}, {"rifle", WK_Rifle},
@@ -255,6 +259,7 @@ int finish(Engine* e, Scene::Handle h, json& spec, bool isChar) {
     if (!g) return -1;
     applyCommon(e, *g, spec, isChar);
     // a receita guarda o que cria o objeto; transform e nome vêm do objeto na hora de salvar
+    if (auto it = spec.find("animacoes"); it != spec.end() && it->is_array()) applyCustomAnims(e, *g, it->dump());
     for (const char* k : {"pos", "rot", "rot_y", "escala", "nome", "id"}) spec.erase(k);
     recordRecipe(e, *g, spec.dump());
     ++e->revision;
@@ -330,6 +335,8 @@ int loadModelFile(Engine* e, const char* path) {
     e->lastError.clear();
     // modelo pousado no chão e centrado no foco
     if (GameObject* root = objectById(e, rootId)) {
+        // humanoide (Mixamo, Unity...): já ganha as animações do motor, mesmo sem virar personagem
+        if (Animator* a = animatorOf(*root)) setupHumanoid(e, *root, a);
         e->scene.updateTransforms();
         AABB b;
         if (subtreeBounds(e, *root, b)) {
@@ -340,6 +347,88 @@ int loadModelFile(Engine* e, const char* path) {
         }
     }
     return rootId;
+}
+
+int matIndexByName(const std::string& name) { return matOf(name); }
+
+// Modelo de arquivo vira protótipo (árvore/pedra/casa do mapa): mesma altura do original, base no chão
+static bool protoFromModel(Engine* e, const std::string& path, Prototype& proto) {
+    float target = 0.f;
+    for (const ProtoPart& pp : proto.parts)
+        if (const Mesh* m = e->renderer.mesh(pp.mesh)) target = std::max(target, m->bounds.max.y);
+    int id = loadModelFile(e, path.c_str());
+    GameObject* root = objectById(e, id);
+    if (!root) return false;
+    e->scene.updateTransforms();
+    AABB b;
+    if (!subtreeBounds(e, *root, b)) { deleteObject(e, Scene::handleOf(*root)); return false; }
+    float h = std::max(0.01f, b.max.y - b.min.y);
+    float sc = target > 0.f ? target / h : 1.f;
+    glm::vec3 base((b.min.x + b.max.x) * 0.5f, b.min.y, (b.min.z + b.max.z) * 0.5f);
+    glm::mat4 fix = glm::scale(glm::mat4(1.f), glm::vec3(sc)) * glm::translate(glm::mat4(1.f), -base);
+    std::vector<ProtoPart> parts;
+    Scene::forEachInSubtree(*root, [&](GameObject& g) {
+        if (!g.meshRenderer) return;
+        const Mesh* m = e->renderer.mesh(g.meshRenderer->mesh);
+        if (!m || m->skinned) return;  // malha com esqueleto não vira cenário fixo
+        const glm::mat4* pal;
+        parts.push_back({g.meshRenderer->mesh, g.meshRenderer->material, 0.f, 600.f, fix * renderMatrix(e, g, &pal)});
+    });
+    deleteObject(e, Scene::handleOf(*root));
+    if (parts.empty()) return false;
+    proto.parts = parts;
+    return true;
+}
+
+void applyMapSwaps(Engine* e, bool textures, bool models) {
+    if (models) for (auto& [key, path] : e->protoSwaps) {
+        std::string k = norm(key);
+        std::vector<Prototype*> targets;
+        if (k == "arvore") targets = {&e->treeProto[0]};
+        else if (k == "pinheiro") targets = {&e->treeProto[1]};
+        else if (k == "palmeira") targets = {&e->treeProto[2]};
+        else if (k == "pedra") targets = {&e->rockProto};
+        else if (k == "casa") targets = {&e->houseProto[0], &e->houseProto[1], &e->houseProto[2]};
+        for (Prototype* p : targets)
+            if (!p->parts.empty() && !protoFromModel(e, path, *p)) e->lastError = "não consegui usar o modelo " + path;
+    }
+    if (textures) for (auto& [key, path] : e->texSwaps) {
+        int m = matOf(key);
+        if (m < 0) continue;
+        int w, h, comp;
+        unsigned char* px = stbi_load(path.c_str(), &w, &h, &comp, 4);
+        if (!px) { e->lastError = "não consegui ler a imagem " + path; continue; }
+        GLuint tex = TextureManager::instance().fromPixels(px, w, h, 4, true);
+        stbi_image_free(px);
+        const Material* old = e->renderer.material(e->mats[m]);
+        if (!old) continue;
+        Material copy = *old;
+        copy.albedo = tex;
+        copy.albedoFactor = glm::vec4(1.f);
+        copy.mode = 0;  // terreno com textura própria: usa a imagem em vez da mistura automática
+        e->mats[m] = e->renderer.createMaterial(copy);
+    }
+}
+
+// Salva e reabre o projeto com uma mudança no mapa (objetos do usuário continuam)
+static bool rebuildMap(Engine* e, bool editable) {
+    if (e->playing) return false;
+    json j = json::parse(exportProject(e, false), nullptr, false);
+    if (j.is_discarded()) return false;
+    if (editable) j["mapa"]["editavel"] = true;
+    else { j["mapa"].erase("editavel"); j["mapa"].erase("pecas"); }
+    std::string err;
+    return importProject(e, j.dump(), &err);
+}
+bool setMapEditable(Engine* e, bool on) {
+    if (e->mapKind == MAP_Infinite && on) { e->lastError = "o mundo infinito não tem fim: nele dá para trocar modelos e texturas, mas não editar peça por peça"; return false; }
+    if (e->mapKind < 0) { e->lastError = "esta cena já é toda editável (não tem mapa pronto)"; return false; }
+    return rebuildMap(e, on);
+}
+bool setMapSwap(Engine* e, bool texture, const std::string& key, const std::string& path) {
+    auto& m = texture ? e->texSwaps : e->protoSwaps;
+    if (path.empty()) m.erase(key); else m[key] = path;
+    return rebuildMap(e, e->mapEditable);
 }
 
 int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err) {
@@ -537,6 +626,10 @@ std::string exportProject(Engine* e, bool withIds) {
     j["versao"] = 1;
     j["nome"] = e->projectName;
     j["mapa"] = {{"tipo", mapKindName(e->mapKind)}, {"semente", e->mapSeed}};
+    if (e->mapEditable) j["mapa"]["editavel"] = true;
+    if (!e->protoSwaps.empty()) j["mapa"]["trocas"] = e->protoSwaps;
+    if (!e->texSwaps.empty()) j["mapa"]["texturas"] = e->texSwaps;
+    json pieces = json::object();  // mapa editável: só o que mudou em relação ao mapa base
     j["ambiente"] = {{"hora", r3(e->timeOfDay)}, {"exposicao", r3(e->env.exposure)}, {"sol", r3(e->sun.intensity)},
                      {"grade", e->showGrid}, {"neblina", e->renderer.fogDensity}};
     const Engine::CamState cam = e->playing ? e->savedCam
@@ -581,6 +674,25 @@ std::string exportProject(Engine* e, bool withIds) {
         }
         if (glm::length(s - glm::vec3(1.f)) > 1e-3f) o["escala"] = arr3(s);
         if (!active) o["ativo"] = false;
+        if (o.value("tipo", "") == "peca_mapa") {
+            int idx = o.value("peca", -1);
+            if (idx < 0 || idx >= int(e->mapPieces.size())) continue;
+            const Engine::MapPiece& mp = e->mapPieces[idx];
+            json d = json::object();
+            for (auto& [k, v] : o.items())
+                if (k != "tipo" && k != "peca" && k != "id" && k != "nome" && k != "pos" && k != "rot" && k != "rot_y" && k != "escala") d[k] = v;
+            bool moved = glm::length(p - mp.p) > 1e-3f || glm::length(s - mp.s) > 1e-3f || std::abs(glm::dot(q, mp.r)) < 0.99999f;
+            if (moved) {
+                d["pos"] = o["pos"];
+                if (o.contains("rot")) d["rot"] = o["rot"];
+                d["rot_y"] = o.value("rot_y", 0.0);
+                d["escala"] = o.contains("escala") ? o["escala"] : json::array({1, 1, 1});
+            }
+            if (mp.name != g->name) d["nome"] = g->name;
+            if (withIds) d["id"] = int(id);
+            if (!d.empty()) pieces[std::to_string(idx)] = d;
+            continue;
+        }
         int ci = charIndexOf(e, g);
         if (ci >= 0) {
             const CharacterInfo& c = e->characters[ci];
@@ -591,6 +703,9 @@ std::string exportProject(Engine* e, bool withIds) {
         objs.push_back(o);
     }
     j["objetos"] = objs;
+    for (size_t k = 0; k < e->mapPieces.size(); ++k)
+        if (!e->scene.get(e->mapPieces[k].h)) pieces[std::to_string(k)] = {{"apagada", true}};
+    if (!pieces.empty()) j["mapa"]["pecas"] = pieces;
     return j.dump(withIds ? -1 : 1, ' ', false, json::error_handler_t::replace);
 }
 
@@ -602,8 +717,29 @@ bool importProject(Engine* e, const std::string& text, std::string* err) {
     int kind = mapKindOf(str(mapa, "tipo", "vazio"));
     if (kind == -2) kind = MAP_None;
     uint32_t seed = uint32_t(std::max(1, inum(mapa, "semente", 1)));
-    if (kind >= 0) loadMap(e, kind, seed, false);
-    else clearScene(e);
+    e->protoSwaps.clear(); e->texSwaps.clear();
+    for (const char* key : {"trocas", "texturas"})
+        if (auto it = mapa.find(key); it != mapa.end() && it->is_object())
+            for (auto& [k, v] : it->items()) if (v.is_string()) (key[0] == 't' && key[1] == 'r' ? e->protoSwaps : e->texSwaps)[k] = v.get<std::string>();
+    if (kind >= 0) loadMap(e, kind, seed, false, flag(mapa, "editavel", false));
+    else { clearScene(e); applyMapSwaps(e); }
+    // mapa editável: aplica as mudanças salvas em cada peça (apagar, mover, cor, material...)
+    if (auto it = mapa.find("pecas"); it != mapa.end() && it->is_object() && e->mapEditable) {
+        std::vector<Scene::Handle> toDelete;
+        for (auto& [k, d] : it->items()) {
+            int idx = std::atoi(k.c_str());
+            if (idx < 0 || idx >= int(e->mapPieces.size()) || !d.is_object()) continue;
+            GameObject* g = e->scene.get(e->mapPieces[idx].h);
+            if (!g) continue;
+            if (flag(d, "apagada", false)) { toDelete.push_back(e->mapPieces[idx].h); continue; }
+            applyCommon(e, *g, d, false);
+            json r = json::parse(e->recipes[g->recipe], nullptr, false);
+            for (auto& [dk, dv] : d.items())
+                if (dk != "pos" && dk != "rot" && dk != "rot_y" && dk != "escala" && dk != "nome" && dk != "id") r[dk] = dv;
+            e->recipes[g->recipe] = r.dump();
+        }
+        for (auto h : toDelete) deleteObject(e, h);
+    }
     e->projectName = str(j, "nome", "Projeto");
     const json amb = j.value("ambiente", json::object());
     setTimeOfDay(e, num(amb, "hora", 13.f));

@@ -23,7 +23,11 @@ Motor 3D para celular (Android) em C++20 + OpenGL ES 3.2, com editor por toque.
 | Personagem de arquivo | **+ Criar → Personagem → 📂 Personagem de um arquivo 3D**: escolha o `.fbx`/`.glb`/`.gltf`/`.obj` e ele já vira personagem jogável (física, anda/corre/pula). Humanoides (ossos tipo Mixamo/Unity) usam as animações do motor se não tiverem as próprias; modelos sem esqueleto andam sem animação |
 | Efeitos | **+ Criar → Efeito**: fogueira, tocha, fumaça, faíscas, aura, portal, explosão, orbe, coluna de luz; elementos fogo, gelo, trevas, luz, veneno, raio, arcano ou cor livre (Material → Cor) |
 | Magia | No Play: botão **Magia** lança o elemento escolhido (segure para trocar); **Atirar** mostra clarão, bala e impacto |
-| Animação | **Animação**: lista as animações do personagem/modelo selecionado e toca a escolhida (também no editor). No Play, parado/andar/correr trocam sozinhos |
+| Animação | **Animação**: lista as animações do personagem/modelo selecionado (inclusive `.fbx`/`.glb` importados: humanoides ganham também as do motor, marcadas "(motor)") e toca a escolhida, também no editor. No Play, parado/andar/correr trocam sozinhos |
+| Criar animação | **Animação → 🎬 Criar animação personalizada**: escolha o osso, gire em X/Y/Z, avance o tempo e grave quadros; ▶ Prévia; 💾 Salvar com nome. Fica no projeto e vai junto no `.glb` exportado |
+| Editar mapa | **Mapas → ✏ Editar este mapa peça por peça**: cada construção, árvore, poste, carro, rua e calçada vira objeto (mover, girar, apagar, cor, material, textura; toque de novo pega a parte: parede, telhado...). Vira o SEU mapa (projeto separado); o mapa base continua igual. O projeto guarda só as mudanças |
+| Trocar modelos/texturas do mapa | **Mapas → 🌳 Trocar árvores/pedras/casas por arquivo 3D** e **🖼 Trocar a textura de um material** (grama, telha, tijolo...). Vale também no mundo infinito e fica salvo no projeto |
+| Peças de construção | **+ Criar → Construção**: rua, cruzamento, calçada, escada, rampa (dá para subir), piso/laje, parede, cerca, banco, caixa d'água, além das casas e prédios |
 | Editar personagem | Selecione o personagem → **+ Criar → Personagem → Editar o personagem selecionado** (altura, corpo, cores, cabelo) |
 | Simular | **▶ Play**: física e animação. **■ Stop** volta tudo ao estado anterior. No Play, toque num objeto para empurrar |
 | Visual | **Visual**: exposição, intensidade do sol e grade |

@@ -64,8 +64,8 @@ struct FrameStats {
 
 class Renderer {
 public:
-    static constexpr uint32_t kMaxDraws = 4096;
-    static constexpr uint32_t kMaxMeshes = 1024, kMaxMaterials = 512;
+    static constexpr uint32_t kMaxDraws = 16384;
+    static constexpr uint32_t kMaxMeshes = 12288, kMaxMaterials = 2048;
     static constexpr uint32_t kMaxLineVerts = 6 * 4096;
     static constexpr int kEnvSize = 128;
 

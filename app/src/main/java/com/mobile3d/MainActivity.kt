@@ -34,6 +34,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import kotlin.math.roundToInt
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONArray
@@ -93,6 +94,18 @@ class MainActivity : Activity() {
     private var lastMsg = ""
     private var msgUntil = 0L
 
+    // Editor de animação
+    private lateinit var animPanel: LinearLayout
+    private var animEditing = false
+    private var animBone = 0
+    private var animTime = 0f
+    private var animBones = listOf<String>()
+    private lateinit var animBoneBtn: TextView
+    private lateinit var animTimeText: TextView
+    private lateinit var animKeysText: TextView
+    private val animBars = ArrayList<SeekBar>()
+    private val animLabels = ArrayList<TextView>()
+
     // Assistente de IA
     private lateinit var aiPanel: LinearLayout
     private lateinit var aiLog: TextView
@@ -133,6 +146,9 @@ class MainActivity : Activity() {
 
         hud = buildHud().apply { visibility = View.GONE }
         root.addView(hud, FrameLayout.LayoutParams(-1, -1))
+
+        animPanel = buildAnimPanel().apply { visibility = View.GONE }
+        root.addView(animPanel, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
 
         aiPanel = buildAiPanel().apply { visibility = View.GONE }
         root.addView(aiPanel, FrameLayout.LayoutParams(dp(340), -2, Gravity.BOTTOM or Gravity.END).apply {
@@ -462,9 +478,13 @@ class MainActivity : Activity() {
                 2 -> list("Efeito", effects) { k ->
                     list("Elemento / cor do efeito", elements) { el -> gl { NativeBridge.nativeCreateEffect(k, el) } }
                 }
-                3 -> list("Construção", arrayOf("Casa", "Sobrado", "Barraco (favela)", "Prédio de apartamentos", "Arranha-céu", "Prédio escolar", "Muro")) { k ->
-                    val kind = if (k == 6) 11 else k
-                    gl { NativeBridge.nativeCreateBuilding(kind, seed()) }
+                3 -> {
+                    val kinds = intArrayOf(0, 1, 2, 3, 4, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
+                    list("Construção e peças", arrayOf("Casa", "Sobrado", "Barraco (favela)", "Prédio de apartamentos", "Arranha-céu",
+                        "Prédio escolar", "Muro", "🛣 Rua (pista)", "✚ Cruzamento", "Calçada", "Escada", "Rampa", "Piso / laje",
+                        "Parede", "Cerca", "Banco de praça", "Caixa d'água")) { k ->
+                        gl { NativeBridge.nativeCreateBuilding(kinds[k], seed()) }
+                    }
                 }
                 4 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
                     gl { NativeBridge.nativeCreateBuilding(6 + k, seed()) }
@@ -557,9 +577,14 @@ class MainActivity : Activity() {
 
     private fun mapsDialog() {
         val items = arrayOf("🏙 Cidade", "🏘 Favela no morro", "🏫 Colégio", "🏡 Bairro residencial", "🌍 Mundo infinito (sem fim)",
-                            "➕ Criar novo mapa / cena vazia (do zero)", "🔭 Visão geral do mapa atual")
+                            "➕ Criar novo mapa / cena vazia (do zero)", "🔭 Visão geral do mapa atual",
+                            "✏ Editar este mapa peça por peça (vira o SEU mapa)…", "🌳 Trocar árvores / pedras / casas por um arquivo 3D…",
+                            "🖼 Trocar a textura de um material do mapa (grama, telha, tijolo…)…")
         dialog().setTitle("Mapas").setItems(items) { _, which ->
             if (which == 6) { gl { NativeBridge.nativeMapOverview() }; return@setItems }
+            if (which == 7) { editMapDialog(); return@setItems }
+            if (which == 8) { swapModelDialog(); return@setItems }
+            if (which == 9) { swapTextureDialog(); return@setItems }
             dialog().setTitle("Trocar o cenário?")
                 .setMessage("Os objetos atuais deste projeto serão substituídos. (Para guardar o atual, use 📁 Projeto → Duplicar antes.)")
                 .setPositiveButton("Trocar") { _, _ ->
@@ -578,6 +603,52 @@ class MainActivity : Activity() {
                 }
                 .setNegativeButton("Cancelar", null).show()
         }.show()
+    }
+
+    // O mapa pronto (base) continua igual; a versão editada vira um projeto seu, com outro nome
+    private fun editMapDialog() {
+        askText("Nome do seu mapa (o mapa base continua igual)", store.uniqueName("Meu mapa")) { n ->
+            stopPlayIfNeeded()
+            toast("Montando o mapa em peças editáveis… (pode levar alguns segundos)")
+            gl {
+                saveIfChanged()
+                val name = store.uniqueName(n)
+                if (NativeBridge.nativeMapSetEditable(true)) {
+                    setCurrent(name)
+                    saveIfChanged(force = true)
+                    toast("Pronto! Toque em qualquer construção, árvore, poste, carro ou rua para mover, girar, apagar ou trocar material. " +
+                          "Toque de novo na mesma construção para pegar uma parte dela (parede, telhado…). Salvo como \"$name\".")
+                } else toast("Não deu: " + NativeBridge.nativeLastError())
+            }
+        }
+    }
+
+    private var pendingSwap = ""
+    private var pendingMat = -1
+
+    private fun swapModelDialog() {
+        val keys = arrayOf("arvore", "pinheiro", "palmeira", "pedra", "casa")
+        val labels = arrayOf("Árvores", "Pinheiros", "Palmeiras", "Pedras", "Casas (vilas do mundo infinito)")
+        list("Trocar pelo modelo de um arquivo (.fbx, .glb, .gltf, .obj)", labels + arrayOf("↺ Desfazer todas as trocas de modelo")) { k ->
+            if (k == keys.size) {
+                gl { for (key in keys) NativeBridge.nativeMapSwapModel(key, ""); toast("Modelos originais de volta") }
+                return@list
+            }
+            pendingSwap = keys[k]
+            pickFile(REQ_SWAP_MODEL)
+        }
+    }
+
+    private fun swapTextureDialog() {
+        gl {
+            val names = NativeBridge.nativeMaterialNames().lineSequence().filter { it.isNotBlank() }.toList()
+            runOnUiThread {
+                list("Qual material do mapa ganha a sua imagem?", names.toTypedArray()) { k ->
+                    pendingMat = k
+                    pickFile(REQ_SWAP_TEX)
+                }
+            }
+        }
     }
 
     private fun hierarchyDialog() {
@@ -643,13 +714,16 @@ class MainActivity : Activity() {
             val cur = NativeBridge.nativeAnimationIndex()
             runOnUiThread {
                 if (names.isEmpty()) {
-                    toast("Nenhuma animação aqui. Crie um personagem (+ Criar → Personagem) ou importe um .glb/.fbx com esqueleto e selecione")
+                    if (snap.selected >= 0) { startAnimEditor(); return@runOnUiThread }  // sem animações: oferece criar
+                    toast("Toque num personagem ou modelo com esqueleto primeiro")
                     return@runOnUiThread
                 }
                 val items = names.mapIndexed { i, n -> (if (i == cur) "▶ " else "    ") + n }.toMutableList()
                 items.add(if (animPreview) "⏸ Pausar animações no editor" else "▶ Tocar animações no editor")
+                items.add("🎬 Criar animação personalizada (posar os ossos)…")
                 dialog().setTitle("Animações de \"${snap.selectedName.ifEmpty { "cena" }}\"")
                     .setItems(items.toTypedArray()) { _, which ->
+                        if (which == names.size + 1) { startAnimEditor(); return@setItems }
                         if (which == names.size) {
                             animPreview = !animPreview
                             val on = animPreview
@@ -660,6 +734,162 @@ class MainActivity : Activity() {
                         }
                     }
                     .setNegativeButton("Fechar", null).show()
+            }
+        }
+    }
+
+    // ---------------- editor de animação ----------------
+    private fun buildAnimPanel(): LinearLayout {
+        val p = panel()
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(label("🎬 Animação", bold = true).apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        header.addView(button("💾 Salvar") { saveAnimation() })
+        header.addView(button("✕") { endAnimEditor() })
+        p.addView(header)
+        animBoneBtn = button("Osso: —") { pickBone() }
+        p.addView(animBoneBtn)
+        for ((i, axis) in listOf("X", "Y", "Z").withIndex()) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val lbl = label("$axis: 0°").apply { layoutParams = LinearLayout.LayoutParams(dp(64), -2) }
+            val bar = SeekBar(this).apply {
+                max = 360; progress = 180
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: SeekBar?, v: Int, fromUser: Boolean) {
+                        lbl.text = "$axis: ${v - 180}°"
+                        if (!fromUser) return
+                        val e = FloatArray(3) { k -> (animBars[k].progress - 180).toFloat() }
+                        val b = animBone
+                        gl { NativeBridge.nativeAnimEditSet(b, e) }
+                    }
+                    override fun onStartTrackingTouch(sb: SeekBar?) {}
+                    override fun onStopTrackingTouch(sb: SeekBar?) {}
+                })
+            }
+            animBars.add(bar); animLabels.add(lbl)
+            row.addView(lbl); row.addView(bar)
+            p.addView(row)
+        }
+        val trow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        animTimeText = label("Tempo: 0.00 s").apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
+        trow.addView(animTimeText)
+        trow.addView(button("−") { setAnimTime(animTime - 0.25f) })
+        trow.addView(button("+") { setAnimTime(animTime + 0.25f) })
+        trow.addView(button("📌 Gravar quadro", accent = true) {
+            val t = animTime
+            gl { NativeBridge.nativeAnimEditKey(t); refreshAnimKeys() }
+            setAnimTime(animTime + 0.5f)
+        })
+        p.addView(trow)
+        val brow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        brow.addView(button("▶ Prévia") {
+            gl {
+                val ok = NativeBridge.nativeAnimEditPreview(true)
+                if (!ok) toast("Grave pelo menos 2 quadros (em tempos diferentes) para ver a prévia")
+            }
+        })
+        brow.addView(button("✋ Posar") { gl { NativeBridge.nativeAnimEditPreview(false) } })
+        brow.addView(button("⏮ Ir p/ quadro") { gotoKeyDialog() })
+        brow.addView(button("🗑 Apagar quadro") { val t = animTime; gl { NativeBridge.nativeAnimEditDeleteKey(t); refreshAnimKeys() } })
+        brow.addView(button("↺ Repouso") { gl { NativeBridge.nativeAnimEditResetPose() }; loadBoneAngles() })
+        p.addView(HorizontalScrollView(this).apply { addView(brow) })
+        animKeysText = label("Quadros: nenhum").apply { alpha = 0.8f }
+        p.addView(animKeysText)
+        p.addView(label("Escolha o osso, gire com X/Y/Z, avance o tempo e grave os quadros. Arraste a tela para girar a câmera.").apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f); alpha = 0.7f
+        })
+        return p
+    }
+
+    private fun startAnimEditor() {
+        if (snap.selected < 0) { toast("Toque no personagem ou modelo que quer animar"); return }
+        stopPlayIfNeeded()
+        gl {
+            val n = NativeBridge.nativeAnimEditBegin()
+            if (n < 0) { toast(NativeBridge.nativeLastError()); return@gl }
+            val bones = String(NativeBridge.nativeAnimEditBones(), Charsets.UTF_8).lines().filter { it.isNotEmpty() }
+            // ossos humanoides reconhecidos (Braço, Perna...) primeiro na lista
+            val first = bones.indexOfFirst { it.contains("(") }.coerceAtLeast(0)
+            runOnUiThread {
+                animBones = bones
+                animEditing = true
+                animTime = 0f
+                animPanel.visibility = View.VISIBLE
+                inspector.visibility = View.GONE
+                selectBone(first)
+                setAnimTime(0f)
+                animKeysText.text = "Quadros: nenhum"
+                toast("Editor de animação: os ossos aparecem em azul; o escolhido em laranja")
+            }
+        }
+    }
+
+    private fun endAnimEditor() {
+        animEditing = false
+        animPanel.visibility = View.GONE
+        gl { NativeBridge.nativeAnimEditEnd() }
+    }
+
+    private fun pickBone() {
+        if (animBones.isEmpty()) return
+        val order = animBones.indices.sortedBy { if (animBones[it].contains("(")) 0 else 1 }
+        list("Escolha o osso", order.map { animBones[it] }.toTypedArray()) { k -> selectBone(order[k]) }
+    }
+
+    private fun selectBone(b: Int) {
+        animBone = b
+        animBoneBtn.text = "Osso: " + animBones.getOrElse(b) { "—" } + "  ▾"
+        gl { NativeBridge.nativeAnimEditSelect(b) }
+        loadBoneAngles()
+    }
+
+    private fun loadBoneAngles() {
+        val b = animBone
+        gl {
+            val e = FloatArray(3)
+            NativeBridge.nativeAnimEditGet(b, e)
+            runOnUiThread { for (k in 0 until 3) animBars[k].progress = (e[k].roundToInt() + 180).coerceIn(0, 360) }
+        }
+    }
+
+    private fun setAnimTime(t: Float) {
+        animTime = t.coerceIn(0f, 60f)
+        animTimeText.text = String.format(Locale.US, "Tempo: %.2f s", animTime)
+    }
+
+    // thread GL
+    private fun refreshAnimKeys() {
+        val k = String(NativeBridge.nativeAnimEditKeys(), Charsets.UTF_8).trim()
+        runOnUiThread { animKeysText.text = if (k.isEmpty()) "Quadros: nenhum" else "Quadros (s): $k" }
+    }
+
+    private fun gotoKeyDialog() {
+        gl {
+            val keys = String(NativeBridge.nativeAnimEditKeys(), Charsets.UTF_8).trim().split(" ").filter { it.isNotEmpty() }
+            runOnUiThread {
+                if (keys.isEmpty()) { toast("Nenhum quadro gravado ainda"); return@runOnUiThread }
+                list("Ir para o quadro", keys.map { "$it s" }.toTypedArray()) { i ->
+                    val t = keys[i].toFloat()
+                    setAnimTime(t)
+                    gl { NativeBridge.nativeAnimEditGoto(t) }
+                    loadBoneAngles()
+                }
+            }
+        }
+    }
+
+    private fun saveAnimation() {
+        askText("Nome da animação", "Minha animação") { name ->
+            gl {
+                val idx = NativeBridge.nativeAnimEditSave(name.toByteArray(Charsets.UTF_8))
+                runOnUiThread {
+                    if (idx < 0) toast("Não deu para salvar")
+                    else {
+                        animEditing = false
+                        animPanel.visibility = View.GONE
+                        toast("Animação \"$name\" salva no projeto. Veja em Animação.")
+                    }
+                }
             }
         }
     }
@@ -1130,7 +1360,7 @@ class MainActivity : Activity() {
     }
 
     private fun updateOverlays() {
-        inspector.visibility = if (snap.selected >= 0 && !snap.playing) View.VISIBLE else View.GONE
+        inspector.visibility = if (snap.selected >= 0 && !snap.playing && !animEditing) View.VISIBLE else View.GONE
         hud.visibility = if (snap.playing) View.VISIBLE else View.GONE
         val controls = if (snap.hasPlayer) View.VISIBLE else View.GONE
         if (::joystick.isInitialized) { joystick.visibility = controls; (fireBtn.parent as View).visibility = controls }
@@ -1172,7 +1402,7 @@ class MainActivity : Activity() {
     private fun pickFile(req: Int) {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (req == REQ_IMAGE) "image/*" else "*/*"  // .glb não tem MIME confiável em todos os aparelhos
+            type = if (req == REQ_IMAGE || req == REQ_SWAP_TEX) "image/*" else "*/*"  // .glb não tem MIME confiável em todos os aparelhos
         }
         startActivityForResult(i, req)
     }
@@ -1216,19 +1446,26 @@ class MainActivity : Activity() {
         val name = displayName(uri)
         val lower = name.lowercase(Locale.US)
         val modelExts = listOf(".glb", ".gltf", ".fbx", ".obj")
-        if ((requestCode == REQ_MODEL || requestCode == REQ_CHARACTER) && modelExts.none { lower.endsWith(it) }) {
+        if ((requestCode == REQ_MODEL || requestCode == REQ_CHARACTER || requestCode == REQ_SWAP_MODEL) && modelExts.none { lower.endsWith(it) }) {
             toast("Formato não suportado: escolha .fbx, .glb, .gltf ou .obj (outros formatos: abra no Blender e exporte .glb)")
             return
         }
         toast("Carregando $name…")
         Thread {
             try {
-                val dir = File(filesDir, if (requestCode == REQ_IMAGE) "textures" else "models").apply { mkdirs() }
+                val dir = File(filesDir, if (requestCode == REQ_IMAGE || requestCode == REQ_SWAP_TEX) "textures" else "models").apply { mkdirs() }
                 if (lower.endsWith(".gltf")) toast("Dica: .gltf com arquivos .bin/texturas separados pode abrir sem textura; prefira .glb")
                 val dst = File(dir, name.replace('/', '_'))
                 contentResolver.openInputStream(uri)!!.use { input -> dst.outputStream().use { input.copyTo(it) } }
                 gl {
-                    if (requestCode == REQ_IMAGE) {
+                    if (requestCode == REQ_SWAP_MODEL || requestCode == REQ_SWAP_TEX) {
+                        toast("Aplicando no mapa…")
+                        val ok = if (requestCode == REQ_SWAP_MODEL) NativeBridge.nativeMapSwapModel(pendingSwap, dst.absolutePath)
+                                 else NativeBridge.nativeMapSwapTexture(pendingMat, dst.absolutePath)
+                        saveIfChanged()
+                        val warn = NativeBridge.nativeLastError()
+                        toast(if (!ok) "Não deu: $warn" else if (warn.isNotBlank()) "Aplicado, com aviso: $warn" else "Trocado no mapa e salvo no projeto!")
+                    } else if (requestCode == REQ_IMAGE) {
                         if (NativeBridge.nativeSetObjectTexture(dst.absolutePath)) toast("Textura aplicada")
                         else toast("Erro: " + NativeBridge.nativeLastError())
                     } else {
@@ -1309,6 +1546,8 @@ class MainActivity : Activity() {
         private const val REQ_EXPORT = 45
         private const val REQ_GLB = 46
         private const val REQ_CHARACTER = 47
+        private const val REQ_SWAP_MODEL = 48
+        private const val REQ_SWAP_TEX = 49
         private const val AUTOSAVE_MS = 30_000L
     }
 }

@@ -60,6 +60,22 @@ int     engine_animation_index(Engine*);
 void    engine_set_animation(Engine*, int index);
 void    engine_set_anim_preview(Engine*, int on);               // 1 = animações tocam também no editor
 
+// Editor de animação (objeto selecionado com esqueleto): pose osso a osso, quadros-chave e salvar com nome.
+// Ângulos em graus, relativos à pose de repouso do osso. A animação salva fica no projeto e vai no .glb.
+int     engine_anim_edit_begin(Engine*);                        // nº de ossos ou -1 (engine_last_error)
+const char* engine_anim_edit_bones(Engine*);                    // nomes (um por linha)
+void    engine_anim_edit_select(Engine*, int bone);             // destaca o osso na tela
+void    engine_anim_edit_get(Engine*, int bone, float* euler3);
+void    engine_anim_edit_set(Engine*, int bone, const float* euler3);
+void    engine_anim_edit_reset_pose(Engine*);
+int     engine_anim_edit_key(Engine*, float time);              // grava a pose no tempo; retorna nº de quadros
+void    engine_anim_edit_delete_key(Engine*, float time);
+void    engine_anim_edit_goto(Engine*, float time);             // volta à pose gravada nesse tempo
+const char* engine_anim_edit_keys(Engine*);                     // tempos dos quadros ("0.00 0.50 ...")
+int     engine_anim_edit_preview(Engine*, int on);              // toca a animação em edição (precisa de 2+ quadros)
+int     engine_anim_edit_save(Engine*, const char* name);       // índice da animação nova ou -1
+void    engine_anim_edit_end(Engine*);
+
 // Estatísticas: out[0] fps, [1] ms por frame, [2] ms de CPU do motor, [3] draw calls, [4] triângulos, [5] objetos
 void    engine_get_stats(Engine*, float* out6);
 
@@ -71,7 +87,8 @@ int     engine_create_random_character(Engine*, uint32_t seed, int controllable)
 // Arma: 0 pistola, 1 fuzil, 2 escopeta, 3 sniper, 4 faca, 5 taco. Equipa no personagem selecionado (ou no jogador).
 int     engine_create_weapon(Engine*, int kind);
 // Construção: 0 casa, 1 sobrado, 2 barraco, 3 prédio, 4 arranha-céu, 5 escola, 6 árvore, 7 pinheiro, 8 palmeira,
-// 9 carro, 10 poste, 11 muro. Criada no ponto de foco da câmera.
+// 9 carro, 10 poste, 11 muro, 12 rua, 13 cruzamento, 14 calçada, 15 escada, 16 rampa, 17 piso, 18 parede,
+// 19 cerca, 20 banco, 21 caixa d'água. Criada no ponto de foco da câmera.
 int     engine_create_building(Engine*, int kind, uint32_t seed);
 // Mapas: 0 mundo infinito, 1 cidade, 2 favela, 3 colégio, 4 bairro (os de 1 a 4 têm limite com barreira invisível)
 void    engine_load_map(Engine*, int kind, uint32_t seed);
@@ -114,6 +131,13 @@ void    engine_set_project_name(Engine*, const char* name);
 const char* engine_tool_call(Engine*, const char* name, const char* input_json);
 int     engine_add_spec(Engine*, const char* spec_json);        // cria um objeto pela receita JSON e seleciona
 void    engine_set_time_of_day(Engine*, float hour);
+// Mapa editável: refaz o mapa atual com cada construção/árvore/poste/carro/rua como objeto (mover, apagar, cor...).
+// O projeto guarda só o que mudou. Trocas: modelo de arquivo no lugar de "arvore", "pinheiro", "palmeira", "pedra",
+// "casa" e textura (imagem) no lugar de um material da biblioteca. path vazio desfaz. Retornam 0 se falhar.
+int     engine_map_set_editable(Engine*, int on);
+int     engine_map_editable(Engine*);
+int     engine_map_swap_model(Engine*, const char* kind, const char* path);
+int     engine_map_swap_texture(Engine*, int material, const char* path);
 // Exporta para .glb (glTF binário: Blender, Unity, Godot...). object_id -1 = cena inteira. 0 se falhar.
 int     engine_export_glb(Engine*, int object_id, const char* path);
 float   engine_get_time_of_day(Engine*);

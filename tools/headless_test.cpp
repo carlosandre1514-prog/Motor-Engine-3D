@@ -4,9 +4,11 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -608,6 +610,122 @@ int main(int argc, char** argv) {
             std::printf("  andou %.1f m\n", moved);
             if (ch < 0 || moved < 2.f) { std::printf("  [ERRO] .obj não virou personagem jogável\n"); ++g_fail; }
         }
+    }
+
+    // ---- [18] animações: modelo importado ganha as do motor; animação personalizada salva e reabre
+    std::printf("[18] animações personalizadas\n");
+    {
+        for (int i = 3; i < argc; ++i) {
+            std::string m = argv[i];
+            if (m.find("Samba") == std::string::npos) continue;
+            engine_new_scene(e);
+            int id = engine_load_model(e, m.c_str());
+            engine_select(e, id);
+            std::string list = engine_animation_list(e);
+            std::printf("  %s: %zu animações, motor: %s\n", m.c_str(), std::count(list.begin(), list.end(), '\n'),
+                        list.find("(motor)") != std::string::npos ? "sim" : "não");
+            if (list.find("(motor)") == std::string::npos) { std::printf("  [ERRO] humanoide importado sem as animações do motor\n"); ++g_fail; }
+        }
+        engine_tool_call(e, "carregar_mapa", R"({"tipo":"vazio","com_jogador":false})");
+        int ch = engine_create_random_character(e, 5, 0);
+        engine_select(e, ch);
+        int bones = engine_anim_edit_begin(e);
+        std::string names = engine_anim_edit_bones(e);
+        int arm = -1, k = 0;
+        for (size_t pos = 0, nl; (nl = names.find('\n', pos)) != std::string::npos; pos = nl + 1, ++k)
+            if (names.compare(pos, std::strlen("Braço dir"), "Braço dir") == 0) arm = k;
+        engine_anim_edit_select(e, arm);
+        float down[3] = {0, 0, 0}, up[3] = {0, 0, 150};
+        engine_anim_edit_set(e, arm, down); engine_anim_edit_key(e, 0.f);
+        engine_anim_edit_set(e, arm, up);   engine_anim_edit_key(e, 0.5f);
+        engine_anim_edit_set(e, arm, down); engine_anim_edit_key(e, 1.f);
+        engine_anim_edit_goto(e, 0.5f);
+        engine_set_camera(e, 0.f, 1.f, 0.f, 0.3f, 0.15f, 4.f);
+        frames(e, 2);
+        save(out, "18_pose.png");
+        int clip = engine_anim_edit_save(e, "Tchau");
+        std::printf("  ossos %d, braço %d, animação salva no índice %d\n", bones, arm, clip);
+        std::string proj = engine_export_project(e);
+        engine_import_project(e, proj.c_str());
+        int found = -1;
+        for (int id = 0; id < engine_object_count(e); ++id)
+            if (engine_object_valid(e, id) && engine_object_parent(e, id) < 0) {
+                engine_select(e, id);
+                if (std::string(engine_animation_list(e)).find("Tchau") != std::string::npos) found = id;
+            }
+        std::printf("  depois de reabrir: %s\n", found >= 0 ? "animação 'Tchau' presente" : "sumiu");
+        if (arm < 0 || clip < 0 || found < 0) { std::printf("  [ERRO] animação personalizada\n"); ++g_fail; }
+        else {
+            engine_select(e, found);
+            std::string l = engine_animation_list(e);
+            int idx = 0; for (size_t pos = 0; pos < l.find("Tchau"); ++pos) if (l[pos] == '\n') ++idx;
+            engine_set_animation(e, idx);
+            engine_set_camera(e, 0.f, 1.f, 0.f, 0.3f, 0.15f, 4.f);
+            frames(e, 30);
+            save(out, "18_tchau.png");
+        }
+    }
+
+    // ---- [19] mapa editável: cada peça vira objeto; mudanças salvas; trocas de modelo e textura
+    std::printf("[19] editar mapa\n");
+    {
+        engine_load_map(e, 4, 9);  // bairro
+        frames(e, 2);
+        float st0[6]; engine_get_stats(e, st0);
+        engine_set_camera(e, -30.f, 2.f, -60.f, 0.6f, 0.35f, 45.f);
+        frames(e, 3);
+        save(out, "19_mapa_base.png");
+        if (!engine_map_set_editable(e, 1)) { std::printf("  [ERRO] editável: %s\n", engine_last_error(e)); ++g_fail; }
+        frames(e, 2);
+        float st1[6]; engine_get_stats(e, st1);
+        std::printf("  bairro: %.0f objetos -> editável %.0f objetos, draws %.0f -> %.0f\n", st0[5], st1[5], st0[3], st1[3]);
+        // acha casas e árvores pelas raízes registradas
+        std::vector<int> casas, arvores;
+        for (int id = 0; id < engine_object_count(e); ++id) {
+            if (!engine_object_valid(e, id) || engine_object_parent(e, id) >= 0) continue;
+            std::string n = engine_object_name(e, id);
+            if (n == "Casa") casas.push_back(id);
+            if (n == "Arvore") arvores.push_back(id);
+        }
+        std::map<std::string, int> kinds;
+        for (int id = 0; id < engine_object_count(e); ++id)
+            if (engine_object_valid(e, id) && engine_object_parent(e, id) < 0) ++kinds[engine_object_name(e, id)];
+        for (auto& [k, v] : kinds) std::printf("    %s: %d\n", k.c_str(), v);
+        engine_set_camera(e, -30.f, 2.f, -60.f, 0.6f, 0.35f, 45.f);
+        frames(e, 3);
+        save(out, "19_mapa_editavel.png");
+        std::printf("  casas %zu, árvores %zu\n", casas.size(), arvores.size());
+        if (casas.size() < 10 || arvores.size() < 5) { std::printf("  [ERRO] peças não viraram objetos\n"); ++g_fail; }
+        else {
+            engine_select(e, casas[0]); engine_delete_selected(e);
+            float p[3], r[3], sc[3];
+            engine_get_transform(e, casas[1], p, r, sc);
+            p[1] += 3.f; r[1] += 45.f;
+            engine_set_transform(e, casas[1], p, r, sc);
+            engine_select(e, casas[2]); engine_set_object_color(e, 0.9f, 0.1f, 0.1f);
+        }
+        std::string a1 = engine_export_project(e);
+        engine_import_project(e, a1.c_str());
+        std::string a2 = engine_export_project(e);
+        size_t pecas = a1.find("\"pecas\"");
+        std::printf("  projeto %zu bytes, mudanças salvas: %s, reabrir igual: %s\n", a1.size(), pecas != std::string::npos ? "sim" : "não", a1 == a2 ? "sim" : "não");
+        if (pecas == std::string::npos || a1 != a2) { std::printf("  [ERRO] mudanças do mapa não voltaram iguais\n"); ++g_fail; }
+        // trocas: árvores viram a estátua .obj; grama ganha uma imagem
+        std::string img = out + "/19_grama.png";
+        std::vector<unsigned char> px(64 * 64 * 4);
+        for (int i = 0; i < 64 * 64; ++i) { px[i * 4] = 200; px[i * 4 + 1] = (i / 64 % 8 < 4) ? 40 : 220; px[i * 4 + 2] = 60; px[i * 4 + 3] = 255; }
+        stbi_write_png(img.c_str(), 64, 64, 4, px.data(), 64 * 4);
+        int grass = -1;
+        for (int i = 0; i < engine_material_count(e); ++i) if (std::string(engine_material_name(e, i)) == "Grama") grass = i;
+        bool ok1 = engine_map_swap_model(e, "arvore", (out + "/17_estatua.obj").c_str());
+        bool ok2 = engine_map_swap_texture(e, grass, img.c_str());
+        std::string a3 = engine_export_project(e);
+        std::printf("  troca árvore: %s, troca grama: %s, trocas no projeto: %s\n", ok1 ? "ok" : "falhou", ok2 ? "ok" : "falhou",
+                    a3.find("\"trocas\"") != std::string::npos && a3.find("\"texturas\"") != std::string::npos ? "sim" : "não");
+        if (!ok1 || !ok2) { std::printf("  [ERRO] trocas: %s\n", engine_last_error(e)); ++g_fail; }
+        engine_set_camera(e, -30.f, 2.f, -60.f, 0.6f, 0.35f, 45.f);
+        frames(e, 3);
+        save(out, "19_mapa_editado.png");
     }
 
     engine_destroy(e);

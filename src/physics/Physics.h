@@ -233,6 +233,6 @@ private:
     float accum_ = 0.f;
 };
 
-using RigidBodyPool = ObjectPool<RigidBody, 1024>;
+using RigidBodyPool = ObjectPool<RigidBody, 8192>;
 
 }  // namespace eng

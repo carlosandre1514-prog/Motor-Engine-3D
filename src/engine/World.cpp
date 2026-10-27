@@ -7,6 +7,7 @@
 #include "assets/MeshUtils.h"
 #include "engine/Engine.h"
 #include "procgen/Noise.h"
+#include <glm/gtx/matrix_decompose.hpp>
 
 namespace eng {
 
@@ -17,6 +18,77 @@ constexpr int kRes = 40;          // quads por lado do chunk (2,4 m por quad)
 constexpr int kRadius = 2;        // chunks carregados em volta do foco (5 x 5)
 
 using HeightFn = std::function<float(float, float)>;
+
+bool gEditable = false;  // gerando mapa editável (peças viram objetos)
+
+// Peça de mapa editável: objeto registrado com receita {"tipo":"peca_mapa","peca":N}
+void registerPiece(Engine* e, Scene::Handle h) {
+    GameObject* g = e->scene.get(h);
+    if (!g) return;
+    int idx = int(e->mapPieces.size());
+    e->mapPieces.push_back({h, g->transform.position, g->transform.scale, g->transform.rotation, g->name});
+    char spec[64];
+    std::snprintf(spec, sizeof(spec), "{\"tipo\":\"peca_mapa\",\"peca\":%d}", idx);
+    recordRecipe(e, *g, spec);
+}
+
+// nome da peça pelo material que mais aparece nela
+const char* pieceName(const Geo& g) {
+    auto has = [&](Mat m) { return !g.mats[int(m)].empty() || !g.detailMats[int(m)].empty(); };
+    if (has(Mat::FacadeOffice)) return "Arranha-ceu";
+    if (has(Mat::FacadeApt)) return "Predio";
+    if (has(Mat::BrickWindow) || (has(Mat::Brick) && has(Mat::Metal))) return "Barraco";
+    if (has(Mat::RoofTile)) return "Casa";
+    if (has(Mat::Glass)) return "Carro";
+    if (has(Mat::Road) || has(Mat::Asphalt)) return "Ruas";
+    if (has(Mat::Court)) return "Quadra";
+    if (has(Mat::Sidewalk)) return "Calcada";
+    if (has(Mat::FacadeHouse)) return "Escola";
+    if (has(Mat::Metal) && !has(Mat::Concrete)) return "Poste";
+    if (has(Mat::Concrete)) return "Escadaria";
+    return "Peca";
+}
+
+// Divide o Geo nas peças marcadas por place() e cria um objeto editável para cada uma
+void spawnPieces(Engine* e, Geo& g) {
+    std::vector<Geo::Mark> marks = g.marks;
+    Geo::Mark m0{};  // geometria antes do 1º place(): peça na origem (vazia é ignorada)
+    marks.insert(marks.begin(), m0);
+    Geo::Mark end = g.mark();
+    for (size_t k = 0; k < marks.size(); ++k) {
+        const Geo::Mark& a = marks[k];
+        const Geo::Mark& b = k + 1 < marks.size() ? marks[k + 1] : end;
+        Geo piece;
+        bool any = false;
+        glm::mat4 inv = glm::inverse(glm::rotate(glm::translate(glm::mat4(1.f), a.origin), a.yaw, glm::vec3(0, 1, 0)));
+        glm::mat3 inv3(inv);
+        for (int layer = 0; layer < 2; ++layer)
+            for (int m = 0; m < int(Mat::Count); ++m) {
+                const MeshBuilder& src = layer ? g.detailMats[m] : g.mats[m];
+                MeshBuilder& dst = layer ? piece.detailMats[m] : piece.mats[m];
+                uint32_t v0 = a.v[layer][m], v1 = b.v[layer][m], i0 = a.i[layer][m], i1 = b.i[layer][m];
+                if (i1 <= i0 || v1 <= v0) continue;
+                for (uint32_t v = v0; v < v1; ++v) {
+                    Vertex x = src.v[v];
+                    x.pos = glm::vec3(inv * glm::vec4(x.pos, 1.f));
+                    x.normal = inv3 * x.normal;
+                    x.tangent = glm::vec4(inv3 * glm::vec3(x.tangent), x.tangent.w);
+                    dst.v.push_back(x);
+                }
+                for (uint32_t i = i0; i < i1; ++i) dst.idx.push_back(src.idx[i] - v0);
+                any = true;
+            }
+        for (size_t c = a.col; c < b.col; ++c) {
+            BoxCollider bc = g.colliders[c];
+            bc.center = glm::vec3(inv * glm::vec4(bc.center, 1.f));
+            bc.yaw -= a.yaw;
+            piece.colliders.push_back(bc);
+        }
+        if (!any && piece.colliders.empty()) continue;
+        Scene::Handle h = spawnGeo(e, piece, pieceName(piece), true, a.origin, a.yaw, kDetailFar);
+        registerPiece(e, h);
+    }
+}
 
 float smooth01(float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.f, 1.f); return t * t * (3.f - 2.f * t); }
 
@@ -92,8 +164,34 @@ Prototype protoFromGeo(Engine* e, Geo& g) {
 
 void spawnProto(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float scale, std::vector<Scene::Handle>* out,
                 std::vector<BoxCollider>* colliders) {
+    if (gEditable && !out) {  // mapa editável: a árvore/pedra vira um objeto com collider próprio
+        Scene::Handle rootH = e->scene.create(p.name.empty() ? "Arvore" : p.name.c_str());
+        GameObject* root = e->scene.get(rootH);
+        if (!root) return;
+        root->transform.setPosition(pos);
+        root->transform.setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
+        root->transform.setScale(glm::vec3(scale));
+        registerObject(e, rootH);
+        for (const ProtoPart& pp : p.parts) {
+            glm::vec3 sc, tr, skew; glm::vec4 persp; glm::quat rot;
+            glm::decompose(pp.local, sc, rot, tr, skew, persp);
+            Scene::Handle ch = e->scene.create(p.name.empty() ? "Parte" : p.name.c_str(), root);
+            GameObject* c = e->scene.get(ch);
+            if (!c) break;
+            c->transform.setPosition(tr); c->transform.setRotation(rot); c->transform.setScale(sc);
+            auto rh = e->meshRenderers.acquire();
+            if (MeshRenderer* mr = e->meshRenderers.get(rh)) { mr->mesh = pp.mesh; mr->material = pp.mat; mr->lodNear = pp.lodNear; mr->lodFar = pp.lodFar; c->meshRenderer = mr; }
+            registerObject(e, ch);
+        }
+        if (p.colliderHalf.x > 0.f) addBoxCollider(e, rootH, {0.f, p.colliderY, 0.f}, p.colliderHalf);
+        registerPiece(e, rootH);
+        return;
+    }
+    glm::mat4 base = glm::scale(glm::rotate(glm::translate(glm::mat4(1.f), pos), yaw, glm::vec3(0, 1, 0)), glm::vec3(scale));
     for (const ProtoPart& pp : p.parts) {
-        Scene::Handle h = addMeshObject(e, "", pp.mesh, pp.mat, pos, glm::vec3(scale), {0.f, glm::degrees(yaw), 0.f}, false);
+        glm::vec3 sc(scale), tr = pos, skew; glm::vec4 persp; glm::quat rot = glm::angleAxis(yaw, glm::vec3(0, 1, 0));
+        if (pp.local != glm::mat4(1.f)) glm::decompose(base * pp.local, sc, rot, tr, skew, persp);
+        Scene::Handle h = addMeshObject(e, "", pp.mesh, pp.mat, tr, sc, glm::degrees(glm::eulerAngles(rot)), false);
         if (GameObject* g = e->scene.get(h); g && g->meshRenderer) { g->meshRenderer->lodNear = pp.lodNear; g->meshRenderer->lodFar = pp.lodFar; }
         if (out) out->push_back(h);
     }
@@ -115,17 +213,20 @@ void makeProtos(Engine* e, uint32_t seed) {
         MeshBuilder low;
         buildTree(low, r2, k, true);
         p.parts.push_back({low.build(e->renderer), e->mats[int(Mat::Painted)], kTreeLod, kTreeFar});
+        p.name = k == 0 ? "Arvore" : k == 1 ? "Pinheiro" : "Palmeira";
         e->treeProto[k] = p;
     }
     e->rockProto = Prototype{};
     e->rockProto.parts.push_back({e->rock, e->mats[int(Mat::Concrete)], 0.f, 260.f});
     e->rockProto.colliderHalf = glm::vec3(0.45f);
     e->rockProto.colliderY = 0.f;
+    e->rockProto.name = "Pedra";
     for (int k = 0; k < 3; ++k) {
         Geo g;
         g.place(glm::vec3(0.f), 0.f);
         buildHouse(g, r, r.range(7.f, 10.f), r.range(8.f, 10.f), k == 2 ? 2 : 1, housePaint(r), false);
         e->houseProto[k] = protoFromGeo(e, g);
+        e->houseProto[k].name = "Casa";
     }
 }
 
@@ -138,8 +239,17 @@ struct Cells {
     std::map<int64_t, Geo> m;
     Cells(float s, int grp = 1) : size(s), group(grp) {}
     static int64_t key(int64_t cx, int64_t cz) { return (cx << 32) ^ (cz & 0xffffffff); }
-    Geo& at(glm::vec3 p) { return m[key(int64_t(std::floor(p.x / size)), int64_t(std::floor(p.z / size)))]; }
+    Geo& at(glm::vec3 p) {
+        Geo& g = m[key(int64_t(std::floor(p.x / size)), int64_t(std::floor(p.z / size)))];
+        g.recordMarks = gEditable;
+        return g;
+    }
     void flush(Engine* e) {
+        if (gEditable) {  // cada construção vira objeto editável
+            for (auto& [k, g] : m) spawnPieces(e, g);
+            m.clear();
+            return;
+        }
         std::map<int64_t, Geo> big;
         auto fdiv = [](int64_t a, int64_t b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
         for (auto& [k, g] : m) {
@@ -647,18 +757,24 @@ void clearWorld(Engine* e) {
     e->mapKind = MAP_None;
     e->hasBounds = false;
     e->water = {};
+    e->mapPieces.clear();
+    e->mapEditable = false;
 }
 
 void updateWorld(Engine* e) {
     if (e->mapKind == MAP_Infinite) updateInfinite(e, 1);  // no máximo 1 chunk novo por frame
 }
 
-void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer) {
+void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable) {
     clearScene(e);
     e->mapKind = kind;
     e->mapSeed = seed;
     Rng r(seed);
+    applyMapSwaps(e, true, false);   // texturas trocadas antes (os protótipos usam os materiais)
     makeProtos(e, seed);
+    applyMapSwaps(e, false, true);   // modelos trocados (árvores, pedras, casas)
+    e->mapEditable = editable && kind != MAP_Infinite;
+    gEditable = e->mapEditable;
     glm::vec3 spawn(0.f);
     float spawnYaw = 0.f;
     switch (kind) {
@@ -681,6 +797,7 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer) {
         default: genSuburb(e, r, spawn, spawnYaw); e->mapKind = MAP_Suburb; break;
     }
     e->mapKind = kind < MAP_Count ? kind : MAP_Suburb;
+    gEditable = false;
     // jogador (salvo como receita: ao reabrir o projeto, o mapa é refeito sem ele e ele volta do arquivo)
     if (withPlayer) {
         char spec[160];
@@ -712,6 +829,81 @@ Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos) 
             break;
         case 9: buildCar(g, r); name = "Carro"; break;
         case 10: buildStreetLight(g); g.collider({-0.15f, 0, -0.15f}, {0.3f, 7.f, 0.3f}); name = "Poste"; break;
+        case 12: case 13: {  // trecho de rua (ao longo de Z) / cruzamento
+            MeshBuilder& m = g[kind == 12 ? Mat::Road : Mat::Asphalt];
+            float W = 8.f, L = kind == 12 ? 12.f : 8.f;
+            glm::vec2 uv[4] = {{0, L / 6.f}, {1, L / 6.f}, {1, 0}, {0, 0}};
+            if (kind == 13) { uv[0] = {0, 2}; uv[1] = {2, 2}; uv[2] = {2, 0}; uv[3] = {0, 0}; }
+            m.quad({-W / 2, 0.03f, L / 2}, {W / 2, 0.03f, L / 2}, {W / 2, 0.03f, -L / 2}, {-W / 2, 0.03f, -L / 2}, uv);
+            g.collider({-W / 2, -0.2f, -L / 2}, {W, 0.23f, L});
+            name = kind == 12 ? "Rua" : "Cruzamento";
+            break;
+        }
+        case 14: {  // calçada com meio-fio
+            MeshBuilder& m = g[Mat::Sidewalk];
+            m.uvTile = {2.f, 2.f};
+            m.box({-1.5f, 0, -6.f}, {3.f, 0.15f, 12.f});
+            g.collider({-1.5f, -0.2f, -6.f}, {3.f, 0.35f, 12.f});
+            name = "Calcada";
+            break;
+        }
+        case 15: case 16: {  // escada / rampa: sobem para +Z (o personagem consegue subir)
+            float W = 2.f, H = 3.f, L = kind == 15 ? 5.f : 8.f;
+            MeshBuilder& m = g[Mat::Concrete];
+            m.uvTile = {2.f, 2.f};
+            if (kind == 15) {
+                int n = 16;
+                for (int i = 0; i < n; ++i) m.box({-W / 2, 0, i * L / n}, {W, H * (i + 1) / n, L / n + 0.001f});
+            } else {
+                m.quad({W / 2, 0, 0}, {-W / 2, 0, 0}, {-W / 2, H, L}, {W / 2, H, L});
+                m.quad({-W / 2, 0, L}, {W / 2, 0, L}, {W / 2, H, L}, {-W / 2, H, L});
+                m.tri({-W / 2, 0, 0}, {-W / 2, 0, L}, {-W / 2, H, L}, {0, 0}, {1, 0}, {1, 1});
+                m.tri({W / 2, 0, 0}, {W / 2, H, L}, {W / 2, 0, L}, {0, 0}, {1, 1}, {1, 0});
+            }
+            float th = std::atan2(H, L), len = std::sqrt(H * H + L * L);
+            glm::vec3 nrm(0.f, std::cos(th), -std::sin(th));
+            g.colliderTilted(glm::vec3(0.f, H * 0.5f, L * 0.5f) - nrm * 0.15f, {W * 0.5f, 0.15f, len * 0.5f}, -th);
+            g.collider({-W / 2, 0, L - 0.2f}, {W, H, 0.2f});
+            name = kind == 15 ? "Escada" : "Rampa";
+            break;
+        }
+        case 17: {  // piso / laje (plataforma)
+            MeshBuilder& m = g[Mat::Concrete];
+            m.uvTile = {2.f, 2.f};
+            m.box({-3.f, 0, -3.f}, {6.f, 0.3f, 6.f});
+            g.collider({-3.f, 0, -3.f}, {6.f, 0.3f, 6.f});
+            name = "Piso";
+            break;
+        }
+        case 18: {  // parede de reboco
+            MeshBuilder& m = g[Mat::Plaster];
+            m.color = housePaint(r);
+            m.uvTile = {2.f, 2.f};
+            m.box({-2.f, 0, -0.1f}, {4.f, 3.f, 0.2f});
+            g.collider({-2.f, 0, -0.1f}, {4.f, 3.f, 0.2f});
+            name = "Parede";
+            break;
+        }
+        case 19: {  // cerca de madeira
+            MeshBuilder& m = g[Mat::Wood];
+            for (int i = 0; i <= 4; ++i) m.box({-2.f + i - 0.05f, 0, -0.05f}, {0.1f, 1.2f, 0.1f});
+            m.box({-2.f, 0.35f, -0.03f}, {4.f, 0.1f, 0.06f});
+            m.box({-2.f, 0.9f, -0.03f}, {4.f, 0.1f, 0.06f});
+            g.collider({-2.f, 0, -0.1f}, {4.f, 1.2f, 0.2f});
+            name = "Cerca";
+            break;
+        }
+        case 20: {  // banco de praça
+            MeshBuilder& w = g[Mat::Wood];
+            for (int i = 0; i < 4; ++i) w.box({-0.9f, 0.42f, -0.25f + i * 0.13f}, {1.8f, 0.04f, 0.1f});
+            for (int i = 0; i < 3; ++i) w.box({-0.9f, 0.55f + i * 0.13f, 0.27f}, {1.8f, 0.1f, 0.04f});
+            MeshBuilder& m = g[Mat::GunMetal];
+            for (float x : {-0.8f, 0.75f}) { m.box({x, 0, -0.25f}, {0.05f, 0.42f, 0.05f}); m.box({x, 0, 0.25f}, {0.05f, 0.95f, 0.05f}); }
+            g.collider({-0.9f, 0, -0.3f}, {1.8f, 0.5f, 0.6f});
+            name = "Banco";
+            break;
+        }
+        case 21: buildWaterTank(g[Mat::Painted], glm::vec3(0.f)); g.collider({-0.7f, 0, -0.7f}, {1.4f, 1.4f, 1.4f}); name = "Caixa d'agua"; break;
         default: {
             MeshBuilder& w = g[Mat::Brick];
             w.uvTile = {1.f, 1.f};

@@ -76,6 +76,17 @@ struct Animator {
     bool loop = true;
     glm::mat4 palette[kMaxJoints];  // enviado ao UBO de skinning
     glm::mat4 global[kMaxJoints];   // pose de cada joint no espaço do esqueleto (para encaixar armas/acessórios)
+    // Editor de animação: pose manual (rotação local de cada osso), no lugar do clip
+    bool posing = false;
+    glm::quat poseR[kMaxJoints];
+    const AnimationClip* preview = nullptr;  // prévia de uma animação em edição (toca no lugar do clip)
+
+    // clip pelo índice da lista completa (com retarget: motor primeiro, depois os do modelo)
+    const AnimationClip* clipAt(int i) const {
+        if (i < 0 || i >= clipCount) return nullptr;
+        if (retarget) return i < refCount ? &clips[i] : (i - refCount < ownCount ? &ownClips[i - refCount] : nullptr);
+        return &clips[i];
+    }
 
     const AnimationClip* clip() const {
         if (retarget) {
@@ -91,19 +102,20 @@ struct Animator {
     // advance = false: só reavalia a pose no tempo atual (modo edição)
     void update(float dt, bool advance) {
         if (!skeleton) return;
-        const AnimationClip* c = clip();
+        const AnimationClip* c = preview ? preview : clip();
         if (advance && c && c->duration > 0.f) {
             time += dt * speed;
             if (loop) time = std::fmod(time, c->duration);
             else time = std::min(time, c->duration);
         }
-        if (retarget && clipIndex < refCount) { updateRetarget(c); return; }
+        if (retarget && clipIndex < refCount && !posing && !preview) { updateRetarget(c); return; }
         glm::vec3 t[kMaxJoints], s[kMaxJoints];
         glm::quat r[kMaxJoints];
         const int n = skeleton->jointCount;
         for (int i = 0; i < n; ++i) { t[i] = skeleton->bindT[i]; r[i] = skeleton->bindR[i]; s[i] = skeleton->bindS[i]; }
 
-        if (c) for (int k = 0; k < c->channelCount; ++k) sample(c->channels[k], t, r, s);
+        if (posing) for (int i = 0; i < n; ++i) r[i] = poseR[i];
+        else if (c) for (int k = 0; k < c->channelCount; ++k) sample(c->channels[k], t, r, s);
 
         for (int k = 0; k < n; ++k) {
             int i = skeleton->order[k];

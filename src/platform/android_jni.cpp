@@ -186,6 +186,15 @@ JNI_FN(jboolean, nativeExportGlb)(JNIEnv* env, jclass, jint id, jstring path) {
     return g_engine && engine_export_glb(g_engine, id, str(env, path).c_str());
 }
 
+JNI_FN(jboolean, nativeMapSetEditable)(JNIEnv*, jclass, jboolean on) { return g_engine && engine_map_set_editable(g_engine, on ? 1 : 0); }
+JNI_FN(jboolean, nativeMapEditable)(JNIEnv*, jclass) { return g_engine && engine_map_editable(g_engine); }
+JNI_FN(jboolean, nativeMapSwapModel)(JNIEnv* env, jclass, jstring kind, jstring path) {
+    return g_engine && engine_map_swap_model(g_engine, str(env, kind).c_str(), str(env, path).c_str());
+}
+JNI_FN(jboolean, nativeMapSwapTexture)(JNIEnv* env, jclass, jint mat, jstring path) {
+    return g_engine && engine_map_swap_texture(g_engine, mat, str(env, path).c_str());
+}
+
 // Jogo
 JNI_FN(void, nativeGameStatus)(JNIEnv* env, jclass, jfloatArray out8) {
     if (!g_engine || env->GetArrayLength(out8) < 8) return;
@@ -199,6 +208,25 @@ JNI_FN(jbyteArray, nativeGameText)(JNIEnv* env, jclass, jint which) { return toB
 JNI_FN(jbyteArray, nativeAnimationList)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_animation_list(g_engine) : ""); }
 JNI_FN(jint, nativeAnimationIndex)(JNIEnv*, jclass) { return g_engine ? engine_animation_index(g_engine) : -1; }
 JNI_FN(void, nativeSetAnimation)(JNIEnv*, jclass, jint i) { if (g_engine) engine_set_animation(g_engine, i); }
+JNI_FN(jint, nativeAnimEditBegin)(JNIEnv*, jclass) { return g_engine ? engine_anim_edit_begin(g_engine) : -1; }
+JNI_FN(jbyteArray, nativeAnimEditBones)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_anim_edit_bones(g_engine) : ""); }
+JNI_FN(void, nativeAnimEditSelect)(JNIEnv*, jclass, jint b) { if (g_engine) engine_anim_edit_select(g_engine, b); }
+JNI_FN(void, nativeAnimEditGet)(JNIEnv* env, jclass, jint b, jfloatArray out3) {
+    if (!g_engine || env->GetArrayLength(out3) < 3) return;
+    float v[3]; engine_anim_edit_get(g_engine, b, v); env->SetFloatArrayRegion(out3, 0, 3, v);
+}
+JNI_FN(void, nativeAnimEditSet)(JNIEnv* env, jclass, jint b, jfloatArray in3) {
+    if (!g_engine || env->GetArrayLength(in3) < 3) return;
+    float v[3]; env->GetFloatArrayRegion(in3, 0, 3, v); engine_anim_edit_set(g_engine, b, v);
+}
+JNI_FN(void, nativeAnimEditResetPose)(JNIEnv*, jclass) { if (g_engine) engine_anim_edit_reset_pose(g_engine); }
+JNI_FN(jint, nativeAnimEditKey)(JNIEnv*, jclass, jfloat t) { return g_engine ? engine_anim_edit_key(g_engine, t) : 0; }
+JNI_FN(void, nativeAnimEditDeleteKey)(JNIEnv*, jclass, jfloat t) { if (g_engine) engine_anim_edit_delete_key(g_engine, t); }
+JNI_FN(void, nativeAnimEditGoto)(JNIEnv*, jclass, jfloat t) { if (g_engine) engine_anim_edit_goto(g_engine, t); }
+JNI_FN(jbyteArray, nativeAnimEditKeys)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_anim_edit_keys(g_engine) : ""); }
+JNI_FN(jboolean, nativeAnimEditPreview)(JNIEnv*, jclass, jboolean on) { return g_engine && engine_anim_edit_preview(g_engine, on ? 1 : 0); }
+JNI_FN(jint, nativeAnimEditSave)(JNIEnv* env, jclass, jbyteArray name) { return g_engine ? engine_anim_edit_save(g_engine, bytes(env, name).c_str()) : -1; }
+JNI_FN(void, nativeAnimEditEnd)(JNIEnv*, jclass) { if (g_engine) engine_anim_edit_end(g_engine); }
 JNI_FN(void, nativeSetAnimPreview)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_set_anim_preview(g_engine, on ? 1 : 0); }
 
 }  // extern "C"

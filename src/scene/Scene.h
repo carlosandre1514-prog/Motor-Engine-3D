@@ -122,7 +122,7 @@ struct GameObject {
 
 class Scene {
 public:
-    static constexpr uint32_t kMaxObjects = 4096;
+    static constexpr uint32_t kMaxObjects = 16384;  // mapa editável: cada construção vira objeto
     using Handle = ObjectPool<GameObject, kMaxObjects>::Handle;
 
     Handle create(const char* name, GameObject* parent = nullptr) {
@@ -170,6 +170,6 @@ private:
     ObjectPool<GameObject, kMaxObjects> objects_;
 };
 
-using MeshRendererPool = ObjectPool<MeshRenderer, 8192>;
+using MeshRendererPool = ObjectPool<MeshRenderer, 16384>;
 
 }  // namespace eng

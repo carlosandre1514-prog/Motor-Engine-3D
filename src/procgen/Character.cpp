@@ -193,6 +193,10 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
         sk.bindS[i] = glm::vec3(1.f);
         sk.inverseBind[i] = glm::translate(glm::mat4(1.f), -pos[i]);
     }
+    // nomes no padrão Mixamo: reconhecidos pelo editor de animação, Unity (Humanoid) e Blender ao exportar .glb
+    static const char* names[CJ_Count] = {"Hips", "Spine", "Spine2", "Head", "LeftArm", "LeftForeArm", "LeftHand", "RightArm",
+                                          "RightForeArm", "RightHand", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"};
+    for (int i = 0; i < CJ_Count; ++i) std::snprintf(sk.name[i], sizeof(sk.name[i]), "%s", names[i]);
     out.skeletons.push_back(sk);
 
     // ---- malha (caixas presas a um osso cada, estilo low-poly)

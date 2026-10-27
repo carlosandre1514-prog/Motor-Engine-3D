@@ -74,6 +74,10 @@ object NativeBridge {
     @JvmStatic external fun nativeSetTimeOfDay(hour: Float)
     @JvmStatic external fun nativeGetTimeOfDay(): Float
     @JvmStatic external fun nativeExportGlb(objectId: Int, path: String): Boolean
+    @JvmStatic external fun nativeMapSetEditable(on: Boolean): Boolean
+    @JvmStatic external fun nativeMapEditable(): Boolean
+    @JvmStatic external fun nativeMapSwapModel(kind: String, path: String): Boolean
+    @JvmStatic external fun nativeMapSwapTexture(material: Int, path: String): Boolean
 
     // Jogo
     @JvmStatic external fun nativeGameStatus(out8: FloatArray)
@@ -84,6 +88,21 @@ object NativeBridge {
     @JvmStatic external fun nativeAnimationIndex(): Int
     @JvmStatic external fun nativeSetAnimation(index: Int)
     @JvmStatic external fun nativeSetAnimPreview(on: Boolean)
+
+    // Editor de animação
+    @JvmStatic external fun nativeAnimEditBegin(): Int
+    @JvmStatic external fun nativeAnimEditBones(): ByteArray
+    @JvmStatic external fun nativeAnimEditSelect(bone: Int)
+    @JvmStatic external fun nativeAnimEditGet(bone: Int, out3: FloatArray)
+    @JvmStatic external fun nativeAnimEditSet(bone: Int, in3: FloatArray)
+    @JvmStatic external fun nativeAnimEditResetPose()
+    @JvmStatic external fun nativeAnimEditKey(t: Float): Int
+    @JvmStatic external fun nativeAnimEditDeleteKey(t: Float)
+    @JvmStatic external fun nativeAnimEditGoto(t: Float)
+    @JvmStatic external fun nativeAnimEditKeys(): ByteArray
+    @JvmStatic external fun nativeAnimEditPreview(on: Boolean): Boolean
+    @JvmStatic external fun nativeAnimEditSave(name: ByteArray): Int
+    @JvmStatic external fun nativeAnimEditEnd()
 
     // Atalhos com String
     fun exportProject() = String(nativeExportProject(), Charsets.UTF_8)
