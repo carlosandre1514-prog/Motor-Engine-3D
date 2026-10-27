@@ -9,8 +9,19 @@ namespace eng {
 enum CharJoint { CJ_Hips, CJ_Spine, CJ_Chest, CJ_Head, CJ_LUpper, CJ_LFore, CJ_LHand, CJ_RUpper, CJ_RFore, CJ_RHand,
                  CJ_LThigh, CJ_LShin, CJ_LFoot, CJ_RThigh, CJ_RShin, CJ_RFoot, CJ_Count };
 
-// Animações geradas para todo personagem
-enum CharClip { CC_Idle, CC_Walk, CC_Run, CC_IdleArmed, CC_WalkArmed, CC_RunArmed, CC_Dance, CC_Wave, CC_Count };
+// Ossos extras (depois dos 16 humanoides principais): pescoço e dedos (2 articulações cada)
+enum CharJointExtra { CJ_Neck = CJ_Count,
+                      CJ_LThumb1, CJ_LThumb2, CJ_LIndex1, CJ_LIndex2, CJ_LMiddle1, CJ_LMiddle2, CJ_LRing1, CJ_LRing2, CJ_LPinky1, CJ_LPinky2,
+                      CJ_RThumb1, CJ_RThumb2, CJ_RIndex1, CJ_RIndex2, CJ_RMiddle1, CJ_RMiddle2, CJ_RRing1, CJ_RRing2, CJ_RPinky1, CJ_RPinky2,
+                      CJ_Total };
+
+// Animações geradas para todo personagem. Com arma: 5 por tipo (parado, andando, correndo, mirando/atacando,
+// andando mirando), na ordem de AP_*; a base de cada tipo é CC_Rifle, CC_Pistol ou CC_Melee.
+enum CharClip { CC_Idle, CC_Walk, CC_Run, CC_Dance, CC_Wave,
+                CC_Rifle, CC_Pistol = CC_Rifle + 5, CC_Melee = CC_Pistol + 5, CC_Count = CC_Melee + 5 };
+enum ArmedPose { AP_Idle, AP_Walk, AP_Run, AP_Aim, AP_AimWalk };
+// tipo de pose da arma (WeaponKind abaixo): fuzil/escopeta/sniper, pistola, faca/taco
+int armedClipBase(int weaponKind);
 
 struct CharacterParams {
     float height = 1.75f;     // metros
@@ -29,5 +40,8 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& mes
 // Armas: origem no ponto de empunhadura, cano para +Z, topo para +Y
 enum WeaponKind { WK_Pistol, WK_Rifle, WK_Shotgun, WK_Sniper, WK_Knife, WK_Bat, WK_Count };
 const char* weaponName(int kind);
+
+// Encaixe da arma na mão direita (espaço do osso da mão): empunhadura descendo do pulso, cano seguindo os dedos
+glm::mat4 weaponGripOffset(int kind, float height);
 
 }  // namespace eng

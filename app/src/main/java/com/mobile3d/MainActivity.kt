@@ -74,6 +74,7 @@ class MainActivity : Activity() {
     private lateinit var joystick: JoystickView
     private lateinit var runBtn: TextView
     private lateinit var fireBtn: TextView
+    private lateinit var aimBtn: TextView
     private var shownSelection = -2
     private var running = false
     private var spellElement = 0
@@ -795,7 +796,7 @@ class MainActivity : Activity() {
         p.addView(HorizontalScrollView(this).apply { addView(brow) })
         animKeysText = label("Quadros: nenhum").apply { alpha = 0.8f }
         p.addView(animKeysText)
-        p.addView(label("Escolha o osso, gire com X/Y/Z, avance o tempo e grave os quadros. Arraste a tela para girar a câmera.").apply {
+        p.addView(label("Toque num osso na tela (ou em Osso ▾), gire com X/Y/Z, avance o tempo e grave os quadros. Dedos: polegar, indicador... (2 juntas cada).").apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f); alpha = 0.7f
         })
         return p
@@ -1027,6 +1028,15 @@ class MainActivity : Activity() {
             true
         }
         val jump = roundButton("Pular", 0xCC2E86DE.toInt()).apply { setOnClickListener { gl { NativeBridge.nativePlayerJump() } } }
+        aimBtn = roundButton("Mirar", 0xCC37474F.toInt()).apply {
+            setOnTouchListener { v, e ->  // segurar = mirar (anda devagar, arma apontada para frente)
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { gl { NativeBridge.nativePlayerAim(true) }; v.alpha = 0.6f }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { gl { NativeBridge.nativePlayerAim(false) }; v.alpha = 1f }
+                }
+                true
+            }
+        }
         runBtn = roundButton("Correr", 0xCC555555.toInt()).apply {
             setOnClickListener {
                 running = !running
@@ -1043,7 +1053,7 @@ class MainActivity : Activity() {
             magic.text = "Magia\n" + elements[spellElement]
             true
         }
-        col.addView(magic); col.addView(fireBtn); col.addView(jump); col.addView(runBtn)
+        col.addView(magic); col.addView(aimBtn); col.addView(fireBtn); col.addView(jump); col.addView(runBtn)
         f.addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(20); bottomMargin = dp(20) })
         return f.apply { isClickable = false }
     }
@@ -1365,6 +1375,7 @@ class MainActivity : Activity() {
         val controls = if (snap.hasPlayer) View.VISIBLE else View.GONE
         if (::joystick.isInitialized) { joystick.visibility = controls; (fireBtn.parent as View).visibility = controls }
         if (::fireBtn.isInitialized) fireBtn.text = if (snap.playerWeapon in 0..3) "Atirar" else "Bater"
+        if (::aimBtn.isInitialized) aimBtn.visibility = if (snap.playerWeapon in 0..3) View.VISIBLE else View.GONE
     }
 
     // Atualiza estatísticas e inspetor a partir do snapshot da thread GL
@@ -1377,6 +1388,10 @@ class MainActivity : Activity() {
             }
             updateOverlays()
             updateGameHud()
+            if (animEditing) gl {  // osso escolhido tocando na tela
+                val b = NativeBridge.nativeAnimEditSelected()
+                if (b >= 0 && b != animBone) runOnUiThread { if (animEditing) selectBone(b) }
+            }
             if (inspector.visibility == View.VISIBLE) {
                 if (shownSelection != snap.selected) { inspTitle.text = snap.selectedName; shownSelection = snap.selected }
                 val editing = fields.any { it.hasFocus() }

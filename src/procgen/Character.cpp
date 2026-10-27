@@ -43,9 +43,22 @@ const char* weaponName(int k) {
     return k >= 0 && k < WK_Count ? n[k] : "Arma";
 }
 
+int armedClipBase(int kind) {
+    if (kind == WK_Rifle || kind == WK_Shotgun || kind == WK_Sniper) return CC_Rifle;
+    if (kind == WK_Pistol) return CC_Pistol;
+    if (kind == WK_Knife || kind == WK_Bat) return CC_Melee;
+    return -1;
+}
+
+glm::mat4 weaponGripOffset(int kind, float H) {
+    // origem da arma = empunhadura, um pouco abaixo do pulso (dentro da mão fechada); cano para onde apontam os dedos
+    float front = (kind == WK_Knife || kind == WK_Bat) ? 0.f : 0.012f * H;
+    return glm::translate(glm::mat4(1.f), glm::vec3(0.f, -0.05f * H, front)) * glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(1, 0, 0));
+}
+
 namespace {
 
-struct Joints { glm::vec3 pos[CJ_Count]; int parent[CJ_Count]; };
+struct Joints { glm::vec3 pos[CJ_Total]; int parent[CJ_Total]; float H = 1.75f; };
 
 using RotFn = std::function<glm::quat(float)>;    // fase 0..2pi -> rotação local
 using PosFn = std::function<glm::vec3(float)>;
@@ -53,6 +66,42 @@ using PosFn = std::function<glm::vec3(float)>;
 glm::quat rx(float a) { return glm::angleAxis(a, glm::vec3(1, 0, 0)); }
 glm::quat ry(float a) { return glm::angleAxis(a, glm::vec3(0, 1, 0)); }
 glm::quat rz(float a) { return glm::angleAxis(a, glm::vec3(0, 0, 1)); }
+
+// rotação mínima que leva a direção a até b
+glm::quat arc(glm::vec3 a, glm::vec3 b) {
+    a = glm::normalize(a); b = glm::normalize(b);
+    float d = glm::dot(a, b);
+    if (d > 0.99999f) return glm::quat(1, 0, 0, 0);
+    if (d < -0.99999f) {
+        glm::vec3 ax = glm::cross(a, glm::vec3(1, 0, 0));
+        if (glm::dot(ax, ax) < 1e-6f) ax = glm::cross(a, glm::vec3(0, 0, 1));
+        return glm::angleAxis(3.14159265f, glm::normalize(ax));
+    }
+    glm::vec3 c = glm::cross(a, b);
+    return glm::normalize(glm::quat(1.f + d, c.x, c.y, c.z));
+}
+
+struct ArmPose { glm::quat upper, fore, hand; };
+
+// IK de 2 ossos: leva o pulso até `wrist` (espaço do modelo), cotovelo para o lado de `pole`, mão na rotação `handRot`.
+// chest = rotação do peito (pai do braço) no espaço do modelo; as rotações devolvidas são locais (bind sem rotação).
+ArmPose solveArm(const Joints& J, int up, int fo, int ha, glm::quat chest, glm::vec3 wrist, glm::vec3 pole, glm::quat handRot) {
+    glm::vec3 pivot = J.pos[CJ_Chest];
+    glm::vec3 S = pivot + chest * (J.pos[up] - pivot);
+    float L1 = glm::length(J.pos[fo] - J.pos[up]), L2 = glm::length(J.pos[ha] - J.pos[fo]);
+    glm::vec3 D = wrist - S;
+    float dist = std::clamp(glm::length(D), 0.05f, (L1 + L2) * 0.999f);
+    glm::vec3 u = glm::normalize(D);
+    float ca = std::clamp((L1 * L1 + dist * dist - L2 * L2) / (2.f * L1 * dist), -1.f, 1.f);
+    float a = std::acos(ca);
+    glm::vec3 v = pole - glm::dot(pole, u) * u;
+    v = glm::dot(v, v) > 1e-8f ? glm::normalize(v) : glm::normalize(glm::cross(u, glm::vec3(1, 0, 0)));
+    glm::vec3 E = S + L1 * (std::cos(a) * u + std::sin(a) * v);
+    glm::vec3 W = S + u * dist;
+    glm::quat Mu = arc(chest * (J.pos[fo] - J.pos[up]), E - S) * chest;
+    glm::quat Mf = arc(Mu * (J.pos[ha] - J.pos[fo]), W - E) * Mu;
+    return {glm::normalize(glm::inverse(chest) * Mu), glm::normalize(glm::inverse(Mu) * Mf), glm::normalize(glm::inverse(Mf) * handRot)};
+}
 
 struct ClipWriter {
     LoadedModel& m;
@@ -91,51 +140,148 @@ struct ClipWriter {
     }
 };
 
-// Pose de locomoção (andar / correr). amp 0 = parado.
-void locomotion(ClipWriter& w, const Joints& J, float legAmp, float knee, float armAmp, float elbow, float lean, float bob, bool armed) {
+// Pernas e quadril de andar/correr (amp 0 = parado)
+void legs(ClipWriter& w, const Joints& J, float legAmp, float knee, float bob) {
     float hipsY = J.pos[CJ_Hips].y;
     w.pos(CJ_Hips, [=](float ph) { return glm::vec3(0, hipsY - bob + bob * std::abs(std::cos(ph)), 0); });
     w.rot(CJ_Hips, [=](float ph) { return ry(0.08f * legAmp * std::sin(ph)); });
-    w.rot(CJ_Spine, [=](float) { return rx(lean); });
-    w.rot(CJ_Chest, [=](float ph) { return ry(-0.12f * armAmp * std::sin(ph)) * rx(lean * 0.5f); });
     w.rot(CJ_LThigh, [=](float ph) { return rx(-legAmp * std::sin(ph)); });
     w.rot(CJ_RThigh, [=](float ph) { return rx(legAmp * std::sin(ph)); });
     w.rot(CJ_LShin, [=](float ph) { return rx(0.08f + knee * std::max(0.f, std::cos(ph))); });
     w.rot(CJ_RShin, [=](float ph) { return rx(0.08f + knee * std::max(0.f, -std::cos(ph))); });
     w.rot(CJ_LFoot, [=](float ph) { return rx(-0.3f * knee * std::max(0.f, std::cos(ph))); });
     w.rot(CJ_RFoot, [=](float ph) { return rx(-0.3f * knee * std::max(0.f, -std::cos(ph))); });
-    if (armed) {
-        // mirando: braço direito estendido para frente, esquerdo apoiando a arma
-        w.rot(CJ_RUpper, [=](float ph) { return rx(-1.42f + 0.03f * legAmp * std::sin(2 * ph)); });
-        w.rot(CJ_RFore, [=](float) { return rx(-0.12f); });
-        w.rot(CJ_LUpper, [=](float ph) { return rz(-0.6f) * rx(-1.2f + 0.03f * legAmp * std::sin(2 * ph)); });
-        w.rot(CJ_LFore, [=](float) { return rz(-0.25f) * rx(-0.55f); });
-    } else {
-        w.rot(CJ_LUpper, [=](float ph) { return rz(0.07f) * rx(armAmp * std::sin(ph)); });
-        w.rot(CJ_RUpper, [=](float ph) { return rz(-0.07f) * rx(-armAmp * std::sin(ph)); });
-        w.rot(CJ_LFore, [=](float ph) { return rx(-elbow - 0.15f * armAmp * std::max(0.f, std::sin(ph))); });
-        w.rot(CJ_RFore, [=](float ph) { return rx(-elbow - 0.15f * armAmp * std::max(0.f, -std::sin(ph))); });
+}
+
+// Pose de locomoção (andar / correr) sem arma
+void locomotion(ClipWriter& w, const Joints& J, float legAmp, float knee, float armAmp, float elbow, float lean, float bob) {
+    legs(w, J, legAmp, knee, bob);
+    w.rot(CJ_Spine, [=](float) { return rx(lean); });
+    w.rot(CJ_Chest, [=](float ph) { return ry(-0.12f * armAmp * std::sin(ph)) * rx(lean * 0.5f); });
+    w.rot(CJ_LUpper, [=](float ph) { return rz(0.07f) * rx(armAmp * std::sin(ph)); });
+    w.rot(CJ_RUpper, [=](float ph) { return rz(-0.07f) * rx(-armAmp * std::sin(ph)); });
+    w.rot(CJ_LFore, [=](float ph) { return rx(-elbow - 0.15f * armAmp * std::max(0.f, std::sin(ph))); });
+    w.rot(CJ_RFore, [=](float ph) { return rx(-elbow - 0.15f * armAmp * std::max(0.f, -std::sin(ph))); });
+}
+
+// Dedos: curl > 0 fecha a mão (polegar junto); trigger: indicador meio esticado (no gatilho)
+void fingers(ClipWriter& w, bool left, float curl, bool trigger) {
+    int b = left ? CJ_LThumb1 : CJ_RThumb1;
+    float side = left ? 1.f : -1.f;
+    w.rot(b, [=](float) { return rz(side * 0.5f * curl) * rx(-0.6f * curl); });
+    w.rot(b + 1, [=](float) { return rx(-0.6f * curl); });
+    for (int f = 1; f < 5; ++f) {
+        float c = (trigger && f == 1) ? 0.35f : curl;
+        w.rot(b + f * 2, [=](float) { return rx(-1.35f * c); });
+        w.rot(b + f * 2 + 1, [=](float) { return rx(-1.2f * c); });
     }
 }
 
-void idle(ClipWriter& w, const Joints& J, bool armed) {
+// Poses com arma (IK): fuzil com coronha no ombro, pistola com as duas mãos, faca e taco
+void armedClip(ClipWriter& w, const Joints& J, int cls, int mode) {
+    const float H = J.H, k = H / 1.75f;
+    bool aim = mode == AP_Aim || mode == AP_AimWalk;
+    float legAmp = mode == AP_Walk || mode == AP_AimWalk ? 0.5f : mode == AP_Run ? 0.85f : 0.f;
+    float knee = mode == AP_Run ? 1.4f : 0.75f, bob = mode == AP_Run ? 0.05f : legAmp > 0.f ? 0.025f : 0.f;
+    if (legAmp > 0.f) legs(w, J, legAmp, knee, bob);
+    else {
+        float hipsY = J.pos[CJ_Hips].y;
+        w.pos(CJ_Hips, [=](float ph) { return glm::vec3(0, hipsY - 0.004f + 0.004f * std::sin(ph), 0); });
+        // base afastada (postura de tiro)
+        w.rot(CJ_LThigh, [=](float) { return rz(0.06f) * rx(-0.12f); });
+        w.rot(CJ_RThigh, [=](float) { return rz(-0.06f) * rx(0.1f); });
+        w.rot(CJ_LShin, [=](float) { return rx(0.18f); });
+        w.rot(CJ_RShin, [=](float) { return rx(0.12f); });
+    }
+    float lean = mode == AP_Run ? 0.18f : 0.06f;
+    float twist = cls == CC_Melee ? 0.f : aim ? 0.28f : 0.18f;  // ombro direito para trás, esquerdo para frente
+    w.rot(CJ_Spine, [=](float) { return rx(lean); });
+    w.rot(CJ_Chest, [=](float) { return ry(-twist); });
+    glm::quat chest = rx(lean) * ry(-twist);
+    w.rot(CJ_Neck, [=](float) { return ry(twist * 0.6f); });  // a cabeça continua olhando para frente
+    w.rot(CJ_Head, [=](float) { return ry(twist * 0.4f) * rx(aim ? 0.08f : 0.f); });
+
+    const glm::vec3 fwd(0, 0, 1), up(0, 1, 0);
+    glm::vec3 pivot = J.pos[CJ_Chest];
+    auto shoulder = [&](int j) { return pivot + chest * (J.pos[j] - pivot); };
+    // posição do pulso para que a empunhadura (offset da arma) caia em `grip`, com a mão girada em `hand`
+    auto wristFor = [&](glm::vec3 grip, glm::quat hand) {
+        return grip - hand * glm::vec3(0.f, -0.05f * H, 0.012f * H);
+    };
+    float bobSway = legAmp > 0.f ? 0.012f * k : 0.004f * k;
+    std::function<void(float, ArmPose&, ArmPose&)> pose;
+    if (cls == CC_Rifle) {
+        pose = [=](float ph, ArmPose& R, ArmPose& L) {
+            // cano: mirando = reto para frente; senão para baixo (posição de segurança)
+            float pitch = aim ? 0.f : (mode == AP_Run ? -0.75f : -0.6f);
+            glm::quat hand = rx(-1.5707963f - pitch);  // mão: dedos (-Y) para o cano, palma (+Z) para cima
+            glm::vec3 dir = hand * glm::vec3(0, -1, 0);
+            glm::vec3 pocket = shoulder(CJ_RUpper) + glm::vec3(0.07f * k, -0.04f * k, 0.03f * k);  // coronha no ombro
+            glm::vec3 grip = pocket + dir * (0.30f * k) + glm::vec3(0, -0.03f * k + bobSway * std::sin(2 * ph), 0);
+            R = solveArm(J, CJ_RUpper, CJ_RFore, CJ_RHand, chest, wristFor(grip, hand), glm::vec3(-1, -0.6f, -0.3f), hand);
+            glm::quat lhand = hand * rz(-0.5f);
+            glm::vec3 guard = grip + dir * (0.24f * k) - (hand * glm::vec3(0, 0, 1)) * (0.035f * k);
+            L = solveArm(J, CJ_LUpper, CJ_LFore, CJ_LHand, chest, guard - lhand * glm::vec3(0, -0.035f * H, 0), glm::vec3(1, -1, 0), lhand);
+        };
+    } else if (cls == CC_Pistol) {
+        pose = [=](float ph, ArmPose& R, ArmPose& L) {
+            float pitch = aim ? 0.f : -0.8f;
+            glm::quat hand = rx(-1.5707963f - pitch);
+            glm::vec3 dir = hand * glm::vec3(0, -1, 0);
+            glm::vec3 base = aim ? glm::vec3(-0.04f * k, J.pos[CJ_RUpper].y - 0.05f * k, 0.36f * k)
+                                 : glm::vec3(-0.05f * k, J.pos[CJ_RUpper].y - 0.24f * k, 0.22f * k);
+            glm::vec3 grip = base + glm::vec3(0, bobSway * std::sin(2 * ph), 0);
+            R = solveArm(J, CJ_RUpper, CJ_RFore, CJ_RHand, chest, wristFor(grip, hand), glm::vec3(-1, -1, 0), hand);
+            glm::quat lhand = hand * rz(-0.9f);  // mão de apoio por baixo/ao lado
+            glm::vec3 lw = wristFor(grip, hand) + glm::vec3(0.06f * k, -0.03f * k, -0.01f * k) - dir * (0.01f * k);
+            L = solveArm(J, CJ_LUpper, CJ_LFore, CJ_LHand, chest, lw, glm::vec3(1, -1, 0), lhand);
+            (void)dir;
+        };
+    } else {
+        pose = [=](float ph, ArmPose& R, ArmPose& L) {
+            glm::quat hand;
+            glm::vec3 grip;
+            if (aim) {  // golpe: de cima/trás para frente/baixo
+                float t = std::min(1.f, ph / 3.f);           // ida rápida na 1ª metade, volta depois
+                float s = ph < 3.f ? t : 1.f - (ph - 3.f) / 3.2832f;
+                float a = glm::mix(2.3f, -1.1f, std::clamp(s, 0.f, 1.f));
+                hand = rx(-1.5707963f - a + 1.5707963f);
+                grip = shoulder(CJ_RUpper) + glm::vec3(0.06f * k, -0.05f * k, 0.f) + (rx(-a) * glm::vec3(0, 0, 1)) * (0.36f * k) * 0.9f;
+            } else {  // pronto: lâmina para frente na altura da cintura
+                hand = rx(-1.25f);
+                grip = glm::vec3(-0.1f * k, J.pos[CJ_Hips].y + 0.12f * k + bobSway * std::sin(2 * ph), 0.22f * k);
+            }
+            R = solveArm(J, CJ_RUpper, CJ_RFore, CJ_RHand, chest, wristFor(grip, hand), glm::vec3(-1, -1, -0.2f), hand);
+            L = {rz(0.1f) * rx(legAmp * 0.6f * std::sin(ph)), rx(-0.2f - (legAmp > 0.f ? 0.4f : 0.f)), glm::quat(1, 0, 0, 0)};
+        };
+    }
+    auto channel = [&](int joint, int which) {
+        w.rot(joint, [=](float ph) {
+            ArmPose R, L;
+            pose(ph, R, L);
+            const ArmPose& A = joint == CJ_RUpper || joint == CJ_RFore || joint == CJ_RHand ? R : L;
+            return which == 0 ? A.upper : which == 1 ? A.fore : A.hand;
+        });
+    };
+    channel(CJ_RUpper, 0); channel(CJ_RFore, 1); channel(CJ_RHand, 2);
+    channel(CJ_LUpper, 0); channel(CJ_LFore, 1); channel(CJ_LHand, 2);
+    fingers(w, false, 1.f, cls != CC_Melee);   // direita: empunhadura, indicador no gatilho
+    fingers(w, true, cls == CC_Melee ? 0.3f : 0.85f, false);
+}
+
+void idle(ClipWriter& w, const Joints& J) {
     float hipsY = J.pos[CJ_Hips].y;
     w.pos(CJ_Hips, [=](float ph) { return glm::vec3(0, hipsY - 0.004f + 0.004f * std::sin(ph), 0); });
     w.rot(CJ_Chest, [=](float ph) { return rx(0.025f * std::sin(ph)); });
-    w.rot(CJ_Head, [=](float ph) { return ry(0.18f * std::sin(ph)) * rx(0.03f * std::sin(2 * ph)); });
-    if (armed) {
-        w.rot(CJ_RUpper, [=](float ph) { return rx(-1.42f + 0.02f * std::sin(ph)); });
-        w.rot(CJ_RFore, [=](float) { return rx(-0.12f); });
-        w.rot(CJ_LUpper, [=](float ph) { return rz(-0.6f) * rx(-1.2f + 0.02f * std::sin(ph)); });
-        w.rot(CJ_LFore, [=](float) { return rz(-0.25f) * rx(-0.55f); });
-    } else {
-        w.rot(CJ_LUpper, [=](float ph) { return rz(0.1f + 0.02f * std::sin(ph)); });
-        w.rot(CJ_RUpper, [=](float ph) { return rz(-0.1f - 0.02f * std::sin(ph)); });
-        w.rot(CJ_LFore, [=](float) { return rx(-0.12f); });
-        w.rot(CJ_RFore, [=](float) { return rx(-0.12f); });
-    }
+    w.rot(CJ_Neck, [=](float ph) { return ry(0.08f * std::sin(ph)); });
+    w.rot(CJ_Head, [=](float ph) { return ry(0.1f * std::sin(ph)) * rx(0.03f * std::sin(2 * ph)); });
+    w.rot(CJ_LUpper, [=](float ph) { return rz(0.1f + 0.02f * std::sin(ph)); });
+    w.rot(CJ_RUpper, [=](float ph) { return rz(-0.1f - 0.02f * std::sin(ph)); });
+    w.rot(CJ_LFore, [=](float) { return rx(-0.12f); });
+    w.rot(CJ_RFore, [=](float) { return rx(-0.12f); });
+    fingers(w, false, 0.25f, false);
+    fingers(w, true, 0.25f, false);
 }
-
 void dance(ClipWriter& w, const Joints& J) {
     float hipsY = J.pos[CJ_Hips].y;
     w.pos(CJ_Hips, [=](float ph) { return glm::vec3(0.04f * std::sin(ph), hipsY - 0.05f + 0.05f * std::abs(std::cos(ph)), 0); });
@@ -174,29 +320,60 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
     const float sx = chestHalf + armHalf + 0.004f * H, tx = 0.055f * H * s;
     const float shoulderY = 0.825f * H, elbowY = shoulderY - 0.175f * H, wristY = elbowY - 0.155f * H;
     const float thighY = 0.52f * H, kneeY = 0.285f * H, ankleY = 0.045f * H;
-    const glm::vec3 pos[CJ_Count] = {
+    glm::vec3 pos[CJ_Total] = {
         {0, 0.53f * H, 0}, {0, 0.62f * H, 0}, {0, 0.72f * H, 0}, {0, 0.865f * H, 0},
         {sx, shoulderY, 0}, {sx, elbowY, 0}, {sx, wristY, 0}, {-sx, shoulderY, 0}, {-sx, elbowY, 0}, {-sx, wristY, 0},
         {tx, thighY, 0}, {tx, kneeY, 0}, {tx, ankleY, 0}, {-tx, thighY, 0}, {-tx, kneeY, 0}, {-tx, ankleY, 0}};
-    const int parent[CJ_Count] = {-1, CJ_Hips, CJ_Spine, CJ_Chest, CJ_Chest, CJ_LUpper, CJ_LFore, CJ_Chest, CJ_RUpper, CJ_RFore,
-                                  CJ_Hips, CJ_LThigh, CJ_LShin, CJ_Hips, CJ_RThigh, CJ_RShin};
-    for (int i = 0; i < CJ_Count; ++i) { J.pos[i] = pos[i]; J.parent[i] = parent[i]; }
+    int parent[CJ_Total] = {-1, CJ_Hips, CJ_Spine, CJ_Neck, CJ_Chest, CJ_LUpper, CJ_LFore, CJ_Chest, CJ_RUpper, CJ_RFore,
+                            CJ_Hips, CJ_LThigh, CJ_LShin, CJ_Hips, CJ_RThigh, CJ_RShin};
+    pos[CJ_Neck] = {0, 0.835f * H, 0};
+    parent[CJ_Neck] = CJ_Chest;
+    // dedos: palma de frente (+Z); polegar e indicador do lado de fora; 2 articulações por dedo
+    const float palmBottom = 0.0575f * H;
+    for (int side = 0; side < 2; ++side) {
+        float sgn = side ? -1.f : 1.f;
+        glm::vec3 wr = pos[side ? CJ_RHand : CJ_LHand];
+        int hand = side ? CJ_RHand : CJ_LHand, b = side ? CJ_RThumb1 : CJ_LThumb1;
+        pos[b] = wr + glm::vec3(sgn * 0.022f * H, -0.015f * H, 0.012f * H);
+        pos[b + 1] = wr + glm::vec3(sgn * 0.03f * H, -0.036f * H, 0.02f * H);
+        parent[b] = hand; parent[b + 1] = b;
+        const float fx[4] = {0.018f, 0.006f, -0.006f, -0.018f};  // indicador, médio, anelar, mínimo
+        for (int f = 0; f < 4; ++f) {
+            int j = b + 2 + f * 2;
+            pos[j] = wr + glm::vec3(sgn * fx[f] * H, -palmBottom, 0.004f * H);
+            pos[j + 1] = pos[j] + glm::vec3(0, -(f == 3 ? 0.02f : 0.026f) * H, 0);
+            parent[j] = hand; parent[j + 1] = j;
+        }
+    }
+    for (int i = 0; i < CJ_Total; ++i) { J.pos[i] = pos[i]; J.parent[i] = parent[i]; }
+    J.H = H;
 
     // ---- esqueleto (pose de bind sem rotações: inverseBind = translação inversa)
     Skeleton sk{};
-    sk.jointCount = CJ_Count;
-    for (int i = 0; i < CJ_Count; ++i) {
+    sk.jointCount = CJ_Total;
+    {   // ordem de avaliação: pais antes dos filhos (o pescoço vem depois da cabeça na numeração)
+        int n = 0;
+        bool done[CJ_Total] = {};
+        while (n < CJ_Total)
+            for (int i = 0; i < CJ_Total; ++i)
+                if (!done[i] && (parent[i] < 0 || done[parent[i]])) { done[i] = true; sk.order[n++] = i; }
+    }
+    for (int i = 0; i < CJ_Total; ++i) {
         sk.parent[i] = parent[i];
-        sk.order[i] = i;
         sk.bindT[i] = parent[i] < 0 ? pos[i] : pos[i] - pos[parent[i]];
         sk.bindR[i] = glm::quat(1, 0, 0, 0);
         sk.bindS[i] = glm::vec3(1.f);
         sk.inverseBind[i] = glm::translate(glm::mat4(1.f), -pos[i]);
     }
     // nomes no padrão Mixamo: reconhecidos pelo editor de animação, Unity (Humanoid) e Blender ao exportar .glb
-    static const char* names[CJ_Count] = {"Hips", "Spine", "Spine2", "Head", "LeftArm", "LeftForeArm", "LeftHand", "RightArm",
-                                          "RightForeArm", "RightHand", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"};
-    for (int i = 0; i < CJ_Count; ++i) std::snprintf(sk.name[i], sizeof(sk.name[i]), "%s", names[i]);
+    static const char* names[CJ_Total] = {"Hips", "Spine", "Spine2", "Head", "LeftArm", "LeftForeArm", "LeftHand", "RightArm",
+                                          "RightForeArm", "RightHand", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot",
+                                          "Neck",
+                                          "LeftHandThumb1", "LeftHandThumb2", "LeftHandIndex1", "LeftHandIndex2", "LeftHandMiddle1",
+                                          "LeftHandMiddle2", "LeftHandRing1", "LeftHandRing2", "LeftHandPinky1", "LeftHandPinky2",
+                                          "RightHandThumb1", "RightHandThumb2", "RightHandIndex1", "RightHandIndex2", "RightHandMiddle1",
+                                          "RightHandMiddle2", "RightHandRing1", "RightHandRing2", "RightHandPinky1", "RightHandPinky2"};
+    for (int i = 0; i < CJ_Total; ++i) std::snprintf(sk.name[i], sizeof(sk.name[i]), "%s", names[i]);
     out.skeletons.push_back(sk);
 
     // ---- malha (caixas presas a um osso cada, estilo low-poly)
@@ -214,7 +391,7 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
     part(CJ_Chest, p.shirt, {0, 0.83f * H, 0}, {chestHalf * 1.4f, 0.02f * H, 0.1f * H * s});  // ombros
     // cabeça
     const float headY = 0.925f * H, hw = 0.11f * H, hh = 0.13f * H, hd = 0.12f * H, front = hd / 2;
-    part(CJ_Head, p.skin, {0, 0.855f * H, 0}, {0.05f * H, 0.04f * H, 0.05f * H});           // pescoço
+    part(CJ_Neck, p.skin, {0, 0.855f * H, 0}, {0.05f * H, 0.045f * H, 0.05f * H});           // pescoço
     part(CJ_Head, p.skin, {0, headY, 0.004f * H}, {hw, hh, hd});
     for (float side : {-1.f, 1.f}) {
         part(CJ_Head, white, {side * 0.024f * H, headY + 0.008f * H, front + 0.004f * H}, {0.022f * H, 0.014f * H, 0.004f * H});
@@ -245,7 +422,17 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
         part(up, p.shirt, {x, shoulderY - 0.045f * H, 0}, {armHalf * 2.2f, 0.1f * H, armHalf * 2.2f});
         part(up, p.longSleeves ? p.shirt : p.skin, {x, shoulderY - 0.125f * H, 0}, {armHalf * 1.8f, 0.1f * H, armHalf * 1.8f});
         part(fo, p.longSleeves ? p.shirt : p.skin, {x, elbowY - 0.075f * H, 0}, {armHalf * 1.65f, 0.16f * H, armHalf * 1.65f});
-        part(ha, p.skin, {x, wristY - 0.04f * H, 0.004f * H}, {0.05f * H, 0.08f * H, 0.032f * H});
+        part(ha, p.skin, {x, wristY - 0.03f * H, 0.004f * H}, {0.05f * H, 0.06f * H, 0.03f * H});  // palma
+        int fb = side ? CJ_RThumb1 : CJ_LThumb1;
+        for (int f = 0; f < 5; ++f) {
+            for (int seg = 0; seg < 2; ++seg) {
+                int j = fb + f * 2 + seg;
+                glm::vec3 a = pos[j], c = seg == 0 ? pos[j + 1] : pos[j] + (pos[j] - pos[j - 1]) * (f == 0 ? 0.8f : 0.85f);
+                glm::vec3 mid = (a + c) * 0.5f;
+                float len = glm::length(c - a) + 0.004f * H, w = (f == 0 ? 0.013f : f == 4 ? 0.009f : 0.0105f) * H;
+                part(j, p.skin, mid, {w, len, w * 1.15f});
+            }
+        }
     }
     // pernas
     for (int side = 0; side < 2; ++side) {
@@ -260,15 +447,23 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
     // skinning rígido: todos os vértices já têm joints/weights do osso
 
     // ---- animações
-    out.channelStorage.reserve(CC_Count * 20);  // exato o suficiente: ponteiros dos clips não podem mudar
-    { ClipWriter w(out, "Parado", 3.f); idle(w, J, false); w.finish(); }
-    { ClipWriter w(out, "Andando", 1.05f); locomotion(w, J, 0.5f, 0.75f, 0.4f, 0.25f, 0.03f, 0.025f, false); w.finish(); }
-    { ClipWriter w(out, "Correndo", 0.66f); locomotion(w, J, 0.95f, 1.5f, 0.85f, 1.25f, 0.2f, 0.06f, false); w.finish(); }
-    { ClipWriter w(out, "Parado (arma)", 3.f); idle(w, J, true); w.finish(); }
-    { ClipWriter w(out, "Andando (arma)", 1.05f); locomotion(w, J, 0.5f, 0.75f, 0.f, 0.f, 0.05f, 0.025f, true); w.finish(); }
-    { ClipWriter w(out, "Correndo (arma)", 0.7f); locomotion(w, J, 0.85f, 1.4f, 0.f, 0.f, 0.15f, 0.05f, true); w.finish(); }
+    out.channelStorage.reserve(CC_Count * 48);  // exato o suficiente: ponteiros dos clips não podem mudar
+    { ClipWriter w(out, "Parado", 3.f); idle(w, J); w.finish(); }
+    { ClipWriter w(out, "Andando", 1.05f); locomotion(w, J, 0.5f, 0.75f, 0.4f, 0.25f, 0.03f, 0.025f); w.finish(); }
+    { ClipWriter w(out, "Correndo", 0.66f); locomotion(w, J, 0.95f, 1.5f, 0.85f, 1.25f, 0.2f, 0.06f); w.finish(); }
     { ClipWriter w(out, "Dancando", 1.3f); dance(w, J); w.finish(); }
     { ClipWriter w(out, "Acenando", 1.6f); wave(w, J); w.finish(); }
+    const char* cls[3] = {"fuzil", "pistola", "faca"};
+    const char* modes[5] = {"Parado", "Andando", "Correndo", "Mirando", "Andando mirando"};
+    const float durs[5] = {3.f, 1.05f, 0.7f, 2.f, 1.05f};
+    for (int c = 0; c < 3; ++c)
+        for (int m = 0; m < 5; ++m) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "%s (%s)", c == 2 && m >= AP_Aim ? (m == AP_Aim ? "Golpe" : "Golpe andando") : modes[m], cls[c]);
+            ClipWriter w(out, name, c == 2 && m >= AP_Aim ? 0.5f : durs[m]);
+            armedClip(w, J, CC_Rifle + c * 5, m);
+            w.finish();
+        }
 }
 
 }  // namespace eng

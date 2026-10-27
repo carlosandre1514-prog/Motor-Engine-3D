@@ -93,6 +93,8 @@ object NativeBridge {
     @JvmStatic external fun nativeAnimEditBegin(): Int
     @JvmStatic external fun nativeAnimEditBones(): ByteArray
     @JvmStatic external fun nativeAnimEditSelect(bone: Int)
+    @JvmStatic external fun nativeAnimEditSelected(): Int
+    @JvmStatic external fun nativePlayerAim(on: Boolean)
     @JvmStatic external fun nativeAnimEditGet(bone: Int, out3: FloatArray)
     @JvmStatic external fun nativeAnimEditSet(bone: Int, in3: FloatArray)
     @JvmStatic external fun nativeAnimEditResetPose()

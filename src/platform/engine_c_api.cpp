@@ -415,6 +415,8 @@ void engine_set_anim_preview(Engine* e, int on) { if (e) e->previewAnim = on != 
 int engine_anim_edit_begin(Engine* e) { return e ? eng::animEditBegin(e) : -1; }
 const char* engine_anim_edit_bones(Engine* e) { if (!e) return ""; e->toolResult = eng::animEditBones(e); return e->toolResult.c_str(); }
 void engine_anim_edit_select(Engine* e, int bone) { if (e) eng::animEditSelect(e, bone); }
+int engine_anim_edit_selected(Engine* e) { return e ? eng::animEditSelected(e) : -1; }
+void engine_player_aim(Engine* e, int on) { if (e) e->aimInput = on != 0; }
 void engine_anim_edit_get(Engine* e, int bone, float* euler3) { if (e && euler3) eng::animEditGet(e, bone, euler3); }
 void engine_anim_edit_set(Engine* e, int bone, const float* euler3) { if (e && euler3) eng::animEditSet(e, bone, euler3); }
 void engine_anim_edit_reset_pose(Engine* e) { if (e) eng::animEditResetPose(e); }
@@ -581,6 +583,8 @@ static void handleTap(Engine* e, glm::vec2 p) {
         }
         return;
     }
+    // Editor de animação aberto: o toque escolhe o osso (não troca de objeto)
+    if (e->animEdit.active && eng::animEditPick(e, p)) return;
     // Editor: objeto mais próximo (raio x AABB). Cenário de mapa (sem id) não é selecionável.
     float best = 1e30f;
     GameObject* hitGo = nullptr;

@@ -44,6 +44,8 @@ struct CharacterInfo {
     Scene::Handle weapon;      // arma equipada (opcional)
     int weaponKind = -1;
     glm::vec3 muzzle{0.f};     // ponta do cano no espaço da arma
+    float aimTimer = 0.f;      // > 0: mirando/atacando (arma apontada para frente)
+    bool aimHold = false;      // botão "Mirar" segurado (jogador)
 };
 
 // Modelo reaproveitado várias vezes (árvores, casas do mundo infinito): instancing automático
@@ -206,7 +208,7 @@ struct Engine {
     // Jogador
     int player = -1;                 // índice em characters
     glm::vec2 moveInput{0.f};
-    bool runInput = false, jumpRequest = false, fireRequest = false;
+    bool runInput = false, jumpRequest = false, fireRequest = false, aimInput = false;
     float fireCooldown = 0.f;
     Tracer tracers[16];
     struct CamState { glm::vec3 target; float yaw, pitch, distance; } savedCam{};
@@ -292,7 +294,7 @@ void drawEffectsOverlay(Engine* e, const glm::mat4& vp, bool editor);
 bool pickEmitter(Engine* e, glm::vec3 o, glm::vec3 d, float& t, GameObject*& hit);
 
 // ---- personagens: movimento compartilhado por jogador e inimigos (Engine.cpp)
-bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt);
+bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt, glm::vec3 face = glm::vec3(0.f));
 void deleteObject(Engine* e, Scene::Handle h);
 
 // ---- animações (AnimEdit.cpp)
@@ -304,6 +306,8 @@ void forgetClipStores(Engine* e, const std::vector<Animator*>& gone);
 int animEditBegin(Engine* e);                       // ossos ou -1 (lastError)
 std::string animEditBones(Engine* e);
 void animEditSelect(Engine* e, int bone);
+int animEditSelected(Engine* e);
+bool animEditPick(Engine* e, glm::vec2 px);
 void animEditGet(Engine* e, int bone, float* euler3);
 void animEditSet(Engine* e, int bone, const float* euler3);
 int animEditKey(Engine* e, float t);                // grava a pose no tempo t; retorna nº de quadros

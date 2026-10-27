@@ -6,6 +6,7 @@
 #include <GLES3/gl32.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -83,6 +84,35 @@ int main(int argc, char** argv) {
     engine_set_target_fbo(e, g_fbo);
     engine_resize(e, W, H);
     check("init");
+
+    // Poses com arma (também rodam no teste completo): personagem de lado e de frente em cada pose
+    auto poses = [&](const char* prefix) {
+        const int weapons[3] = {1, 0, 4};
+        const char* tags[3] = {"fuzil", "pistola", "faca"};
+        for (int w = 0; w < 3; ++w) {
+            engine_new_scene(e);
+            int ch = engine_create_random_character(e, 21, 1);
+            engine_select(e, ch);
+            engine_create_weapon(e, weapons[w]);
+            engine_select(e, ch);
+            std::string list = engine_animation_list(e);
+            int idx = 0;
+            for (size_t pos = 0, nl; (nl = list.find('\n', pos)) != std::string::npos; pos = nl + 1, ++idx) {
+                std::string n = list.substr(pos, nl - pos);
+                if (n.find(tags[w]) == std::string::npos || (n.find("Parado") != 0 && n.find("Mirando") != 0 && n.find("Golpe (") != 0)) continue;
+                engine_set_animation(e, idx);
+                frames(e, n.find("Golpe") == 0 ? 8 : 30);
+                for (int view = 0; view < 2; ++view) {
+                    engine_set_camera(e, 0.f, 1.15f, 0.f, view ? 0.35f : 1.5708f, 0.1f, 2.3f);
+                    frames(e, 1);
+                    char name[96];
+                    std::snprintf(name, sizeof(name), "%s_%s_%s_%s.png", prefix, tags[w], n.substr(0, n.find(' ')).c_str(), view ? "frente" : "lado");
+                    save(out, name);
+                }
+            }
+        }
+    };
+    if (std::getenv("SO_POSES")) { poses("pose"); engine_destroy(e); return g_fail ? 1 : 0; }
 
     std::printf("[1] demo PBR + IBL + sombras\n");
     engine_load_demo(e);

@@ -20,6 +20,22 @@ const char* kJointLabel[CJ_Count] = {"Quadril", "Coluna", "Peito", "Cabeça", "B
 
 std::string boneName(const Skeleton& S, int j) { return S.name[j][0] ? S.name[j] : "osso_" + std::to_string(j); }
 
+// Nome em português para ossos fora dos 16 principais (pescoço, dedos, ombros...) — padrões Mixamo/Unity/Blender
+std::string extraLabel(const std::string& raw) {
+    std::string n;
+    for (char c : raw) n += char(std::tolower((unsigned char)c));
+    std::string side = n.find("left") != std::string::npos || n.find(".l") != std::string::npos || n.find("_l") != std::string::npos ? " esq."
+                     : n.find("right") != std::string::npos || n.find(".r") != std::string::npos || n.find("_r") != std::string::npos ? " dir." : "";
+    std::string seg;
+    for (char c : n) if (std::isdigit((unsigned char)c)) seg = std::string(1, c);
+    static const std::pair<const char*, const char*> parts[] = {
+        {"thumb", "Polegar"}, {"index", "Indicador"}, {"middle", "Médio"}, {"ring", "Anelar"}, {"pinky", "Mínimo"}, {"little", "Mínimo"},
+        {"neck", "Pescoço"}, {"shoulder", "Ombro"}, {"clavicle", "Clavícula"}, {"toe", "Dedos do pé"}, {"eye", "Olho"}, {"jaw", "Queixo"}};
+    for (auto& [k, v] : parts)
+        if (n.find(k) != std::string::npos) return std::string(v) + (seg.empty() ? "" : " " + seg) + side;
+    return "";
+}
+
 ClipStore& storeFor(Engine* e, Animator* a) {
     for (auto& s : e->clipStores) if (s->anim == a) return *s;
     auto s = std::make_unique<ClipStore>();
@@ -198,15 +214,40 @@ std::string animEditBones(Engine* e) {
     const Skeleton& S = *s->anim->skeleton;
     std::string out;
     for (int j = 0; j < S.jointCount; ++j) {
-        int h = humanoidBone(S.name[j]);
         std::string label = boneName(S, j);
-        if (h >= 0 && h < CJ_Count) label = std::string(kJointLabel[h]) + " (" + label + ")";
+        std::string extra = extraLabel(label);
+        int h = humanoidBone(S.name[j]);
+        if (!extra.empty()) label = extra + " (" + label + ")";
+        else if (h >= 0 && h < CJ_Count) label = std::string(kJointLabel[h]) + " (" + label + ")";
         out += label + "\n";
     }
     return out;
 }
 
 void animEditSelect(Engine* e, int bone) { if (AnimEditState* s = edit(e)) s->bone = bone; }
+
+int animEditSelected(Engine* e) { AnimEditState* s = edit(e); return s ? s->bone : -1; }
+
+// Toque na tela durante a edição: escolhe o osso mais perto do dedo
+bool animEditPick(Engine* e, glm::vec2 px) {
+    AnimEditState* s = edit(e);
+    if (!s) return false;
+    Animator* a = s->anim;
+    glm::mat4 sp = a->space ? a->space->world() : glm::mat4(1.f);
+    glm::mat4 vp = e->camera.viewProj();
+    float best = 60.f * 60.f;
+    int pick = -1;
+    for (int j = 0; j < a->skeleton->jointCount; ++j) {
+        glm::vec4 c = vp * (sp * a->global[j][3]);
+        if (c.w <= 0.f) continue;
+        glm::vec2 sc((c.x / c.w * 0.5f + 0.5f) * e->width, (0.5f - c.y / c.w * 0.5f) * e->height);
+        glm::vec2 d = sc - px;
+        if (glm::dot(d, d) < best) { best = glm::dot(d, d); pick = j; }
+    }
+    if (pick < 0) return false;
+    s->bone = pick;
+    return true;
+}
 
 void animEditGet(Engine* e, int bone, float* eul) {
     eul[0] = eul[1] = eul[2] = 0.f;

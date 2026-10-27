@@ -65,6 +65,8 @@ void    engine_set_anim_preview(Engine*, int on);               // 1 = animaçõ
 int     engine_anim_edit_begin(Engine*);                        // nº de ossos ou -1 (engine_last_error)
 const char* engine_anim_edit_bones(Engine*);                    // nomes (um por linha)
 void    engine_anim_edit_select(Engine*, int bone);             // destaca o osso na tela
+int     engine_anim_edit_selected(Engine*);                     // osso escolhido (também por toque na tela)
+void    engine_player_aim(Engine*, int on);                     // jogador mirando (botão segurado)
 void    engine_anim_edit_get(Engine*, int bone, float* euler3);
 void    engine_anim_edit_set(Engine*, int bone, const float* euler3);
 void    engine_anim_edit_reset_pose(Engine*);

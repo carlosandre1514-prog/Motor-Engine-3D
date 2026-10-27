@@ -411,17 +411,13 @@ int createWeapon(Engine* e, int kind, int ch) {
                                  e->attachments.end());
             destroyObject(e, c.weapon);
         }
-        // empunhadura na palma: desce do pulso e gira para o cano seguir o antebraço
-        glm::mat4 off = glm::translate(glm::mat4(1.f), glm::vec3(0.f, -0.05f * c.height, 0.012f * c.height)) *
-                        glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(1, 0, 0));
-        if (kind == WK_Knife || kind == WK_Bat)
-            off = glm::translate(glm::mat4(1.f), glm::vec3(0.f, -0.05f * c.height, 0.f)) *
-                  glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(1, 0, 0));
-        e->attachments.push_back({h, c.anim, c.handJoint, c.handFix * off});
+        // empunhadura na palma: desce do pulso e gira para o cano seguir os dedos
+        e->attachments.push_back({h, c.anim, c.handJoint, c.handFix * weaponGripOffset(kind, c.height)});
         c.weapon = h;
         c.weaponKind = kind;
         c.muzzle = muzzle;
-        if (c.anim && isGun(kind) && c.clipMap[CC_IdleArmed] >= 0) c.anim->setClip(c.clipMap[CC_IdleArmed]);
+        int base = armedClipBase(kind);
+        if (c.anim && base >= 0 && c.clipMap[base + AP_Idle] >= 0) c.anim->setClip(c.clipMap[base + AP_Idle]);
         updateAttachments(e);
     }
     return w->id;
@@ -475,6 +471,11 @@ static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* sel
         root.transform.setRotation(q);
     }
     e->fireCooldown = cooldown;
+    c.aimTimer = melee ? 0.45f : 1.5f;
+    if (melee && c.anim) {  // golpe recomeça a cada ataque
+        int base = armedClipBase(kind);
+        if (base >= 0 && c.clipMap[base + AP_Aim] >= 0) c.anim->setClip(c.clipMap[base + AP_Aim]);
+    }
     glm::vec3 hit; GameObject* obj = nullptr; float frac = 1.f;
     bool any = e->physics.raycastIgnoring(from, from + dir * range, self, hit, obj, frac);
     glm::vec3 end = any ? hit : from + dir * range;
@@ -506,7 +507,7 @@ static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* sel
 }
 
 // Move um personagem (jogador ou inimigo): velocidade horizontal, pulo, virar para o movimento e animação
-bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt) {
+bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt, glm::vec3 face) {
     GameObject* go = e->scene.get(c.root);
     if (!go || !go->rigidBody || !go->rigidBody->body) return false;
     btRigidBody* b = go->rigidBody->body;
@@ -520,8 +521,10 @@ bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bo
     if (jump && grounded) nv.setY(5.2f);
     b->setLinearVelocity(nv);
     b->activate(true);
-    if (mag > 0.05f) {
-        glm::quat target = glm::angleAxis(std::atan2(move.x, move.z), glm::vec3(0, 1, 0));
+    c.aimTimer = std::max(0.f, c.aimTimer - dt);
+    glm::vec3 look = glm::length(glm::vec2(face.x, face.z)) > 1e-3f ? face : mag > 0.05f ? move : glm::vec3(0.f);
+    if (glm::length(glm::vec2(look.x, look.z)) > 1e-3f) {  // mirando: olha para o alvo mesmo andando de lado
+        glm::quat target = glm::angleAxis(std::atan2(look.x, look.z), glm::vec3(0, 1, 0));
         glm::quat q = glm::slerp(go->transform.rotation, target, 1.f - std::exp(-12.f * dt));
         btTransform t = b->getWorldTransform();
         t.setRotation({q.x, q.y, q.z, q.w});
@@ -530,8 +533,11 @@ bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bo
     }
     if (c.anim) {
         float hs = std::sqrt(nv.x() * nv.x() + nv.z() * nv.z());
+        int base = armedClipBase(c.weaponKind);
+        bool aiming = c.aimTimer > 0.f || c.aimHold;
         int clip = hs < 0.4f ? CC_Idle : hs < 4.f ? CC_Walk : CC_Run;
-        if (isGun(c.weaponKind)) clip += CC_IdleArmed;
+        if (base >= 0)
+            clip = base + (hs < 0.4f ? (aiming ? AP_Aim : AP_Idle) : (aiming ? AP_AimWalk : hs < 4.f ? AP_Walk : AP_Run));
         clip = c.clipMap[clip];
         if (grounded && clip >= 0 && c.anim->clipIndex != clip) c.anim->setClip(clip);
         c.anim->speed = hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
@@ -552,7 +558,10 @@ void updatePlayer(Engine* e, float dt) {
     float yaw = e->editorCam.yaw;
     glm::vec3 fwd(-std::sin(yaw), 0.f, -std::cos(yaw)), right(std::cos(yaw), 0.f, -std::sin(yaw));
     glm::vec3 move = alive ? right * e->moveInput.x + fwd * e->moveInput.y : glm::vec3(0.f);
-    driveCharacter(e, c, move, e->runInput ? 6.5f : 2.6f, alive && e->jumpRequest, dt);
+    c.aimHold = alive && e->aimInput && c.weaponKind >= 0;
+    glm::vec3 face = c.aimHold || c.aimTimer > 0.f ? fwd : glm::vec3(0.f);
+    float speed = e->runInput && !c.aimHold ? 6.5f : 2.6f;  // mirando: anda devagar
+    driveCharacter(e, c, move, speed, alive && e->jumpRequest, dt, face);
     e->jumpRequest = false;
 
     if (alive && e->fireRequest && e->fireCooldown <= 0.f) fire(e, c, *go, b);
@@ -872,9 +881,14 @@ int makeCharacterFromModel(Engine* e, bool controllable) {
         // usa as animações do próprio modelo, casadas pelo nome
         int first = anim->retarget ? anim->refCount : 0;
         int fallback = ownIdle >= 0 ? ownIdle : (anim->clipCount > first ? first : -1);
-        info.clipMap[CC_Idle] = info.clipMap[CC_IdleArmed] = fallback;
-        info.clipMap[CC_Walk] = info.clipMap[CC_WalkArmed] = ownWalk >= 0 ? ownWalk : fallback;
-        info.clipMap[CC_Run] = info.clipMap[CC_RunArmed] = ownRun >= 0 ? ownRun : info.clipMap[CC_Walk];
+        info.clipMap[CC_Idle] = fallback;
+        info.clipMap[CC_Walk] = ownWalk >= 0 ? ownWalk : fallback;
+        info.clipMap[CC_Run] = ownRun >= 0 ? ownRun : info.clipMap[CC_Walk];
+        for (int b : {int(CC_Rifle), int(CC_Pistol), int(CC_Melee)}) {  // com arma: as mesmas do modelo
+            info.clipMap[b + AP_Idle] = info.clipMap[b + AP_Aim] = info.clipMap[CC_Idle];
+            info.clipMap[b + AP_Walk] = info.clipMap[b + AP_AimWalk] = info.clipMap[CC_Walk];
+            info.clipMap[b + AP_Run] = info.clipMap[CC_Run];
+        }
         info.clipMap[CC_Dance] = findClip(anim, {"dance", "samba", "dan"});
         info.clipMap[CC_Wave] = findClip(anim, {"wave", "greet", "acen"});
         if (fallback >= 0) anim->setClip(fallback);

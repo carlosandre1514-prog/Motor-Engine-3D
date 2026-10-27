@@ -157,6 +157,11 @@ void dieBehavior(Engine* e, Behavior& b, GameObject& g) {
 
 // Ataque de um inimigo no jogador
 void enemyAttack(Engine* e, CharacterInfo& c, GameObject& go, Behavior& b, CharacterInfo& pc, GameObject& pg) {
+    c.aimTimer = isGunKind(c.weaponKind) ? 1.6f : 0.45f;
+    if (!isGunKind(c.weaponKind) && c.anim && c.weaponKind >= 0) {  // golpe recomeça
+        int base = armedClipBase(c.weaponKind);
+        if (base >= 0 && c.clipMap[base + AP_Aim] >= 0) c.anim->setClip(c.clipMap[base + AP_Aim]);
+    }
     glm::vec3 chest = go.transform.position + glm::vec3(0, c.height * 0.72f, 0);
     glm::vec3 target = pg.transform.position + glm::vec3(0, pc.height * 0.6f, 0);
     if (!isGunKind(c.weaponKind)) {  // corpo a corpo
@@ -213,7 +218,8 @@ void updateEnemy(Engine* e, size_t i, float dt, CharacterInfo* pc, GameObject* p
     glm::vec3 move(0.f);
     if (b.aggro && dist > stop && dist > 1e-3f) move = to / dist;
     float speed = b.velocidade * (dist > 6.f ? 1.f : 0.6f);
-    driveCharacter(e, *c, move, speed, false, dt);
+    glm::vec3 face = b.aggro && target && dist < b.alcance ? to : glm::vec3(0.f);  // inimigo mira no jogador
+    driveCharacter(e, *c, move, speed, false, dt, face);
     if (!b.aggro || !target) return;
     if (dist <= stop + 0.3f && dist > 1e-3f && go->rigidBody && go->rigidBody->body) {  // parado: vira para o jogador
         glm::quat q = glm::slerp(go->transform.rotation, glm::angleAxis(std::atan2(to.x, to.z), glm::vec3(0, 1, 0)), 1.f - std::exp(-10.f * dt));

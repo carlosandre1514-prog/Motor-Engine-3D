@@ -211,6 +211,8 @@ JNI_FN(void, nativeSetAnimation)(JNIEnv*, jclass, jint i) { if (g_engine) engine
 JNI_FN(jint, nativeAnimEditBegin)(JNIEnv*, jclass) { return g_engine ? engine_anim_edit_begin(g_engine) : -1; }
 JNI_FN(jbyteArray, nativeAnimEditBones)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_anim_edit_bones(g_engine) : ""); }
 JNI_FN(void, nativeAnimEditSelect)(JNIEnv*, jclass, jint b) { if (g_engine) engine_anim_edit_select(g_engine, b); }
+JNI_FN(jint, nativeAnimEditSelected)(JNIEnv*, jclass) { return g_engine ? engine_anim_edit_selected(g_engine) : -1; }
+JNI_FN(void, nativePlayerAim)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_player_aim(g_engine, on ? 1 : 0); }
 JNI_FN(void, nativeAnimEditGet)(JNIEnv* env, jclass, jint b, jfloatArray out3) {
     if (!g_engine || env->GetArrayLength(out3) < 3) return;
     float v[3]; engine_anim_edit_get(g_engine, b, v); env->SetFloatArrayRegion(out3, 0, 3, v);
