@@ -1,5 +1,4 @@
 #version 320 es
-precision highp float;
 layout(location = 0) in vec3 aPos;
 layout(location = 4) in uvec4 aJoints;
 layout(location = 5) in vec4 aWeights;

@@ -31,15 +31,27 @@ Engine ─ Scene ─ Renderer ─ Physics ─ Assets ─ Editor
 - Hierarquia por lista intrusiva (`firstChild/nextSibling`).
 
 ## Pipeline de um frame (alvo 16.6 ms)
-1. Input → EditorCamera/Gizmo (Edit) ou gameplay (Play)
-2. `Physics::step` (1/60, até 2 substeps) → sincroniza Transform3D
-3. `Animator::update` → paleta de joints
+1. Input → EditorCamera/Gizmo/seleção por raycast (Edit) ou empurrão em corpos (Play)
+2. `Physics::step` (1/60, até 3 substeps) → MotionState escreve no Transform3D
+3. `Animator::update` → paleta de joints (no Edit só reavalia a pose)
 4. `Scene::updateTransforms` (só nós sujos)
-5. Frustum culling (câmera + cada cascata) → `RenderQueue`
-6. Shadow pass: 3 cascatas em `GL_TEXTURE_2D_ARRAY`
+5. `Renderer::submit`: culling da câmera e de cada cascata → máscara de passes por item
+6. Shadow pass: 3 cascatas em `GL_TEXTURE_2D_ARRAY`, só os itens daquela cascata
 7. Opaque pass ordenado por (material, mesh) → instancing
 8. Skinned: draw individual com UBO de joints
-9. Gizmos/overlay (apenas editor)
+9. Céu procedural por último (só pixels vazios)
+10. Linhas do editor (grade com depth test, gizmo e caixa de seleção por cima)
+11. `glInvalidateFramebuffer` no depth
+
+## Iluminação
+- PBR metallic-roughness (GGX + Smith + Schlick), sol com CSM e até 8 point lights.
+- Céu procedural (`Environment`): gradiente horizonte/zênite/chão + disco do sol.
+- IBL aproximado: irradiância difusa em SH9 calculada na CPU a partir do céu (só quando o céu muda);
+  especular com cubemap HDR 128² capturado do céu, mips por rugosidade e `envBRDFApprox` (Karis, mobile).
+- Sombras: PCF 3×3 de amostras com comparação por hardware, normal offset proporcional ao texel da cascata,
+  polygon offset no shadow pass e fade no fim da distância de sombra.
+- Exposição ajustável antes do tone mapping ACES.
+- Todos os shaders recebem `shaders/common.glsl` (bloco `SceneBlock` único, igual ao `SceneUBO` do C++).
 
 ## Orçamento (celular intermediário)
 - ≤ 150 draw calls, ≤ 300k triângulos/frame
@@ -48,21 +60,26 @@ Engine ─ Scene ─ Renderer ─ Physics ─ Assets ─ Editor
 - Texturas ASTC 6x6 (albedo/normal) e 8x8 (ORM), sempre com mipmaps
 - `glInvalidateFramebuffer` no depth após os passes (economiza banda em GPUs tiled)
 
-## Ordem sugerida de implementação
-1. Pool/Scene → 2. Renderer PBR sem sombra → 3. glTF → 4. CSM → 5. Instancing → 6. Animator → 7. Bullet → 8. Editor touch + gizmos → 9. Flutter UI → 10. Backends Vulkan/Metal, IBL, culling na GPU.
+## Estado
+Feito: Pool/Scene, PBR, glTF (meshes, materiais, AO, alpha mask, double-sided, skins, animações), CSM com culling
+por cascata, instancing, Animator, Bullet (Box/Sphere/Capsule/ConvexMesh), editor por toque (gizmo mover/girar/escalar,
+seleção, hierarquia, inspetor), céu + IBL, estatísticas.
+
+Próximos: compressão de texturas ASTC/ETC2 no CI (toktx), UI em Flutter, transparência real (BLEND),
+morph targets, animação de nós sem skin, salvar/carregar cena, backends Vulkan/Metal.
 
 ## Estrutura
 ```
 CMakeLists.txt
-shaders/   pbr.vert pbr.frag shadow.vert shadow.frag
+shaders/   common.glsl pbr.* shadow.* sky.* line.*
 src/core/  Pool.h
 src/scene/ Scene.h Animator.h
 src/render/ Camera.h Lights.h Renderer.h Renderer.cpp
-src/assets/ GltfLoader.h GltfLoader.cpp TextureManager.h
+src/assets/ GltfLoader.* TextureManager.h MeshUtils.h (primitivas, normais, tangentes)
 src/physics/ Physics.h
 src/editor/ EditorCamera.h Gizmo.h
 src/platform/ engine_c_api.h engine_c_api.cpp android_jni.cpp
-flutter/   engine_bindings.dart
+app/       Android (Kotlin): GLSurfaceView + UI do editor
+tools/     headless_test.cpp (renderiza as cenas em PNG no Linux/CI)
+flutter/   engine_bindings.dart (rascunho)
 ```
-
-> Observação: o código é um esqueleto estrutural compilável em conceito, não foi compilado nem testado em dispositivo. Espere ajustes de includes, loader GL e detalhes de plataforma ao integrar.

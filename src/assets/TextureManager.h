@@ -22,9 +22,10 @@ public:
         GLuint t = 0;
         glGenTextures(1, &t);
         glBindTexture(GL_TEXTURE_2D, t);
-        GLenum fmt = comp == 4 ? GL_RGBA : comp == 3 ? GL_RGB : GL_RG;
+        if (!pixels || width <= 0 || height <= 0) return white();
+        GLenum fmt = comp == 4 ? GL_RGBA : comp == 3 ? GL_RGB : comp == 2 ? GL_RG : GL_RED;
         GLenum internal = comp == 4 ? (srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8)
-                        : comp == 3 ? (srgb ? GL_SRGB8 : GL_RGB8) : GL_RG8;
+                        : comp == 3 ? (srgb ? GL_SRGB8 : GL_RGB8) : comp == 2 ? GL_RG8 : GL_R8;
         int levels = 1;
         for (int s = std::max(width, height); s > 1; s >>= 1) ++levels;
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -32,6 +33,7 @@ public:
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, fmt, GL_UNSIGNED_BYTE, pixels);
         glGenerateMipmap(GL_TEXTURE_2D);
         setParams();
+        created_.push_back(t);
         return t;
     }
 
@@ -57,11 +59,20 @@ public:
         }
         setParams();
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+        created_.push_back(t);
         return t;
     }
 
     // Escolha do formato no pipeline de build (basisu/toktx): ASTC se GL_KHR_texture_compression_astc_ldr,
     // senão ETC2 (garantido no GLES 3.0+).
+    // Apaga todas as texturas de modelos (nova cena). As texturas padrão 1x1 ficam.
+    void releaseAll() {
+        if (!created_.empty()) glDeleteTextures(GLsizei(created_.size()), created_.data());
+        created_.clear();
+    }
+    // Contexto GL perdido/recriado: os ids antigos não valem mais
+    void forgetAll() { created_.clear(); white_ = flat_ = 0; }
+
     static bool supportsAstc() {
         const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
         return ext && std::strstr(ext, "GL_KHR_texture_compression_astc_ldr");
@@ -75,6 +86,7 @@ private:
         glBindTexture(GL_TEXTURE_2D, t);
         glTexImage2D(GL_TEXTURE_2D, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
         setParams();
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // sem mips: textura 1x1
         return t;
     }
     void setParams() {
@@ -84,6 +96,7 @@ private:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     }
     GLuint white_ = 0, flat_ = 0;
+    std::vector<GLuint> created_;
 };
 
 }  // namespace eng

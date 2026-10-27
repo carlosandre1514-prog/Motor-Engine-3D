@@ -32,3 +32,36 @@ jobs:
         with:
           name: mobile3d-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+  # Compila o motor no Linux e renderiza as cenas com Mesa (GLES 3.2 por software):
+  # valida shaders, física, gizmo, seleção e carregamento de glTF sem precisar do celular.
+  teste-headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependências (Mesa EGL/GLES)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl-dev libgles-dev libegl-mesa0 mesa-utils > /dev/null
+
+      - name: Compilar
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j4 --target mobile3d_headless
+
+      - name: Baixar modelos de teste (Khronos)
+        run: |
+          mkdir -p models
+          base=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models
+          curl -sSfL -o models/Fox.glb $base/Fox/glTF-Binary/Fox.glb || true
+          curl -sSfL -o models/DamagedHelmet.glb $base/DamagedHelmet/glTF-Binary/DamagedHelmet.glb || true
+
+      - name: Rodar teste headless
+        run: |
+          mkdir -p screenshots
+          ./build/mobile3d_headless shaders screenshots models/*.glb
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-teste
+          path: screenshots/*.png

@@ -46,6 +46,17 @@ public:
         --count_;
     }
 
+    // Handle a partir do ponteiro (objeto precisa pertencer a este pool)
+    Handle handleOf(const T* p) const {
+        const unsigned char* b = reinterpret_cast<const unsigned char*>(p);
+        const unsigned char* s = &storage_[0][0];
+        if (b < s || b >= s + sizeof(storage_)) return {};
+        uint32_t i = uint32_t((b - s) / sizeof(T));
+        return live_[i] ? Handle{i, gen_[i]} : Handle{};
+    }
+    void release(const T* p) { release(handleOf(p)); }
+    void clear() { for (uint32_t i = 0; i < N; ++i) if (live_[i]) release(Handle{i, gen_[i]}); }
+
     T* get(Handle h) {
         if (h.index >= N || !live_[h.index] || gen_[h.index] != h.gen) return nullptr;
         return ptr(h.index);

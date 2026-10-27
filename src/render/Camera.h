@@ -1,5 +1,7 @@
 #pragma once
 #include <cmath>
+#include <utility>
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -66,6 +68,34 @@ public:
     }
 
     Frustum frustum() const { Frustum f; f.extract(viewProj()); return f; }
+
+    // Raio de mundo que passa pelo pixel (x, y) da tela (origem no canto superior esquerdo)
+    void screenRay(float x, float y, float w, float h, glm::vec3& origin, glm::vec3& dir) const {
+        glm::vec2 ndc(x / w * 2.f - 1.f, 1.f - y / h * 2.f);
+        glm::mat4 inv = glm::inverse(viewProj());
+        glm::vec4 a = inv * glm::vec4(ndc, -1.f, 1.f), b = inv * glm::vec4(ndc, 1.f, 1.f);
+        origin = glm::vec3(a) / a.w;
+        dir = glm::normalize(glm::vec3(b) / b.w - origin);
+    }
 };
+
+// Interseção raio x AABB (método das placas). Retorna a distância de entrada em tHit.
+inline bool rayAABB(glm::vec3 o, glm::vec3 d, const AABB& b, float& tHit) {
+    float tmin = 0.f, tmax = 1e30f;
+    for (int i = 0; i < 3; ++i) {
+        if (std::abs(d[i]) < 1e-8f) {
+            if (o[i] < b.min[i] || o[i] > b.max[i]) return false;
+            continue;
+        }
+        float inv = 1.f / d[i];
+        float t0 = (b.min[i] - o[i]) * inv, t1 = (b.max[i] - o[i]) * inv;
+        if (t0 > t1) std::swap(t0, t1);
+        tmin = std::max(tmin, t0);
+        tmax = std::min(tmax, t1);
+        if (tmin > tmax) return false;
+    }
+    tHit = tmin;
+    return true;
+}
 
 }  // namespace eng

@@ -2,75 +2,184 @@
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #define STB_IMAGE_IMPLEMENTATION
 #include <tiny_gltf.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 #include "assets/GltfLoader.h"
+#include "assets/MeshUtils.h"
 #include "assets/TextureManager.h"
 
 namespace eng {
 
-template <class T>
-static const T* accessorData(const tinygltf::Model& m, const tinygltf::Accessor& a, size_t& stride) {
+// Lê um accessor como floats (converte inteiros normalizados), `comps` componentes por elemento.
+// Accessor sem bufferView (permitido pela spec) vira zeros.
+static std::vector<float> readFloats(const tinygltf::Model& m, const tinygltf::Accessor& a, int comps) {
+    std::vector<float> out(a.count * comps, 0.f);
+    if (a.bufferView < 0 || a.bufferView >= int(m.bufferViews.size())) return out;
     const auto& bv = m.bufferViews[a.bufferView];
-    stride = bv.byteStride ? bv.byteStride : tinygltf::GetComponentSizeInBytes(a.componentType) * tinygltf::GetNumComponentsInType(a.type);
-    return reinterpret_cast<const T*>(m.buffers[bv.buffer].data.data() + bv.byteOffset + a.byteOffset);
+    const auto& buf = m.buffers[bv.buffer].data;
+    int csize = tinygltf::GetComponentSizeInBytes(a.componentType);
+    int ncomp = tinygltf::GetNumComponentsInType(a.type);
+    if (csize <= 0 || ncomp <= 0) return out;
+    size_t stride = bv.byteStride ? bv.byteStride : size_t(csize * ncomp);
+    size_t base = bv.byteOffset + a.byteOffset;
+    int n = std::min(comps, ncomp);
+    for (size_t i = 0; i < a.count; ++i) {
+        size_t off = base + i * stride;
+        if (off + size_t(csize * n) > buf.size()) break;
+        const uint8_t* e = buf.data() + off;
+        for (int k = 0; k < n; ++k) {
+            const uint8_t* c = e + k * csize;
+            float f = 0.f;
+            switch (a.componentType) {
+                case TINYGLTF_COMPONENT_TYPE_FLOAT: std::memcpy(&f, c, 4); break;
+                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: f = a.normalized ? *c / 255.f : float(*c); break;
+                case TINYGLTF_COMPONENT_TYPE_BYTE: { int8_t v; std::memcpy(&v, c, 1); f = a.normalized ? std::max(v / 127.f, -1.f) : float(v); } break;
+                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: { uint16_t v; std::memcpy(&v, c, 2); f = a.normalized ? v / 65535.f : float(v); } break;
+                case TINYGLTF_COMPONENT_TYPE_SHORT: { int16_t v; std::memcpy(&v, c, 2); f = a.normalized ? std::max(v / 32767.f, -1.f) : float(v); } break;
+                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: { uint32_t v; std::memcpy(&v, c, 4); f = float(v); } break;
+                default: break;
+            }
+            out[i * comps + k] = f;
+        }
+    }
+    return out;
 }
 
-static bool endsWith(const std::string& s, const char* suf) {
-    size_t n = std::strlen(suf);
-    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+static std::vector<uint32_t> readIndices(const tinygltf::Model& m, const tinygltf::Accessor& a) {
+    std::vector<uint32_t> out(a.count, 0);
+    if (a.bufferView < 0) return out;
+    const auto& bv = m.bufferViews[a.bufferView];
+    const auto& buf = m.buffers[bv.buffer].data;
+    int csize = tinygltf::GetComponentSizeInBytes(a.componentType);
+    size_t stride = bv.byteStride ? bv.byteStride : size_t(csize);
+    size_t base = bv.byteOffset + a.byteOffset;
+    for (size_t i = 0; i < a.count; ++i) {
+        size_t off = base + i * stride;
+        if (off + size_t(csize) > buf.size()) break;
+        const uint8_t* e = buf.data() + off;
+        if (csize == 4) { uint32_t v; std::memcpy(&v, e, 4); out[i] = v; }
+        else if (csize == 2) { uint16_t v; std::memcpy(&v, e, 2); out[i] = v; }
+        else out[i] = *e;
+    }
+    return out;
 }
 
-static void readPrimitive(const tinygltf::Model& m, const tinygltf::Primitive& prim,
+static bool endsWithNoCase(const char* s, const char* suf) {
+    size_t n = std::strlen(s), k = std::strlen(suf);
+    if (n < k) return false;
+    for (size_t i = 0; i < k; ++i)
+        if (std::tolower((unsigned char)s[n - k + i]) != std::tolower((unsigned char)suf[i])) return false;
+    return true;
+}
+
+static bool readPrimitive(const tinygltf::Model& m, const tinygltf::Primitive& prim,
                           std::vector<Vertex>& verts, std::vector<uint32_t>& idx, bool& skinned) {
+    if (prim.mode != -1 && prim.mode != TINYGLTF_MODE_TRIANGLES) return false;  // linhas/pontos/strips: não suportado
     auto attr = [&](const char* name) -> const tinygltf::Accessor* {
         auto it = prim.attributes.find(name);
         return it == prim.attributes.end() ? nullptr : &m.accessors[it->second];
     };
     const tinygltf::Accessor* pos = attr("POSITION");
-    if (!pos) return;
-    verts.assign(pos->count, Vertex{glm::vec3(0), glm::vec3(0, 1, 0), glm::vec2(0), glm::vec4(1, 0, 0, 1), glm::u16vec4(0), glm::vec4(1, 0, 0, 0)});
+    if (!pos || pos->count == 0) return false;
+    const size_t n = pos->count;
+    verts.assign(n, makeVertex(glm::vec3(0), glm::vec3(0, 1, 0), glm::vec2(0)));
 
-    size_t st;
-    const uint8_t* pp = accessorData<uint8_t>(m, *pos, st);
-    for (size_t i = 0; i < pos->count; ++i) std::memcpy(&verts[i].pos, pp + i * st, 12);
+    auto P = readFloats(m, *pos, 3);
+    for (size_t i = 0; i < n; ++i) verts[i].pos = glm::make_vec3(&P[i * 3]);
 
-    if (auto* a = attr("NORMAL")) { const uint8_t* d = accessorData<uint8_t>(m, *a, st); for (size_t i = 0; i < a->count; ++i) std::memcpy(&verts[i].normal, d + i * st, 12); }
-    if (auto* a = attr("TEXCOORD_0")) { const uint8_t* d = accessorData<uint8_t>(m, *a, st); for (size_t i = 0; i < a->count; ++i) std::memcpy(&verts[i].uv, d + i * st, 8); }
-    if (auto* a = attr("TANGENT")) { const uint8_t* d = accessorData<uint8_t>(m, *a, st); for (size_t i = 0; i < a->count; ++i) std::memcpy(&verts[i].tangent, d + i * st, 16); }
-    // Sem TANGENT: gerar com MikkTSpace em produção (omitido aqui).
-    if (auto* a = attr("JOINTS_0")) {
+    if (prim.indices >= 0) idx = readIndices(m, m.accessors[prim.indices]);
+    else { idx.resize(n); for (size_t i = 0; i < n; ++i) idx[i] = uint32_t(i); }  // primitiva sem índices
+    idx.resize(idx.size() / 3 * 3);
+    for (uint32_t& i : idx) if (i >= n) i = 0;
+
+    const tinygltf::Accessor* a;
+    bool hasNormals = false, hasTangents = false;
+    if ((a = attr("NORMAL")) && a->count == n) {
+        auto d = readFloats(m, *a, 3);
+        for (size_t i = 0; i < n; ++i) verts[i].normal = glm::make_vec3(&d[i * 3]);
+        hasNormals = true;
+    }
+    if ((a = attr("TEXCOORD_0")) && a->count == n) {
+        auto d = readFloats(m, *a, 2);
+        for (size_t i = 0; i < n; ++i) verts[i].uv = glm::make_vec2(&d[i * 2]);
+    }
+    if ((a = attr("TANGENT")) && a->count == n) {
+        auto d = readFloats(m, *a, 4);
+        for (size_t i = 0; i < n; ++i) verts[i].tangent = glm::make_vec4(&d[i * 4]);
+        hasTangents = true;
+    }
+    if (!hasNormals) generateNormals(verts, idx);
+    if (!hasTangents) generateTangents(verts, idx);
+
+    if ((a = attr("JOINTS_0")) && a->count == n) {
         skinned = true;
-        const uint8_t* d = accessorData<uint8_t>(m, *a, st);
-        for (size_t i = 0; i < a->count; ++i) {
-            if (a->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) { for (int k = 0; k < 4; ++k) verts[i].joints[k] = d[i * st + k]; }
-            else std::memcpy(&verts[i].joints, d + i * st, 8);
+        auto d = readFloats(m, *a, 4);
+        for (size_t i = 0; i < n; ++i)
+            for (int k = 0; k < 4; ++k) {
+                int j = int(d[i * 4 + k]);
+                verts[i].joints[k] = uint16_t(j >= 0 && j < kMaxJoints ? j : 0);
+            }
+    }
+    if ((a = attr("WEIGHTS_0")) && a->count == n) {
+        auto d = readFloats(m, *a, 4);
+        for (size_t i = 0; i < n; ++i) {
+            glm::vec4 w = glm::make_vec4(&d[i * 4]);
+            float sum = w.x + w.y + w.z + w.w;
+            verts[i].weights = sum > 1e-6f ? w / sum : glm::vec4(1, 0, 0, 0);
         }
     }
-    if (auto* a = attr("WEIGHTS_0")) { const uint8_t* d = accessorData<uint8_t>(m, *a, st); for (size_t i = 0; i < a->count; ++i) std::memcpy(&verts[i].weights, d + i * st, 16); }
-
-    if (prim.indices >= 0) {
-        const auto& a = m.accessors[prim.indices];
-        const uint8_t* d = accessorData<uint8_t>(m, a, st);
-        idx.resize(a.count);
-        for (size_t i = 0; i < a.count; ++i) {
-            const uint8_t* e = d + i * st;
-            idx[i] = a.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT ? *reinterpret_cast<const uint32_t*>(e)
-                   : a.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? *reinterpret_cast<const uint16_t*>(e) : *e;
-        }
-    }
+    return !idx.empty();
 }
 
-bool loadGltf(const char* path, Renderer& renderer, Scene& scene, LoadedModel& out) {
+// TRS de um nó (aceita "matrix" ou translation/rotation/scale)
+static void nodeTRS(const tinygltf::Node& n, glm::vec3& t, glm::quat& r, glm::vec3& s) {
+    t = glm::vec3(0.f); r = glm::quat(1, 0, 0, 0); s = glm::vec3(1.f);
+    if (n.matrix.size() == 16) {
+        glm::mat4 mtx;
+        for (int i = 0; i < 16; ++i) mtx[i / 4][i % 4] = float(n.matrix[i]);
+        glm::vec3 skew; glm::vec4 persp;
+        glm::decompose(mtx, s, r, t, skew, persp);
+        return;
+    }
+    if (n.translation.size() == 3) t = glm::vec3(n.translation[0], n.translation[1], n.translation[2]);
+    if (n.rotation.size() == 4) r = glm::quat(float(n.rotation[3]), float(n.rotation[0]), float(n.rotation[1]), float(n.rotation[2]));
+    if (n.scale.size() == 3) s = glm::vec3(n.scale[0], n.scale[1], n.scale[2]);
+}
+
+static const char* baseName(const char* path) {
+    const char* b = std::strrchr(path, '/');
+    return b ? b + 1 : path;
+}
+
+bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out) {
     tinygltf::TinyGLTF loader;
     tinygltf::Model model;
     std::string err, warn;
-    bool ok = endsWith(path, ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path)
-                                     : loader.LoadASCIIFromFile(&model, &err, &warn, path);
-    if (!ok) { std::fprintf(stderr, "glTF: %s\n", err.c_str()); return false; }
+    bool ok = endsWithNoCase(path, ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path)
+                                           : loader.LoadASCIIFromFile(&model, &err, &warn, path);
+    if (!ok) { out.error = err.empty() ? "falha ao ler o arquivo" : err; std::fprintf(stderr, "glTF: %s\n", out.error.c_str()); return false; }
+    Renderer& renderer = ctx.renderer;
+    Scene& scene = ctx.scene;
 
-    // Materiais PBR metallic-roughness (texturas via TextureManager: ASTC/ETC2 quando houver .ktx)
+    // Materiais PBR metallic-roughness. Cache: a mesma imagem vira uma única textura na VRAM.
     TextureManager& tex = TextureManager::instance();
+    std::map<std::pair<int, bool>, GLuint> texCache;
+    auto texOf = [&](int ti, bool srgb, GLuint fallback) -> GLuint {
+        if (ti < 0 || ti >= int(model.textures.size())) return fallback;
+        int src = model.textures[ti].source;
+        if (src < 0 || src >= int(model.images.size())) return fallback;
+        auto key = std::make_pair(src, srgb);
+        auto it = texCache.find(key);
+        if (it != texCache.end()) return it->second;
+        const auto& im = model.images[src];
+        GLuint id = im.image.empty() ? fallback : tex.fromPixels(im.image.data(), im.width, im.height, im.component, srgb);
+        texCache[key] = id;
+        return id;
+    };
     for (const auto& gm : model.materials) {
         Material m;
         const auto& pbr = gm.pbrMetallicRoughness;
@@ -78,89 +187,116 @@ bool loadGltf(const char* path, Renderer& renderer, Scene& scene, LoadedModel& o
         m.roughness = float(pbr.roughnessFactor);
         m.metallic = float(pbr.metallicFactor);
         m.emissive_factor = glm::vec3(gm.emissiveFactor[0], gm.emissiveFactor[1], gm.emissiveFactor[2]);
-        auto texOf = [&](int ti, bool srgb, GLuint fallback) {
-            if (ti < 0) return fallback;
-            const auto& im = model.images[model.textures[ti].source];
-            return tex.fromPixels(im.image.data(), im.width, im.height, im.component, srgb);
-        };
         m.albedo = texOf(pbr.baseColorTexture.index, true, tex.white());
         m.normal = texOf(gm.normalTexture.index, false, tex.flatNormal());
         m.orm = texOf(pbr.metallicRoughnessTexture.index, false, tex.white());
         m.emissive = texOf(gm.emissiveTexture.index, true, tex.white());
+        if (gm.occlusionTexture.index >= 0) {
+            m.occlusion = texOf(gm.occlusionTexture.index, false, 0);
+            m.occlusionStrength = float(gm.occlusionTexture.strength);
+        }
+        m.doubleSided = gm.doubleSided;
+        if (gm.alphaMode == "MASK") m.alphaCutoff = float(gm.alphaCutoff);
+        else if (gm.alphaMode == "BLEND") m.alphaCutoff = 0.1f;  // sem transparência real ainda: recorta o quase invisível
         out.materials.push_back(renderer.createMaterial(m));
     }
-    if (out.materials.empty()) {
-        Material def; def.albedo = tex.white(); def.normal = tex.flatNormal(); def.orm = tex.white(); def.emissive = tex.white();
-        out.materials.push_back(renderer.createMaterial(def));
-    }
+    Material def; def.albedo = tex.white(); def.normal = tex.flatNormal(); def.orm = tex.white(); def.emissive = tex.white();
+    def.albedoFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.f); def.roughness = 0.6f; def.metallic = 0.f;
+    MaterialId defaultMat = renderer.createMaterial(def);
 
-    // Meshes: uma primitiva = um Mesh do renderer. meshPrims[i] = índices em out.meshes
+    // Meshes: uma primitiva = um Mesh do renderer
     std::vector<std::vector<std::pair<MeshId, MaterialId>>> meshPrims(model.meshes.size());
     for (size_t mi = 0; mi < model.meshes.size(); ++mi)
         for (const auto& prim : model.meshes[mi].primitives) {
             std::vector<Vertex> v; std::vector<uint32_t> idx; bool skinned = false;
-            readPrimitive(model, prim, v, idx, skinned);
-            if (v.empty()) continue;
+            if (!readPrimitive(model, prim, v, idx, skinned)) continue;
             MeshId id = renderer.createMesh(v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()), skinned);
+            if (id == kInvalidId) continue;
             out.meshes.push_back(id);
-            meshPrims[mi].push_back({id, prim.material >= 0 ? out.materials[prim.material] : out.materials[0]});
+            MaterialId mat = prim.material >= 0 && prim.material < int(out.materials.size()) ? out.materials[prim.material] : defaultMat;
+            meshPrims[mi].push_back({id, mat});
         }
 
-    // Esqueletos
-    for (const auto& skin : model.skins) {
+    // Pai de cada nó (para esqueletos)
+    std::vector<int> nodeParent(model.nodes.size(), -1);
+    for (size_t ni = 0; ni < model.nodes.size(); ++ni)
+        for (int c : model.nodes[ni].children)
+            if (c >= 0 && c < int(model.nodes.size())) nodeParent[c] = int(ni);
+
+    // Esqueletos (com ordem de avaliação pais-antes-dos-filhos)
+    std::vector<std::vector<int>> skinNodeToJoint(model.skins.size());
+    std::vector<int> skinSpaceNode(model.skins.size(), -1);
+    for (size_t si = 0; si < model.skins.size(); ++si) {
+        const auto& skin = model.skins[si];
         Skeleton sk{};
         sk.jointCount = std::min<int>(int(skin.joints.size()), kMaxJoints);
-        std::vector<int> nodeToJoint(model.nodes.size(), -1);
+        auto& nodeToJoint = skinNodeToJoint[si];
+        nodeToJoint.assign(model.nodes.size(), -1);
         for (int j = 0; j < sk.jointCount; ++j) nodeToJoint[skin.joints[j]] = j;
+        int depth[kMaxJoints];
         for (int j = 0; j < sk.jointCount; ++j) {
-            const auto& n = model.nodes[skin.joints[j]];
-            sk.parent[j] = -1;
-            sk.bindT[j] = n.translation.size() ? glm::vec3(n.translation[0], n.translation[1], n.translation[2]) : glm::vec3(0);
-            sk.bindR[j] = n.rotation.size() ? glm::quat(float(n.rotation[3]), float(n.rotation[0]), float(n.rotation[1]), float(n.rotation[2])) : glm::quat(1, 0, 0, 0);
-            sk.bindS[j] = n.scale.size() ? glm::vec3(n.scale[0], n.scale[1], n.scale[2]) : glm::vec3(1);
+            int node = skin.joints[j];
+            nodeTRS(model.nodes[node], sk.bindT[j], sk.bindR[j], sk.bindS[j]);
             sk.inverseBind[j] = glm::mat4(1.f);
+            int p = nodeParent[node];
+            sk.parent[j] = p >= 0 ? nodeToJoint[p] : -1;
+            if (sk.parent[j] < 0 && skinSpaceNode[si] < 0) skinSpaceNode[si] = p;  // nó acima da raiz do esqueleto
+            depth[j] = 0;
+            for (int q = p; q >= 0; q = nodeParent[q]) ++depth[j];
+            sk.order[j] = j;
         }
-        for (size_t ni = 0; ni < model.nodes.size(); ++ni)
-            for (int c : model.nodes[ni].children)
-                if (nodeToJoint[c] >= 0 && nodeToJoint[ni] >= 0) sk.parent[nodeToJoint[c]] = nodeToJoint[ni];
+        std::stable_sort(sk.order, sk.order + sk.jointCount, [&](int a, int b) { return depth[a] < depth[b]; });
         if (skin.inverseBindMatrices >= 0) {
-            size_t st;
-            const float* ib = accessorData<float>(model, model.accessors[skin.inverseBindMatrices], st);
-            std::memcpy(sk.inverseBind, ib, sizeof(glm::mat4) * sk.jointCount);
+            auto ib = readFloats(model, model.accessors[skin.inverseBindMatrices], 16);
+            for (int j = 0; j < sk.jointCount && size_t(j * 16 + 15) < ib.size(); ++j) sk.inverseBind[j] = glm::make_mat4(&ib[j * 16]);
         }
         out.skeletons.push_back(sk);
     }
 
-    // Animações (assume um skin; mapeamento nó->joint do primeiro esqueleto)
-    if (!out.skeletons.empty()) {
-        const auto& skin0 = model.skins[0];
-        std::vector<int> nodeToJoint(model.nodes.size(), -1);
-        for (size_t j = 0; j < skin0.joints.size() && j < size_t(kMaxJoints); ++j) nodeToJoint[skin0.joints[j]] = int(j);
-        out.channelStorage.reserve(4096);  // evita realocação invalidando ponteiros
-        for (const auto& anim : model.animations) {
+    // Animações dos joints do primeiro skin (o caso comum: um personagem por arquivo)
+    if (!model.skins.empty()) {
+        const auto& nodeToJoint = skinNodeToJoint[0];
+        size_t totalChannels = 0;
+        for (const auto& anim : model.animations) totalChannels += anim.channels.size();
+        out.channelStorage.reserve(totalChannels);  // exato: ponteiros dos clips não podem ser invalidados
+        for (size_t ai = 0; ai < model.animations.size(); ++ai) {
+            const auto& anim = model.animations[ai];
             AnimationClip clip;
+            if (anim.name.empty()) std::snprintf(clip.name, sizeof(clip.name), "Anim %d", int(ai));
+            else std::snprintf(clip.name, sizeof(clip.name), "%s", anim.name.c_str());
             size_t first = out.channelStorage.size();
             for (const auto& ch : anim.channels) {
+                if (ch.target_node < 0 || ch.target_node >= int(model.nodes.size())) continue;
                 int joint = nodeToJoint[ch.target_node];
-                if (joint < 0) continue;
+                if (joint < 0 || ch.sampler < 0) continue;
+                ChannelPath path;
+                if (ch.target_path == "rotation") path = ChannelPath::Rotation;
+                else if (ch.target_path == "translation") path = ChannelPath::Translation;
+                else if (ch.target_path == "scale") path = ChannelPath::Scale;
+                else continue;  // morph targets ("weights"): não suportado
                 const auto& s = anim.samplers[ch.sampler];
                 const auto& tin = model.accessors[s.input];
-                const auto& vout = model.accessors[s.output];
-                size_t st;
-                int comps = tinygltf::GetNumComponentsInType(vout.type);
-                out.keyData.emplace_back(tin.count + tin.count * comps);
+                int comps = path == ChannelPath::Rotation ? 4 : 3;
+                auto times = readFloats(model, tin, 1);
+                auto vals = readFloats(model, model.accessors[s.output], comps);
+                size_t keys = times.size();
+                if (keys == 0) continue;
+                bool cubic = s.interpolation == "CUBICSPLINE";  // [in-tangent, valor, out-tangent]: usa só o valor
+                if (vals.size() < keys * comps * (cubic ? 3 : 1)) continue;
+                out.keyData.emplace_back(keys + keys * comps);
                 std::vector<float>& buf = out.keyData.back();
-                const float* t = accessorData<float>(model, tin, st);
-                std::memcpy(buf.data(), t, sizeof(float) * tin.count);
-                const float* v = accessorData<float>(model, vout, st);
-                std::memcpy(buf.data() + tin.count, v, sizeof(float) * tin.count * comps);
+                std::copy(times.begin(), times.end(), buf.begin());
+                for (size_t k = 0; k < keys; ++k)
+                    for (int c = 0; c < comps; ++c)
+                        buf[keys + k * comps + c] = vals[(cubic ? (k * 3 + 1) : k) * comps + c];
                 Channel c;
                 c.joint = joint;
-                c.path = ch.target_path == "rotation" ? ChannelPath::Rotation : ch.target_path == "scale" ? ChannelPath::Scale : ChannelPath::Translation;
-                c.keyCount = int(tin.count);
+                c.path = path;
+                c.step = s.interpolation == "STEP";
+                c.keyCount = int(keys);
                 c.times = buf.data();
-                c.values = buf.data() + tin.count;
-                clip.duration = std::max(clip.duration, buf[tin.count - 1]);
+                c.values = buf.data() + keys;
+                clip.duration = std::max(clip.duration, buf[keys - 1]);
                 out.channelStorage.push_back(c);
             }
             clip.channels = out.channelStorage.data() + first;
@@ -169,36 +305,69 @@ bool loadGltf(const char* path, Renderer& renderer, Scene& scene, LoadedModel& o
         }
     }
 
-    // Hierarquia de nós -> GameObjects (cada primitiva vira um GameObject filho com MeshRenderer)
-    // MeshRenderers vivem em um pool simples do loader; produção: pool de componentes na Scene.
-    static ObjectPool<MeshRenderer, 8192> rendererPool;
+    // Raiz do modelo: um GameObject com o nome do arquivo agrupa toda a hierarquia
+    Scene::Handle rootH = scene.create(baseName(path));
+    GameObject* root = scene.get(rootH);
+    if (!root) { out.error = "cena cheia"; return false; }
+    out.roots.push_back(rootH);
+    out.allNodes.push_back(rootH);
+
+    // Hierarquia de nós -> GameObjects (primitivas extras viram filhos com MeshRenderer)
     std::vector<Scene::Handle> nodeObj(model.nodes.size());
     for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
         const auto& n = model.nodes[ni];
-        nodeObj[ni] = scene.create(n.name.c_str());
+        char name[32];
+        if (!n.name.empty()) std::snprintf(name, sizeof(name), "%s", n.name.c_str());
+        else if (n.mesh >= 0 && !model.meshes[n.mesh].name.empty()) std::snprintf(name, sizeof(name), "%s", model.meshes[n.mesh].name.c_str());
+        else std::snprintf(name, sizeof(name), "No %d", int(ni));
+        nodeObj[ni] = scene.create(name);
         GameObject* go = scene.get(nodeObj[ni]);
-        if (n.translation.size()) go->transform.position = glm::vec3(n.translation[0], n.translation[1], n.translation[2]);
-        if (n.rotation.size()) go->transform.rotation = glm::quat(float(n.rotation[3]), float(n.rotation[0]), float(n.rotation[1]), float(n.rotation[2]));
-        if (n.scale.size()) go->transform.scale = glm::vec3(n.scale[0], n.scale[1], n.scale[2]);
-        if (n.mesh >= 0) {
-            bool first = true;
-            for (auto [mesh, mat] : meshPrims[n.mesh]) {
-                GameObject* target = go;
-                if (!first) { auto h = scene.create("prim", go); target = scene.get(h); }
-                auto rh = rendererPool.acquire();
-                MeshRenderer* mr = rendererPool.get(rh);
-                mr->mesh = mesh; mr->material = mat;
-                target->meshRenderer = mr;
-                first = false;
+        if (!go) { out.error = "cena cheia (limite de objetos)"; return false; }
+        out.allNodes.push_back(nodeObj[ni]);
+        nodeTRS(n, go->transform.position, go->transform.rotation, go->transform.scale);
+        go->transform.markDirty();
+    }
+    for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
+        GameObject* go = scene.get(nodeObj[ni]);
+        if (nodeParent[ni] >= 0) go->transform.setParent(&scene.get(nodeObj[nodeParent[ni]])->transform);
+        else go->transform.setParent(&root->transform);
+    }
+
+    for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
+        const auto& n = model.nodes[ni];
+        if (n.mesh < 0) continue;
+        GameObject* go = scene.get(nodeObj[ni]);
+        Animator* anim = nullptr;
+        if (n.skin >= 0 && n.skin < int(out.skeletons.size())) {
+            auto ah = ctx.animators.acquire();
+            anim = ctx.animators.get(ah);
+            if (anim) {
+                anim->skeleton = &out.skeletons[n.skin];
+                if (n.skin == 0 && !out.clips.empty()) { anim->clips = out.clips.data(); anim->clipCount = int(out.clips.size()); }
+                int sp = skinSpaceNode[n.skin];
+                anim->space = sp >= 0 ? &scene.get(nodeObj[sp])->transform : &root->transform;
+                anim->update(0.f, false);  // pose inicial válida antes do 1º frame
+                out.animators.push_back(anim);
             }
         }
+        bool first = true;
+        for (auto [mesh, mat] : meshPrims[n.mesh]) {
+            GameObject* target = go;
+            if (!first) {
+                auto h = scene.create(go->name, go);
+                target = scene.get(h);
+                if (!target) break;
+                out.allNodes.push_back(h);
+            }
+            auto rh = ctx.meshRenderers.acquire();
+            MeshRenderer* mr = ctx.meshRenderers.get(rh);
+            if (!mr) break;
+            mr->mesh = mesh; mr->material = mat;
+            target->meshRenderer = mr;
+            target->animator = anim;
+            first = false;
+        }
     }
-    for (size_t ni = 0; ni < model.nodes.size(); ++ni)
-        for (int c : model.nodes[ni].children) scene.get(nodeObj[c])->transform.setParent(&scene.get(nodeObj[ni])->transform);
-
-    std::vector<bool> isChild(model.nodes.size(), false);
-    for (const auto& n : model.nodes) for (int c : n.children) isChild[c] = true;
-    for (size_t ni = 0; ni < model.nodes.size(); ++ni) if (!isChild[ni]) out.roots.push_back(nodeObj[ni]);
     return true;
 }
 

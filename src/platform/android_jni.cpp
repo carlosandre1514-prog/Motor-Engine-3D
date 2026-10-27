@@ -1,24 +1,37 @@
-// Ponte Android: SurfaceView/GLSurfaceView (thread de render) <-> engine_c_api.
-// No Flutter, o mais comum é criar a Surface via um Texture/PlatformView e passar o ANativeWindow aqui.
+// Ponte Android: GLSurfaceView (thread de render) <-> engine_c_api.
+// Todas as chamadas chegam na thread GL (o Kotlin usa queueEvent / onDrawFrame).
 #include <EGL/egl.h>
-#include <android/native_window_jni.h>
+#include <android/log.h>
 #include <jni.h>
+#include <string>
 #include "platform/engine_c_api.h"
 
 static Engine* g_engine = nullptr;
 
+#define JNI_FN(ret, name) JNIEXPORT ret JNICALL Java_com_mobile3d_NativeBridge_##name
+
+static std::string str(JNIEnv* env, jstring s) {
+    if (!s) return {};
+    const char* c = env->GetStringUTFChars(s, nullptr);
+    std::string r = c ? c : "";
+    env->ReleaseStringUTFChars(s, c);
+    return r;
+}
+
 extern "C" {
 
-// Chamado de GLSurfaceView.Renderer.onSurfaceCreated (thread GL já com contexto ES 3.2 ativo)
-JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeCreate(JNIEnv* env, jclass, jstring shaderDir) {
-    const char* dir = env->GetStringUTFChars(shaderDir, nullptr);
-    g_engine = engine_create(dir);  // shaders copiados dos assets para o storage interno antes
-    env->ReleaseStringUTFChars(shaderDir, dir);
+// onSurfaceCreated: contexto ES 3.2 ativo. Se já havia motor, o contexto antigo foi perdido: recria.
+JNI_FN(jboolean, nativeCreate)(JNIEnv* env, jclass, jstring shaderDir) {
+    if (g_engine) { engine_destroy(g_engine); g_engine = nullptr; }
+    g_engine = engine_create(str(env, shaderDir).c_str());
+    if (!g_engine) __android_log_print(ANDROID_LOG_ERROR, "Mobile3D", "engine_create falhou (shaders?)");
+    return g_engine != nullptr;
 }
-JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeLoadDemo(JNIEnv*, jclass) { if (g_engine) engine_load_demo(g_engine); }
-JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeResize(JNIEnv*, jclass, jint w, jint h) { if (g_engine) engine_resize(g_engine, w, h); }
-JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeFrame(JNIEnv*, jclass, jfloat dt) { if (g_engine) engine_frame(g_engine, dt); }
-JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeTouch(JNIEnv* env, jclass, jint action, jintArray ids, jfloatArray xy) {
+JNI_FN(void, nativeDestroy)(JNIEnv*, jclass) { if (g_engine) { engine_destroy(g_engine); g_engine = nullptr; } }
+JNI_FN(void, nativeResize)(JNIEnv*, jclass, jint w, jint h) { if (g_engine) engine_resize(g_engine, w, h); }
+JNI_FN(void, nativeFrame)(JNIEnv*, jclass, jfloat dt) { if (g_engine) engine_frame(g_engine, dt); }
+
+JNI_FN(void, nativeTouch)(JNIEnv* env, jclass, jint action, jintArray ids, jfloatArray xy) {
     if (!g_engine) return;
     jsize n = env->GetArrayLength(ids);
     jint* i = env->GetIntArrayElements(ids, nullptr);
@@ -26,6 +39,74 @@ JNIEXPORT void JNICALL Java_com_mobile3d_NativeBridge_nativeTouch(JNIEnv* env, j
     engine_touch(g_engine, action, n, reinterpret_cast<int*>(i), p);
     env->ReleaseIntArrayElements(ids, i, JNI_ABORT);
     env->ReleaseFloatArrayElements(xy, p, JNI_ABORT);
+}
+
+// Modo
+JNI_FN(void, nativeSetPlay)(JNIEnv*, jclass, jboolean p) { if (g_engine) engine_set_play(g_engine, p ? 1 : 0); }
+JNI_FN(jboolean, nativeIsPlaying)(JNIEnv*, jclass) { return g_engine && engine_is_playing(g_engine); }
+
+// Cenas
+JNI_FN(void, nativeNewScene)(JNIEnv*, jclass) { if (g_engine) engine_new_scene(g_engine); }
+JNI_FN(void, nativeLoadDemo)(JNIEnv*, jclass) { if (g_engine) engine_load_demo(g_engine); }
+JNI_FN(void, nativeLoadPhysicsDemo)(JNIEnv*, jclass) { if (g_engine) engine_load_physics_demo(g_engine); }
+JNI_FN(jint, nativeLoadModel)(JNIEnv* env, jclass, jstring path) {
+    return g_engine ? engine_load_model(g_engine, str(env, path).c_str()) : -1;
+}
+JNI_FN(jstring, nativeLastError)(JNIEnv* env, jclass) { return env->NewStringUTF(g_engine ? engine_last_error(g_engine) : "motor não iniciado"); }
+JNI_FN(jint, nativeAddObject)(JNIEnv*, jclass, jint kind, jboolean physics) {
+    return g_engine ? engine_add_object(g_engine, kind, physics ? 1 : 0) : -1;
+}
+JNI_FN(void, nativeDeleteSelected)(JNIEnv*, jclass) { if (g_engine) engine_delete_selected(g_engine); }
+JNI_FN(void, nativeFocus)(JNIEnv*, jclass) { if (g_engine) engine_focus_selected(g_engine); }
+
+// Hierarquia: uma linha por objeto válido -> "id\tprofundidade\tnome"
+JNI_FN(jstring, nativeObjectList)(JNIEnv* env, jclass) {
+    std::string out;
+    if (g_engine) {
+        int n = engine_object_count(g_engine);
+        for (int i = 0; i < n; ++i) {
+            if (!engine_object_valid(g_engine, i)) continue;
+            out += std::to_string(i) + '\t' + std::to_string(engine_object_depth(g_engine, i)) + '\t' + engine_object_name(g_engine, i) + '\n';
+        }
+    }
+    return env->NewStringUTF(out.c_str());
+}
+JNI_FN(jstring, nativeObjectName)(JNIEnv* env, jclass, jint id) { return env->NewStringUTF(g_engine ? engine_object_name(g_engine, id) : ""); }
+
+// Seleção / inspetor
+JNI_FN(void, nativeSelect)(JNIEnv*, jclass, jint id) { if (g_engine) engine_select(g_engine, id); }
+JNI_FN(jint, nativeSelected)(JNIEnv*, jclass) { return g_engine ? engine_selected(g_engine) : -1; }
+JNI_FN(jboolean, nativeGetTransform)(JNIEnv* env, jclass, jint id, jfloatArray out9) {
+    if (!g_engine || env->GetArrayLength(out9) < 9) return false;
+    float v[9];
+    if (!engine_get_transform(g_engine, id, v, v + 3, v + 6)) return false;
+    env->SetFloatArrayRegion(out9, 0, 9, v);
+    return true;
+}
+JNI_FN(void, nativeSetTransform)(JNIEnv* env, jclass, jint id, jfloatArray in9) {
+    if (!g_engine || env->GetArrayLength(in9) < 9) return;
+    float v[9];
+    env->GetFloatArrayRegion(in9, 0, 9, v);
+    engine_set_transform(g_engine, id, v, v + 3, v + 6);
+}
+JNI_FN(void, nativeSetGizmoMode)(JNIEnv*, jclass, jint m) { if (g_engine) engine_set_gizmo_mode(g_engine, m); }
+
+// Visual
+JNI_FN(void, nativeSetExposure)(JNIEnv*, jclass, jfloat x) { if (g_engine) engine_set_exposure(g_engine, x); }
+JNI_FN(void, nativeSetSunIntensity)(JNIEnv*, jclass, jfloat x) { if (g_engine) engine_set_sun_intensity(g_engine, x); }
+JNI_FN(void, nativeSetGrid)(JNIEnv*, jclass, jboolean v) { if (g_engine) engine_set_grid(g_engine, v ? 1 : 0); }
+
+// Animação: troca para a próxima e devolve o nome ("" se não houver)
+JNI_FN(jstring, nativeCycleAnimation)(JNIEnv* env, jclass) {
+    if (!g_engine || engine_cycle_animation(g_engine) < 0) return env->NewStringUTF("");
+    return env->NewStringUTF(engine_animation_name(g_engine));
+}
+
+JNI_FN(void, nativeGetStats)(JNIEnv* env, jclass, jfloatArray out6) {
+    if (!g_engine || env->GetArrayLength(out6) < 6) return;
+    float s[6];
+    engine_get_stats(g_engine, s);
+    env->SetFloatArrayRegion(out6, 0, 6, s);
 }
 
 }  // extern "C"

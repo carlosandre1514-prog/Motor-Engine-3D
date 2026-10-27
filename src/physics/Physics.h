@@ -1,6 +1,7 @@
 #pragma once
 #include <btBulletDynamicsCommon.h>
 #include <BulletCollision/CollisionShapes/btShapeHull.h>
+#include <algorithm>
 #include <glm/glm.hpp>
 #include "core/Pool.h"
 #include "scene/Scene.h"
@@ -32,6 +33,9 @@ struct RigidBody {
     btRigidBody* body = nullptr;
     btCollisionShape* shape = nullptr;
     TransformMotionState* motion = nullptr;
+    GameObject* owner = nullptr;
+    ColliderType type = ColliderType::Box;
+    glm::vec3 baseScale{1.f};  // collider criado em unidades locais; a escala do Transform multiplica por cima
     float mass = 1.f;  // 0 = estático
     bool lockRotX = false, lockRotY = false, lockRotZ = false;
     bool lockPosX = false, lockPosY = false, lockPosZ = false;
@@ -55,8 +59,10 @@ public:
         solver_ = new btSequentialImpulseConstraintSolver();
         world_ = new btDiscreteDynamicsWorld(dispatcher_, broadphase_, solver_, config_);
         world_->setGravity({0, -9.81f, 0});
-        world_->getSolverInfo().m_numIterations = 6;  // menos iterações: mobile
+        world_->getSolverInfo().m_numIterations = 8;  // poucas iterações: mobile
     }
+    Physics(const Physics&) = delete;
+    Physics& operator=(const Physics&) = delete;
     ~Physics() { delete world_; delete solver_; delete broadphase_; delete dispatcher_; delete config_; }
 
     // Criação de formas (no carregamento/instanciação, não no loop)
@@ -64,10 +70,13 @@ public:
         switch (type) {
             case ColliderType::Box:     return new btBoxShape({size.x * .5f, size.y * .5f, size.z * .5f});
             case ColliderType::Sphere:  return new btSphereShape(size.x * .5f);
-            case ColliderType::Capsule: return new btCapsuleShape(size.x * .5f, size.y);
+            // Cápsula em Y: size.x = diâmetro, size.y = altura total (com as semiesferas)
+            case ColliderType::Capsule: return new btCapsuleShape(size.x * .5f, std::max(size.y - size.x, 0.01f));
             case ColliderType::ConvexMesh: {
                 // Casco convexo simplificado com btShapeHull (menos vértices = SAT mais barato)
-                btConvexHullShape tmp((const btScalar*)pts, ptCount, sizeof(glm::vec3));
+                btConvexHullShape tmp;
+                for (int i = 0; i < ptCount; ++i) tmp.addPoint({pts[i].x * size.x, pts[i].y * size.y, pts[i].z * size.z}, false);
+                tmp.recalcLocalAabb();
                 btShapeHull hull(&tmp);
                 hull.buildHull(tmp.getMargin());
                 return new btConvexHullShape((const btScalar*)hull.getVertexPointer(), hull.numVertices(), sizeof(btVector3));
@@ -76,14 +85,23 @@ public:
         return nullptr;
     }
 
-    void attach(GameObject& go, RigidBody& rb, btCollisionShape* shape, float mass) {
+    // size = dimensões do collider no espaço local do objeto (antes da escala do Transform)
+    void attach(GameObject& go, RigidBody& rb, ColliderType type, btCollisionShape* shape, float mass) {
         rb.shape = shape;
         rb.mass = mass;
+        rb.type = type;
+        rb.owner = &go;
+        shape->setMargin(type == ColliderType::Box || type == ColliderType::ConvexMesh ? 0.02f : shape->getMargin());
         rb.motion = new TransformMotionState(&go.transform);
         btVector3 inertia(0, 0, 0);
         if (mass > 0.f) shape->calculateLocalInertia(mass, inertia);
         btRigidBody::btRigidBodyConstructionInfo info(mass, rb.motion, shape, inertia);
+        info.m_friction = 0.6f;
+        info.m_restitution = 0.15f;
+        info.m_rollingFriction = 0.01f;
+        info.m_spinningFriction = 0.01f;
         rb.body = new btRigidBody(info);
+        rb.body->setRollingFriction(0.01f);
         rb.body->setUserPointer(&go);
         rb.applyAxisConstraints();
         world_->addRigidBody(rb.body);
@@ -93,9 +111,37 @@ public:
     void detach(RigidBody& rb) {
         if (!rb.body) return;
         world_->removeRigidBody(rb.body);
+        if (rb.owner) rb.owner->rigidBody = nullptr;
         delete rb.body; delete rb.motion; delete rb.shape;
         rb = RigidBody{};
     }
+
+    // Antes do Play: copia o Transform (editado no editor) para o corpo, aplica a escala no
+    // collider e zera velocidades. Usado também no Stop para restaurar o snapshot.
+    void syncFromTransform(RigidBody& rb) {
+        if (!rb.body || !rb.owner) return;
+        Transform3D& t = rb.owner->transform;
+        glm::vec3 sc = t.scale / glm::max(rb.baseScale, glm::vec3(1e-4f));
+        if (rb.type == ColliderType::Sphere) sc = glm::vec3(std::max(sc.x, std::max(sc.y, sc.z)));  // esfera: escala uniforme
+        rb.shape->setLocalScaling({sc.x, sc.y, sc.z});
+        btVector3 inertia(0, 0, 0);
+        if (rb.mass > 0.f) rb.shape->calculateLocalInertia(rb.mass, inertia);
+        rb.body->setMassProps(rb.mass, inertia);
+        rb.body->updateInertiaTensor();
+        btTransform tr;
+        tr.setOrigin({t.position.x, t.position.y, t.position.z});
+        tr.setRotation({t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w});
+        rb.body->setWorldTransform(tr);
+        rb.body->setInterpolationWorldTransform(tr);
+        rb.body->setLinearVelocity({0, 0, 0});
+        rb.body->setAngularVelocity({0, 0, 0});
+        rb.body->setInterpolationLinearVelocity({0, 0, 0});
+        rb.body->setInterpolationAngularVelocity({0, 0, 0});
+        rb.body->clearForces();
+        rb.body->activate(true);
+        world_->updateSingleAabb(rb.body);
+    }
+    void resetAccumulator() { accum_ = 0.f; }
 
     // Passo fixo com acumulador: determinístico e independente do FPS
     void step(float dt) {
@@ -106,7 +152,7 @@ public:
             accum_ -= kFixedDt;
             ++steps;
         }
-        if (steps == kMaxSubSteps) accum_ = 0.f;  // evita espiral da morte
+        if (steps == kMaxSubSteps && accum_ > kFixedDt) accum_ = 0.f;  // evita espiral da morte
     }
 
     bool raycast(glm::vec3 from, glm::vec3 to, glm::vec3& hit, GameObject*& obj) {
@@ -119,7 +165,7 @@ public:
     }
 
     static constexpr float kFixedDt = 1.f / 60.f;
-    static constexpr int kMaxSubSteps = 2;
+    static constexpr int kMaxSubSteps = 3;
 
 private:
     btDefaultCollisionConfiguration* config_;
@@ -129,5 +175,7 @@ private:
     btDiscreteDynamicsWorld* world_;
     float accum_ = 0.f;
 };
+
+using RigidBodyPool = ObjectPool<RigidBody, 1024>;
 
 }  // namespace eng
