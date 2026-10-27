@@ -13,6 +13,7 @@ class EditorCamera {
 public:
     glm::vec3 target{0.f};
     float yaw = 0.6f, pitch = 0.4f, distance = 8.f;  // radianos / unidades
+    float maxDistance = 500.f;                        // planeta: bem maior (zoom até ver o globo)
 
     void onTouchBegin(const TouchPoint* t, int n) { reset(t, n); }
     void onTouchEnd(const TouchPoint* t, int n) { reset(t, n); }  // reinicia referências ao mudar nº de dedos
@@ -34,7 +35,7 @@ public:
             glm::vec3 up = glm::cross(right, forward());
             target += (-right * (mid.x - pmid.x) + up * (mid.y - pmid.y)) * worldPerPixel;
 
-            if (pd > 1.f) distance = std::clamp(distance * (pd / std::max(d, 1.f)), 0.5f, 500.f);
+            if (pd > 1.f) distance = std::clamp(distance * (pd / std::max(d, 1.f)), 0.5f, maxDistance);
         }
         reset(t, n);
     }

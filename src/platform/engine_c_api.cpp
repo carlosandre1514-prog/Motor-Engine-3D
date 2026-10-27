@@ -98,6 +98,7 @@ void engine_frame(Engine* e, float dt) {
     }
     for (Animator* a : e->animators) a->update(dt, e->playing || e->previewAnim);
     eng::updateDoors(e, dt);
+    if (!e->playing) eng::planetGlobeUpdate(e);  // planeta: globo de longe, terreno de perto
     eng::updateWorld(e);
     eng::updateEffects(e, dt);
 
@@ -181,6 +182,12 @@ void engine_set_play(Engine* e, int playing) {
     bool p = playing != 0;
     if (p == e->playing) return;
     if (p) {
+        if (e->globeMode) {  // Play no globo: desce para o chão onde está o jogador (ou na capital)
+            glm::vec3 at = engine_has_player(e) ? e->scene.get(e->characters[e->player].root)->transform.position
+                                                : eng::planetSpawn(e, 0, nullptr);
+            eng::planetGlobeExit(e, at, 30.f);
+            for (int k = 0; k < 30; ++k) eng::updateWorld(e);  // carrega o chão em volta antes de começar
+        }
         e->snapshot.clear();
         e->scene.forEach([&](GameObject& g, Scene::Handle h) {
             if (g.id >= 0) e->snapshot.push_back({h, g.transform.position, g.transform.scale, g.transform.rotation});

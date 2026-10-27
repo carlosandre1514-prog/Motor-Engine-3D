@@ -15,7 +15,7 @@ namespace {
 
 constexpr float kChunk = 96.f;   // tamanho do chunk do mundo infinito (m)
 constexpr int kRes = 40;          // quads por lado do chunk (2,4 m por quad)
-constexpr int kRadius = 2;        // chunks carregados em volta do foco (5 x 5)
+constexpr int kRadiusBase = 2;    // chunks carregados em volta do foco (5 x 5)
 
 using HeightFn = std::function<float(float, float)>;
 
@@ -402,6 +402,8 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
 }
 
 void updateInfinite(Engine* e, int budget) {
+    // planeta visto do alto: carrega uma área maior (até 9 x 9 chunks)
+    const int kRadius = e->mapKind == MAP_Planet ? std::clamp(int(e->editorCam.distance / 160.f), 2, 4) : kRadiusBase;
     glm::vec3 f = e->editorCam.target;
     int ccx = int(std::floor(f.x / kChunk)), ccz = int(std::floor(f.z / kChunk));
     for (auto& c : e->chunks)
@@ -798,6 +800,7 @@ void clearWorld(Engine* e) {
 }
 
 void updateWorld(Engine* e) {
+    if (e->globeMode) return;  // vendo o globo: o terreno não precisa carregar
     if (e->mapKind == MAP_Infinite || e->mapKind == MAP_Planet) updateInfinite(e, 1);  // no máximo 1 chunk novo por frame
 }
 
@@ -816,7 +819,7 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
     switch (kind) {
         case MAP_Infinite: {
             e->renderer.fogDensity = 0.0032f;
-            e->chunks.reserve(64);
+            e->chunks.reserve(160);
             MeshBuilder wb;
             wb.quad({-1500, 0, 1500}, {1500, 0, 1500}, {1500, 0, -1500}, {-1500, 0, -1500});
             MeshId wm = wb.build(e->renderer);
@@ -830,13 +833,14 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
         case MAP_Planet: {
             planetGenerate(e);
             e->renderer.fogDensity = 0.0022f;
-            e->chunks.reserve(64);
+            e->chunks.reserve(160);
             MeshBuilder wb;
             wb.quad({-1500, 0, 1500}, {1500, 0, 1500}, {1500, 0, -1500}, {-1500, 0, -1500});
             MeshId wm = wb.build(e->renderer);
             e->water = addMeshObject(e, "Agua", wm, e->mats[int(Mat::Water)], glm::vec3(0.f), glm::vec3(1.f), glm::vec3(0.f), false);
             if (GameObject* w = e->scene.get(e->water)) if (w->meshRenderer) w->meshRenderer->castShadows = false;
             spawn = planetSpawn(e, 0, &spawnYaw);
+            e->editorCam.maxDistance = 20000.f;
             e->editorCam.target = spawn;
             updateInfinite(e, 1000);
             setBounds(e, glm::vec2(-e->planet.half), glm::vec2(e->planet.half));
@@ -857,8 +861,9 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
         int id = createFromSpecJson(e, spec, nullptr);
         selectHandle(e, objectById(e, id) ? e->objects[id] : Scene::Handle{});
     }
-    // câmera do editor começa com a visão geral do mapa
+    // câmera do editor começa com a visão geral do mapa (planeta: o globo inteiro)
     mapOverview(e);
+    if (e->mapKind == MAP_Planet) planetGlobeEnter(e);
 }
 
 Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos) {

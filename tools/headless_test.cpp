@@ -183,6 +183,20 @@ int main(int argc, char** argv) {
         engine_planet_map(e, 512, img.data());
         stbi_write_png((out + "/21_mapa_do_mundo.png").c_str(), 512, 512, 4, img.data(), 512 * 4);
         frames(e, 3);
+        save(out, "21_globo.png");
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.9f, 0.4f, 4200.f);  // gira e afasta o globo
+        frames(e, 2);
+        save(out, "21_globo2.png");
+        // aproxima: chegando perto da superfície, desce para o terreno daquele ponto
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.9f, 0.4f, 2300.f);
+        for (int k = 0; k < 40; ++k) frames(e, 1);
+        std::printf("  desceu do globo: região '%s'\n", engine_region_name(e));
+        save(out, "21_desceu.png");
+        // e afastando muito volta para o globo
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.9f, 1.f, 3000.f);
+        frames(e, 2);
+        save(out, "21_voltou_globo.png");
+        frames(e, 3);
         stats(e, "planeta");
         save(out, "21_planeta_visao.png");
         int player = engine_selected(e);

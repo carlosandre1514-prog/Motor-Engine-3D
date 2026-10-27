@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "assets/TextureManager.h"
 #include "engine/Engine.h"
 #include "procgen/Noise.h"
 
@@ -335,6 +336,153 @@ void planetMapImage(Engine* e, int size, uint8_t* out) {
             uint8_t* o = out + (size_t(py) * size + px) * 4;
             o[0] = uint8_t(c.r * 255.f); o[1] = uint8_t(c.g * 255.f); o[2] = uint8_t(c.b * 255.f); o[3] = 255;
         }
+}
+
+// ---------------- globo ----------------
+// O mundo quadrado vira a superfície de uma esfera: longitude <-> x, latitude <-> z (a borda é oceano).
+namespace {
+constexpr float kGlobeR = 2000.f;
+const glm::vec3 kGlobeC(0.f, 0.f, 100000.f);   // longe do mundo (não aparece junto)
+
+glm::vec2 worldOfDir(const PlanetData& P, glm::vec3 d) {
+    float lon = std::atan2(d.x, d.z), lat = std::asin(std::clamp(d.y, -1.f, 1.f));
+    return {lon / 3.14159265f * P.half, -lat / 1.5707963f * P.half};
+}
+glm::vec3 dirOfWorld(const PlanetData& P, glm::vec2 w) {
+    float lon = std::clamp(w.x / P.half, -1.f, 1.f) * 3.14159265f, lat = -std::clamp(w.y / P.half, -1.f, 1.f) * 1.5707963f;
+    return {std::cos(lat) * std::sin(lon), std::sin(lat), std::cos(lat) * std::cos(lon)};
+}
+
+glm::vec3 surfaceColor(Engine* e, float x, float z) {
+    const PlanetData& P = e->planet;
+    float h = baseHeight(e->mapSeed, P.half, x, z);
+    glm::vec3 c;
+    if (h < 0.f) c = glm::mix(glm::vec3(0.03f, 0.1f, 0.3f), glm::vec3(0.1f, 0.35f, 0.62f), std::clamp(1.f + h / 40.f, 0.f, 1.f));
+    else if (h < 3.f) c = {0.86f, 0.8f, 0.58f};
+    else if (h < 40.f) c = glm::mix(glm::vec3(0.3f, 0.58f, 0.25f), glm::vec3(0.16f, 0.4f, 0.18f), h / 40.f);
+    else if (h < 85.f) c = glm::mix(glm::vec3(0.45f, 0.42f, 0.35f), glm::vec3(0.55f, 0.53f, 0.5f), (h - 40.f) / 45.f);
+    else c = {0.95f, 0.96f, 0.98f};
+    glm::vec2 q(x, z);
+    for (const PlanetRoad& rd : P.roads) { float t; if (segDist(q, rd.a, rd.b, t) < 14.f) c = {0.3f, 0.27f, 0.25f}; }
+    for (const PlanetCity& ct : P.cities)
+        if (glm::length(q - ct.pos) < ct.radius) c = glm::mix(c, glm::vec3(0.82f, 0.8f, 0.76f), 0.85f);
+    // nuvens (manchas brancas suaves)
+    float cl = fbm(x * 0.0026f + 50.f, z * 0.0034f - 20.f, 4, e->mapSeed + 77);
+    c = glm::mix(c, glm::vec3(1.f), smooth01(0.66f, 0.8f, cl) * 0.6f);
+    return c;
+}
+
+void makeGlobe(Engine* e) {
+    if (e->scene.get(e->globe)) return;
+    const PlanetData& P = e->planet;
+    const int W = 768, Hh = 384;
+    std::vector<uint8_t> px(size_t(W) * Hh * 4);
+    for (int v = 0; v < Hh; ++v)
+        for (int u = 0; u < W; ++u) {
+            float lon = (u + 0.5f) / W * 6.2831853f - 3.14159265f, lat = 1.5707963f - (v + 0.5f) / Hh * 3.14159265f;
+            glm::vec2 w(lon / 3.14159265f * P.half, -lat / 1.5707963f * P.half);
+            glm::vec3 c = surfaceColor(e, w.x, w.y);
+            uint8_t* o = px.data() + (size_t(v) * W + u) * 4;
+            o[0] = uint8_t(std::sqrt(c.r) * 255.f); o[1] = uint8_t(std::sqrt(c.g) * 255.f); o[2] = uint8_t(std::sqrt(c.b) * 255.f); o[3] = 255;
+        }
+    GLuint tex = TextureManager::instance().fromPixels(px.data(), W, Hh, 4, true);
+    const Material* base = e->renderer.material(e->mats[int(Mat::Painted)]);
+    Material m = base ? *base : Material{};
+    m.albedo = tex; m.albedoFactor = glm::vec4(1.f); m.roughness = 0.75f; m.metallic = 0.f; m.mode = 0;
+    MaterialId mat = e->renderer.createMaterial(m);
+    // esfera com a mesma convenção de longitude/latitude
+    MeshBuilder mb;
+    const int seg = 96, rings = 48;
+    uint32_t b0 = 0;
+    for (int r = 0; r <= rings; ++r) {
+        float lat = 1.5707963f - 3.14159265f * r / rings;
+        for (int sgm = 0; sgm <= seg; ++sgm) {
+            float lon = 6.2831853f * sgm / seg - 3.14159265f;
+            glm::vec3 n(std::cos(lat) * std::sin(lon), std::sin(lat), std::cos(lat) * std::cos(lon));
+            Vertex vx{};
+            vx.pos = n * kGlobeR; vx.normal = n; vx.uv = {float(sgm) / seg, float(r) / rings};
+            vx.tangent = glm::vec4(std::cos(lon), 0.f, -std::sin(lon), 1.f);
+            vx.color = glm::vec4(1.f); vx.weights = glm::vec4(1, 0, 0, 0);
+            mb.v.push_back(vx);
+        }
+    }
+    for (int r = 0; r < rings; ++r)
+        for (int sgm = 0; sgm < seg; ++sgm) {
+            uint32_t a = b0 + r * (seg + 1) + sgm, b = a + seg + 1;
+            for (uint32_t k : {a, b, a + 1, a + 1, b, b + 1}) mb.idx.push_back(k);
+        }
+    MeshId mesh = mb.build(e->renderer);
+    e->globe = addMeshObject(e, "Globo", mesh, mat, kGlobeC, glm::vec3(1.f), glm::vec3(0.f), false);
+    if (GameObject* g = e->scene.get(e->globe); g && g->meshRenderer) g->meshRenderer->castShadows = false;
+}
+}  // namespace
+
+void planetGlobeEnter(Engine* e) {
+    if (e->globeMode || e->mapKind != MAP_Planet) return;
+    makeGlobe(e);
+    glm::vec3 t = e->editorCam.target;
+    glm::vec3 d = dirOfWorld(e->planet, {std::clamp(t.x, -e->planet.half, e->planet.half), std::clamp(t.z, -e->planet.half, e->planet.half)});
+    e->globeMode = true;
+    e->globeSavedFog = e->renderer.fogDensity;
+    e->renderer.fogDensity = 0.f;
+    e->globeSavedEnv = e->env;  // espaço: céu escuro em volta do planeta
+    e->globeSavedSun = e->sun.direction;
+    e->env.zenith = {0.f, 0.f, 0.01f};
+    e->env.horizon = {0.015f, 0.02f, 0.06f};
+    e->env.ground = {0.f, 0.f, 0.f};
+    e->env.skyIntensity = 0.12f;
+    if (GameObject* g = e->scene.get(e->globe)) g->active = true;
+    e->editorCam.target = kGlobeC;
+    e->editorCam.yaw = std::atan2(d.x, d.z);
+    e->editorCam.pitch = std::clamp(std::asin(d.y), -1.45f, 1.45f);
+    e->editorCam.distance = kGlobeR * 1.6f;
+    e->editorCam.maxDistance = kGlobeR * 6.f;
+}
+
+void planetGlobeExit(Engine* e, glm::vec3 at, float distance) {
+    if (!e->globeMode) return;
+    e->globeMode = false;
+    e->renderer.fogDensity = e->globeSavedFog;
+    e->env = e->globeSavedEnv;
+    e->sun.direction = e->globeSavedSun;
+    if (GameObject* g = e->scene.get(e->globe)) g->active = false;
+    float h = std::max(0.f, planetHeight(e, at.x, at.z));
+    e->editorCam.target = {at.x, h, at.z};
+    e->editorCam.distance = distance;
+    e->editorCam.pitch = 1.05f;
+    e->editorCam.maxDistance = 20000.f;
+}
+
+void planetGlobeUpdate(Engine* e) {
+    if (e->mapKind != MAP_Planet) return;
+    PlanetData& P = e->planet;
+    if (!e->globeMode) {
+        glm::vec3 t = e->editorCam.target;
+        bool outside = std::abs(t.x) > P.half * 1.5f || std::abs(t.z) > P.half * 1.5f;  // ex.: câmera salva no globo
+        if (outside) {  // abre de novo no globo, sobre a capital
+            e->editorCam.target = P.cities.empty() ? glm::vec3(0.f) : glm::vec3(P.cities[0].pos.x, 0.f, P.cities[0].pos.y);
+            planetGlobeEnter(e);
+            return;
+        }
+        if (e->editorCam.distance > 1500.f) { planetGlobeEnter(e); return; }  // afastou bastante: vê o planeta inteiro
+        // neblina mais fraca quando a câmera está alta (vê longe), normal perto do chão
+        e->renderer.fogDensity = e->globeSavedFog * std::clamp(220.f / std::max(e->editorCam.distance, 1.f), 0.12f, 1.f);
+        return;
+    }
+    // no globo: a câmera gira em volta do centro; chegando perto da superfície, desce para o terreno
+    e->editorCam.target = kGlobeC;
+    {   // o sol acompanha a câmera (de lado e um pouco de cima): o lado que você olha fica iluminado
+        glm::vec3 f = e->editorCam.forward();
+        glm::vec3 right = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0)) + glm::vec3(1e-4f));
+        e->sun.direction = glm::normalize(f + right * 0.6f - glm::vec3(0, 0.35f, 0));
+    }
+    e->editorCam.distance = std::clamp(e->editorCam.distance, kGlobeR * 1.12f, kGlobeR * 6.f);
+    if (e->editorCam.distance < kGlobeR * 1.2f) {
+        glm::vec3 d(std::cos(e->editorCam.pitch) * std::sin(e->editorCam.yaw), std::sin(e->editorCam.pitch),
+                    std::cos(e->editorCam.pitch) * std::cos(e->editorCam.yaw));
+        glm::vec2 w = worldOfDir(P, d);
+        planetGlobeExit(e, {w.x, 0.f, w.y}, 650.f);
+    }
 }
 
 }  // namespace eng

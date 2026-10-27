@@ -207,6 +207,11 @@ struct Engine {
     std::vector<StaticCollision> statics;
     std::vector<TerrainChunk> chunks;
     PlanetData planet;
+    bool globeMode = false;              // planeta visto de longe (globo); zoom perto desce para o terreno
+    Scene::Handle globe;
+    float globeSavedFog = 0.f;
+    Environment globeSavedEnv;
+    glm::vec3 globeSavedSun{0.55f, -1.f, 0.25f};
     std::vector<MeshId> freeGeoMeshes;   // malhas de cidade de chunks descarregados (reaproveitadas)
     std::vector<MeshId> freeChunkMeshes;
     Prototype treeProto[3], rockProto, houseProto[3];
@@ -387,6 +392,9 @@ void planetDecorateChunk(Engine* e, TerrainChunk& c, float x0, float z0, float s
 glm::vec3 planetSpawn(Engine* e, int city, float* yaw);
 std::string planetRegion(Engine* e, glm::vec3 p);
 void planetMapImage(Engine* e, int size, uint8_t* rgba);
+void planetGlobeUpdate(Engine* e);       // editor: troca globo <-> terreno conforme o zoom
+void planetGlobeExit(Engine* e, glm::vec3 at, float distance);  // desce do globo para o terreno em `at`
+void planetGlobeEnter(Engine* e);        // sobe para o globo (sobre o ponto que a câmera olha)
 // Cria portas e elevadores do Geo como filhos de `root` (usado por spawnGeo e pelos chunks do planeta)
 void spawnGeoExtras(Engine* e, Geo& g, Scene::Handle root, bool local, float detailFar);
 

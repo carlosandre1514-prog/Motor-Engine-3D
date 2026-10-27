@@ -56,6 +56,7 @@ class EngineSnapshot {
     @Volatile var objective = ""
     @Volatile var message = ""
     @Volatile var interact = ""
+    @Volatile var region = ""
 }
 
 class MainActivity : Activity() {
@@ -273,11 +274,11 @@ class MainActivity : Activity() {
     }
 
     private fun newProjectDialog() {
-        val maps = arrayOf("Vazio (criar do zero)", "Cidade", "Favela", "Colégio", "Bairro", "Mundo infinito")
+        val maps = arrayOf("🌍 Planeta (globo, continentes, cidades)", "Vazio (criar do zero)", "Cidade", "Favela", "Colégio", "Bairro", "Mundo infinito")
         askText("Nome do novo projeto", store.uniqueName("Meu jogo")) { n ->
             list("Começar com qual mapa?", maps) { m ->
                 stopPlayIfNeeded()
-                val kind = when (m) { 0 -> -1; 1 -> 1; 2 -> 2; 3 -> 3; 4 -> 4; else -> 0 }
+                val kind = when (m) { 0 -> 5; 1 -> -1; 2 -> 1; 3 -> 2; 4 -> 3; 5 -> 4; else -> 0 }
                 if (kind >= 0) toast("Gerando mapa…")
                 gl { saveIfChanged(); newProjectGl(store.uniqueName(n), kind) }
             }
@@ -579,33 +580,90 @@ class MainActivity : Activity() {
     }
 
     private fun mapsDialog() {
-        val items = arrayOf("🏙 Cidade", "🏘 Favela no morro", "🏫 Colégio", "🏡 Bairro residencial", "🌍 Mundo infinito (sem fim)",
-                            "➕ Criar novo mapa / cena vazia (do zero)", "🔭 Visão geral do mapa atual",
-                            "✏ Editar este mapa peça por peça (vira o SEU mapa)…", "🌳 Trocar árvores / pedras / casas por um arquivo 3D…",
-                            "🖼 Trocar a textura de um material do mapa (grama, telha, tijolo…)…")
-        dialog().setTitle("Mapas").setItems(items) { _, which ->
-            if (which == 6) { gl { NativeBridge.nativeMapOverview() }; return@setItems }
-            if (which == 7) { editMapDialog(); return@setItems }
-            if (which == 8) { swapModelDialog(); return@setItems }
-            if (which == 9) { swapTextureDialog(); return@setItems }
-            dialog().setTitle("Trocar o cenário?")
-                .setMessage("Os objetos atuais deste projeto serão substituídos. (Para guardar o atual, use 📁 Projeto → Duplicar antes.)")
-                .setPositiveButton("Trocar") { _, _ ->
-                    stopPlayIfNeeded()
-                    if (which < 5) toast("Gerando mapa…")
-                    gl {
-                        if (which < 5) {
-                            val kind = if (which == 4) 0 else which + 1
-                            NativeBridge.nativeLoadMap(kind, seed())
-                            toast("Pronto! A borda vermelha é a barreira invisível. Aperte ▶ Play para jogar.")
-                        } else {
-                            NativeBridge.toolCall("carregar_mapa", "{\"tipo\":\"vazio\",\"com_jogador\":true}")
-                            toast("Cena vazia: use + Criar para montar do zero")
+        // (rótulo, ação): ação >= 0 carrega o mapa desse tipo; < 0 são as outras opções
+        val entries = listOf(
+            "🌍 Planeta (globo: dê zoom até as cidades; ▶ Play = no chão)" to 5,
+            "🗺 Mapa do mundo do planeta (ir para uma cidade)…" to -2,
+            "🏙 Cidade" to 1, "🏘 Favela no morro" to 2, "🏫 Colégio" to 3, "🏡 Bairro residencial" to 4,
+            "♾ Mundo infinito (natureza sem fim)" to 0,
+            "➕ Criar novo mapa / cena vazia (do zero)" to -1,
+            "🔭 Visão geral do mapa atual" to -3,
+            "✏ Editar este mapa peça por peça (vira o SEU mapa)…" to -4,
+            "🌳 Trocar árvores / pedras / casas por um arquivo 3D…" to -5,
+            "🖼 Trocar a textura de um material do mapa (grama, telha, tijolo…)…" to -6)
+        dialog().setTitle("Mapas").setItems(entries.map { it.first }.toTypedArray()) { _, which ->
+            when (val act = entries[which].second) {
+                -2 -> worldMapDialog()
+                -3 -> gl { NativeBridge.nativeMapOverview() }
+                -4 -> editMapDialog()
+                -5 -> swapModelDialog()
+                -6 -> swapTextureDialog()
+                else -> dialog().setTitle("Trocar o cenário?")
+                    .setMessage("Os objetos atuais deste projeto serão substituídos. (Para guardar o atual, use 📁 Projeto → Duplicar antes.)")
+                    .setPositiveButton("Trocar") { _, _ ->
+                        stopPlayIfNeeded()
+                        if (act >= 0) toast(if (act == 5) "Criando o planeta… (alguns segundos)" else "Gerando mapa…")
+                        gl {
+                            when {
+                                act == 5 -> {
+                                    NativeBridge.nativeLoadMap(5, seed())
+                                    toast("🌍 Planeta pronto! Gire o globo com 1 dedo e dê zoom com 2 dedos até chegar nas cidades. ▶ Play: você no chão, na capital.")
+                                }
+                                act >= 0 -> {
+                                    NativeBridge.nativeLoadMap(act, seed())
+                                    toast("Pronto! A borda vermelha é a barreira invisível. Aperte ▶ Play para jogar.")
+                                }
+                                else -> {
+                                    NativeBridge.toolCall("carregar_mapa", "{\"tipo\":\"vazio\",\"com_jogador\":true}")
+                                    toast("Cena vazia: use + Criar para montar do zero")
+                                }
+                            }
                         }
                     }
-                }
-                .setNegativeButton("Cancelar", null).show()
+                    .setNegativeButton("Cancelar", null).show()
+            }
         }.show()
+    }
+
+    // Mapa do mundo: imagem do planeta com os nomes das cidades; tocar numa cidade leva até ela
+    private fun worldMapDialog() {
+        gl {
+            val places = String(NativeBridge.nativePlanetPlaces(), Charsets.UTF_8).lines().filter { it.isNotBlank() }.map { it.split('\t') }
+            val px = NativeBridge.nativePlanetMap(512)
+            runOnUiThread {
+                if (places.isEmpty() || px.isEmpty()) { toast("Abra o planeta primeiro (Mapas → 🌍 Planeta)"); return@runOnUiThread }
+                val size = 512
+                val colors = IntArray(size * size) { i ->
+                    val o = i * 4
+                    Color.argb(255, px[o].toInt() and 255, px[o + 1].toInt() and 255, px[o + 2].toInt() and 255)
+                }
+                val bmp = android.graphics.Bitmap.createBitmap(colors, size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                    .copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                val canvas = android.graphics.Canvas(bmp)
+                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    textSize = 15f; typeface = Typeface.DEFAULT_BOLD; color = Color.WHITE; setShadowLayer(3f, 0f, 0f, Color.BLACK)
+                }
+                val dot = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                val half = 3000f
+                for (pl in places) {
+                    val x = (pl[1].toFloat() + half) / (2 * half) * size
+                    val y = (pl[2].toFloat() + half) / (2 * half) * size
+                    val kind = pl.getOrElse(3) { "1" }.toInt()
+                    dot.color = if (kind == 0) Color.rgb(255, 200, 40) else if (kind == 1) Color.WHITE else Color.rgb(200, 230, 255)
+                    canvas.drawCircle(x, y, if (kind == 0) 7f else 5f, dot)
+                    canvas.drawText(pl[0], x + 8f, y + 5f, paint)
+                }
+                val img = android.widget.ImageView(this).apply { setImageBitmap(bmp); adjustViewBounds = true }
+                val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+                p.addView(img, LinearLayout.LayoutParams(-1, -2))
+                p.addView(label("Toque numa cidade para ir até ela:"))
+                for ((i, pl) in places.withIndex()) {
+                    val kind = when (pl.getOrElse(3) { "1" }) { "0" -> "capital"; "2" -> "vila"; else -> "cidade" }
+                    p.addView(button("📍 ${pl[0]} ($kind)") { gl { NativeBridge.nativePlanetGoto(i); toast("Indo para ${pl[0]}…") } })
+                }
+                dialog().setTitle("Mapa do mundo").setView(ScrollView(this).apply { addView(p) }).setNegativeButton("Fechar", null).show()
+            }
+        }
     }
 
     // O mapa pronto (base) continua igual; a versão editada vira um projeto seu, com outro nome
@@ -1395,7 +1453,7 @@ class MainActivity : Activity() {
             val s = snap.stats
             if (snap.ready) {
                 statsText.text = String.format(Locale.US, "%.0f FPS  %.1f ms (CPU %.1f)\n%d draws  %s tris  %d objetos",
-                    s[0], s[1], s[2], s[3].toInt(), compact(s[4]), s[5].toInt())
+                    s[0], s[1], s[2], s[3].toInt(), compact(s[4]), s[5].toInt()) + if (snap.region.isNotEmpty()) "\n📍 " + snap.region else ""
             }
             updateOverlays()
             updateGameHud()
@@ -1623,6 +1681,7 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
                 snapshot.selected = sel
                 snapshot.hasPlayer = NativeBridge.nativeHasPlayer()
                 snapshot.playerWeapon = NativeBridge.nativePlayerWeapon()
+                snapshot.region = String(NativeBridge.nativeRegionName(), Charsets.UTF_8)
                 if (snapshot.playing) {
                     val g = FloatArray(8)
                     NativeBridge.nativeGameStatus(g)

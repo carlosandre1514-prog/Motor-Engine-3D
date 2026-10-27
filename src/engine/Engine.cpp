@@ -325,6 +325,9 @@ void clearScene(Engine* e) {
     e->doors.clear();
     e->teles.clear();
     e->doorMesh = kInvalidId;
+    e->globeMode = false;
+    e->globe = {};
+    e->editorCam.maxDistance = 500.f;
     e->clipStores.clear();
     e->animEdit = AnimEditState{};
     e->lightObjects.clear();
