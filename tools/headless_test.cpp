@@ -5,6 +5,7 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -302,6 +303,40 @@ int main(int argc, char** argv) {
         frames(e, 2);
         save(out, "23_kit_rua.png");
     };
+    // desempenho no planeta: passeio da câmera (editor) e corrida no Play; tempo de CPU por parte do quadro
+    auto perf = [&]() {
+        std::printf("[24] desempenho no planeta\n");
+        if (const char* q = std::getenv("QUALIDADE")) engine_set_quality(e, std::atoi(q));
+        engine_load_map(e, 5, 7);
+        frames(e, 3);
+        auto run = [&](const char* label, int n, auto&& step) {
+            float sum[3] = {0, 0, 0}, mx[3] = {0, 0, 0}, total = 0, worst = 0;
+            for (int k = 0; k < n; ++k) {
+                step(k);
+                auto t0 = std::chrono::steady_clock::now();
+                engine_frame(e, 1.f / 30.f);
+                float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                float p[3];
+                engine_get_profile(e, p);
+                for (int i = 0; i < 3; ++i) { sum[i] += p[i]; mx[i] = std::max(mx[i], p[i]); }
+                total += ms; worst = std::max(worst, ms);
+            }
+            std::printf("  %-18s mundo %.2f (pior %.1f) | lista %.2f (pior %.1f) | render %.2f (pior %.1f) | quadro %.1f (pior %.1f) ms\n", label,
+                        sum[0] / n, mx[0], sum[1] / n, mx[1], sum[2] / n, mx[2], total / n, worst);
+            stats(e, label);
+        };
+        run("descendo do globo", 60, [&](int k) { engine_set_camera(e, -1822.f, 0.f, 274.f, 0.9f, 0.5f, 2600.f - k * 40.f); });
+        run("voo baixo", 160, [&](int k) { engine_set_camera(e, -1822.f + k * 12.f, 10.f, 274.f + k * 4.f, 0.9f, 0.35f, 120.f); });
+        run("voo alto", 160, [&](int k) { engine_set_camera(e, -1822.f + k * 12.f, 10.f, 274.f - k * 6.f, 0.9f, 0.9f, 650.f); });
+        engine_planet_goto(e, 0);
+        for (int k = 0; k < 40; ++k) frames(e, 1);
+        engine_set_play(e, 1);
+        frames(e, 10);
+        run("correndo (play)", 240, [&](int k) { engine_player_input(e, k % 80 < 40 ? 0.7f : -0.7f, 0.7f, 1); });
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_set_play(e, 0);
+    };
+    if (std::getenv("SO_DESEMPENHO")) { perf(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_KIT")) { kit(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_PLANETA")) { planet(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_INTERIORES")) { interiors(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }

@@ -125,6 +125,7 @@ class MainActivity : Activity() {
         store = ProjectStore(this)
         view = EngineView(this, copyShaders())
         view.onReady = { openStartupProject() }  // thread GL: motor (re)criado -> abre o projeto salvo
+        applySavedQuality()
 
         val root = FrameLayout(this)
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
@@ -452,6 +453,7 @@ class MainActivity : Activity() {
         bar.addView(button("Visual") {
             visualPanel.visibility = if (visualPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         })
+        bar.addView(button("⚡ Qualidade") { qualityDialog() })
         bar.addView(button("🤖 IA", accent = true) { toggleAi() })
         setMode(0)
         return HorizontalScrollView(this).apply {
@@ -459,6 +461,28 @@ class MainActivity : Activity() {
             background = GradientDrawable().apply { setColor(0xCC15181D.toInt()) }
             addView(bar)
         }
+    }
+
+    // Qualidade gráfica: 0 desempenho, 1 equilibrada (padrão), 2 alta. Fica salva no celular.
+    private fun applySavedQuality() {
+        val q = prefs.getInt("qualidade", 1)
+        when (q) {
+            0 -> view.applyQuality(0.6f, 30, 0)
+            1 -> view.applyQuality(0.8f, 60, 1)
+            else -> view.applyQuality(1f, 60, 2)
+        }
+    }
+
+    private fun qualityDialog() {
+        val items = arrayOf("🐢→⚡ Desempenho: mais leve (resolução 60%, 30 FPS, sem sombras, vê menos longe)",
+                            "⚖ Equilibrada (resolução 80%, 60 FPS) — recomendada",
+                            "✨ Alta (resolução cheia, sombras longe)")
+        dialog().setTitle("Qualidade gráfica").setSingleChoiceItems(items, prefs.getInt("qualidade", 1)) { d, which ->
+            prefs.edit().putInt("qualidade", which).apply()
+            applySavedQuality()
+            d.dismiss()
+            toast("Qualidade: " + arrayOf("desempenho", "equilibrada", "alta")[which])
+        }.show()
     }
 
     private fun togglePlay() {
@@ -1691,6 +1715,21 @@ class MainActivity : Activity() {
 class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceView(activity) {
     val snapshot = EngineSnapshot()
     var onReady: (() -> Unit)? = null  // chamado na thread GL quando o motor é (re)criado
+    // Qualidade: resolução do desenho (fração da tela) e limite de quadros (30 = esquenta menos e não engasga)
+    @Volatile var renderScale = 1f
+    @Volatile var maxFps = 60
+    @Volatile var quality = 2
+
+    fun applyQuality(scale: Float, fps: Int, q: Int) {
+        renderScale = scale; maxFps = fps; quality = q
+        if (width > 0 && height > 0) holder.setFixedSize((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1))
+        queueEvent { NativeBridge.nativeSetQuality(q) }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (renderScale < 1f) post { holder.setFixedSize((w * renderScale).toInt().coerceAtLeast(1), (h * renderScale).toInt().coerceAtLeast(1)) }
+    }
 
     init {
         setEGLContextClientVersion(3)
@@ -1707,6 +1746,7 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
                 // Contexto novo (1ª vez ou contexto perdido): recria o motor e a cena
                 if (NativeBridge.nativeCreate(shaderDir)) {
                     snapshot.ready = true
+                    NativeBridge.nativeSetQuality(quality)
                     onReady?.invoke() ?: NativeBridge.nativeNewScene()
                 } else {
                     post { Toast.makeText(context, "Falha ao iniciar o motor (shaders). Veja o logcat: Mobile3D", Toast.LENGTH_LONG).show() }
@@ -1717,6 +1757,10 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
             }
             override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) = NativeBridge.nativeResize(w, h)
             override fun onDrawFrame(gl: GL10?) {
+                if (maxFps < 60) {  // limite de quadros: espera o resto do intervalo
+                    val wait = 1_000_000_000L / maxFps - (System.nanoTime() - last)
+                    if (wait > 1_000_000L) Thread.sleep(wait / 1_000_000L)
+                }
                 val now = System.nanoTime()
                 val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
                 last = now
@@ -1759,7 +1803,8 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
         val xy = ArrayList<Float>()
         for (i in 0 until minOf(e.pointerCount, 3)) {
             if (i == skip) continue
-            ids.add(e.getPointerId(i)); xy.add(e.getX(i)); xy.add(e.getY(i))
+            // a tela pode estar desenhada em resolução menor (qualidade): o toque vai na escala do desenho
+            ids.add(e.getPointerId(i)); xy.add(e.getX(i) * renderScale); xy.add(e.getY(i) * renderScale)
         }
         val idArr = ids.toIntArray()
         val xyArr = xy.toFloatArray()

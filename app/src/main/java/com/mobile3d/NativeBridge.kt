@@ -8,6 +8,7 @@ object NativeBridge {
     @JvmStatic external fun nativeDestroy()
     @JvmStatic external fun nativeResize(w: Int, h: Int)
     @JvmStatic external fun nativeFrame(dt: Float)
+    @JvmStatic external fun nativeSetQuality(q: Int)
     @JvmStatic external fun nativeTouch(action: Int, ids: IntArray, xy: FloatArray)
 
     @JvmStatic external fun nativeSetPlay(playing: Boolean)

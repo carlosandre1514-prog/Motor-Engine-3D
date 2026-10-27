@@ -82,6 +82,8 @@ void    engine_anim_edit_end(Engine*);
 
 // Estatísticas: out[0] fps, [1] ms por frame, [2] ms de CPU do motor, [3] draw calls, [4] triângulos, [5] objetos
 void    engine_get_stats(Engine*, float* out6);
+void    engine_get_profile(Engine*, float* out3);
+void    engine_set_quality(Engine*, int q);            // 0 desempenho, 1 equilibrado, 2 alta  // ms do último quadro: mundo, lista de desenho, render
 
 // ---- Criação procedural
 // Personagem: params[20] = altura, corpo(0 magro,1 normal,2 forte), pele rgb, camisa rgb, calça rgb, tênis rgb,

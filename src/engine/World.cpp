@@ -1,3 +1,4 @@
+#include <chrono>
 #include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
 #include <algorithm>
 #include <cmath>
@@ -133,12 +134,18 @@ void terrainMesh(std::vector<Vertex>& v, std::vector<uint32_t>& idx, float x0, f
     const float cell = size / res;
     v.reserve((res + 1) * (res + 1));
     if (heights) heights->resize((res + 1) * (res + 1));
+    // alturas numa grade com 1 célula de borda: cada ponto calculado uma vez (as normais saem dos vizinhos)
+    const int G = res + 3;
+    std::vector<float> hg(G * G);
+    for (int j = 0; j < G; ++j)
+        for (int i = 0; i < G; ++i) hg[j * G + i] = H(x0 + (i - 1) * cell, z0 + (j - 1) * cell);
     for (int j = 0; j <= res; ++j)
         for (int i = 0; i <= res; ++i) {
             float x = x0 + i * cell, z = z0 + j * cell;
-            float h = H(x, z);
+            const float* row = &hg[(j + 1) * G + (i + 1)];
+            float h = row[0];
             if (heights) (*heights)[j * (res + 1) + i] = h;
-            float hx = H(x + cell, z) - H(x - cell, z), hz = H(x, z + cell) - H(x, z - cell);
+            float hx = row[1] - row[-1], hz = row[G] - row[-G];
             glm::vec3 n = glm::normalize(glm::vec3(-hx, 2.f * cell, -hz));
             Vertex vx = makeVertex({x, h, z}, n, {x / 5.f, z / 5.f});
             vx.tangent = glm::vec4(glm::normalize(glm::cross(glm::vec3(0, 0, 1), n)), 1.f);
@@ -358,6 +365,7 @@ void releaseChunk(Engine* e, TerrainChunk& c) {
 }
 
 void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
+    auto T0 = std::chrono::steady_clock::now();
     c.cx = cx; c.cz = cz; c.used = true;
     const float x0 = cx * kChunk, z0 = cz * kChunk;
     const uint32_t seed = e->mapSeed;
@@ -372,6 +380,7 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
     c.ground = addMeshObject(e, "Terreno", c.mesh, e->mats[int(Mat::Terrain)], glm::vec3(0.f), glm::vec3(1.f), glm::vec3(0.f), false);
     if (GameObject* g = e->scene.get(c.ground)) if (g->meshRenderer) g->meshRenderer->castShadows = false;
     addHeightfield(e, c, x0, z0, kChunk, kRes);
+    auto T1 = std::chrono::steady_clock::now();
 
     // Vegetação, pedras e vilas: determinísticos por chunk
     Rng r(hash2(cx, cz, seed + 5));
@@ -395,6 +404,7 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
         if (h < 0.3f || (planet && planetNoTrees(e, x, z))) continue;
         spawnProto(e, e->rockProto, {x, h, z}, r.range(0.f, 6.28f), r.range(0.8f, 2.6f), &c.objects, &boxes);
     }
+    auto T2 = std::chrono::steady_clock::now();
     if (planet) planetDecorateChunk(e, c, x0, z0, kChunk, boxes);  // estradas e cidades do planeta
     else if (hash2(cx, cz, seed + 77) % 4 == 0) {  // vila
         int n = r.irange(3, 7);
@@ -408,25 +418,48 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
         }
     }
     addStaticBoxes(e, boxes, &c.props);
+    auto T3 = std::chrono::steady_clock::now();
+    if (std::getenv("PERF_CHUNK")) {
+        auto ms = [](auto a, auto b) { return std::chrono::duration<float, std::milli>(b - a).count(); };
+        std::printf("chunk %d,%d terreno %.1f árvores %.1f cidade+colliders %.1f\n", cx, cz, ms(T0, T1), ms(T1, T2), ms(T2, T3));
+    }
 }
 
 void updateInfinite(Engine* e, int budget) {
     // planeta visto do alto: carrega uma área maior (até 9 x 9 chunks)
-    const int kRadius = e->mapKind == MAP_Planet ? std::clamp(int(e->editorCam.distance / 160.f), 2, 4) : kRadiusBase;
+    const int kRadius = e->mapKind == MAP_Planet ? std::clamp(int(e->editorCam.distance / 160.f), 2, e->quality == 0 ? 3 : 4) : kRadiusBase;
     glm::vec3 f = e->editorCam.target;
     int ccx = int(std::floor(f.x / kChunk)), ccz = int(std::floor(f.z / kChunk));
-    for (auto& c : e->chunks)
-        if (c.used && (std::abs(c.cx - ccx) > kRadius + 1 || std::abs(c.cz - ccz) > kRadius + 1)) releaseChunk(e, c);
+    // Para onde a câmera olha (no plano). Olhando para a frente, o que fica atrás (fora do redor imediato)
+    // não carrega e é descarregado; volta a carregar quando a câmera vira. Olhando de cima: tudo em volta.
+    glm::vec3 look = f - e->camera.position;
+    glm::vec2 fw(look.x, look.z);
+    bool directional = glm::length(fw) > 0.45f * glm::length(look) && glm::length(fw) > 1e-3f;
+    if (directional) fw = glm::normalize(fw);
+    auto offset = [&](int cx, int cz) { return glm::vec2((cx + 0.5f) * kChunk - f.x, (cz + 0.5f) * kChunk - f.z) / kChunk; };
+    auto behind = [&](glm::vec2 o, float cosLimit) { float l = glm::length(o); return directional && l > 1e-3f && glm::dot(o / l, fw) < cosLimit; };
+    for (auto& c : e->chunks) {
+        if (!c.used) continue;
+        glm::vec2 o = offset(c.cx, c.cz);
+        bool far = std::abs(c.cx - ccx) > kRadius + 1 || std::abs(c.cz - ccz) > kRadius + 1;
+        if (far || (glm::length(o) > 2.6f && behind(o, -0.45f))) releaseChunk(e, c);
+    }
     while (budget-- > 0) {
-        int bx = 0, bz = 0, best = 1 << 30;
+        int bx = 0, bz = 0;
+        float best = 1e30f;
         for (int dz = -kRadius; dz <= kRadius; ++dz)
             for (int dx = -kRadius; dx <= kRadius; ++dx) {
                 int cx = ccx + dx, cz = ccz + dz;
+                glm::vec2 o = offset(cx, cz);
+                float d = glm::length(o);
+                if (d > 1.6f && behind(o, -0.3f)) continue;     // atrás de quem olha: só o redor imediato
                 bool have = false;
                 for (auto& c : e->chunks) if (c.used && c.cx == cx && c.cz == cz) { have = true; break; }
-                if (!have && dx * dx + dz * dz < best) { best = dx * dx + dz * dz; bx = cx; bz = cz; }
+                // prioridade: perto e na frente primeiro
+                float score = d - (directional && d > 1e-3f ? glm::dot(o / d, fw) * 0.9f : 0.f);
+                if (!have && score < best) { best = score; bx = cx; bz = cz; }
             }
-        if (best == (1 << 30)) break;
+        if (best >= 1e29f) break;
         TerrainChunk* slot = nullptr;
         for (auto& c : e->chunks) if (!c.used) { slot = &c; break; }
         if (!slot) { e->chunks.emplace_back(); slot = &e->chunks.back(); }

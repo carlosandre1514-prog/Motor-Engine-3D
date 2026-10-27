@@ -99,20 +99,28 @@ void engine_frame(Engine* e, float dt) {
     }
     for (Animator* a : e->animators) a->update(dt, e->playing || e->previewAnim);
     eng::updateDoors(e, dt);
+    auto tw = std::chrono::steady_clock::now();
     if (!e->playing) eng::planetGlobeUpdate(e);  // planeta: globo de longe, terreno de perto
     eng::updateWorld(e);
+    auto ms = [](auto a, auto b) { return std::chrono::duration<float, std::milli>(b - a).count(); };
+    e->profWorld = ms(tw, std::chrono::steady_clock::now());
     eng::updateEffects(e, dt);
 
     // Câmera: near/far e distância de sombra acompanham o zoom e o tamanho do mapa
     float d = e->editorCam.distance;
     e->camera.nearZ = std::clamp(d * 0.01f, 0.05f, 5.f);
     e->camera.farZ = std::max(e->mapKind >= 0 ? 900.f : 200.f, d * 40.f);
-    e->renderer.shadowDistance = std::clamp(d * 3.5f, e->playing ? 40.f : 12.f, 1500.f);
+    // sombras: só perto (de longe ninguém nota e custam o mapa inteiro desenhado de novo 3 vezes)
+    e->renderer.shadowDistance = std::clamp(d * 3.5f, e->playing ? 40.f : 12.f, e->quality >= 2 ? 160.f : 100.f);
+    eng::DirectionalLight sun = e->sun;
+    sun.castShadows = sun.castShadows && e->quality > 0 && (e->playing || d < 350.f) && !e->globeMode;
+    const float lodScale = e->quality == 0 ? 0.65f : e->quality == 1 ? 0.85f : 1.f;  // detalhes somem mais cedo
     e->editorCam.apply(e->camera);
     e->scene.updateTransforms();
     eng::updateAttachments(e);
 
-    e->renderer.beginFrame(e->camera, e->sun);
+    auto ts = std::chrono::steady_clock::now();
+    e->renderer.beginFrame(e->camera, sun);
     const glm::vec3 camPos = e->camera.position;
     e->scene.forEach([&](GameObject& go, Scene::Handle) {
         const eng::MeshRenderer* mr = go.meshRenderer;
@@ -125,11 +133,13 @@ void engine_frame(Engine* e, float dt) {
             glm::vec3 c = glm::vec3(m * glm::vec4((mesh->bounds.min + mesh->bounds.max) * 0.5f, 1.f));
             glm::vec3 d = c - camPos;
             float d2 = glm::dot(d, d);
-            if (d2 < mr->lodNear * mr->lodNear || d2 >= mr->lodFar * mr->lodFar) return;
+            float lf = mr->lodFar * lodScale;
+            if (d2 < mr->lodNear * mr->lodNear || d2 >= lf * lf) return;
         }
         e->renderer.submit(go, m, palette);
     });
 
+    e->profSubmit = ms(ts, std::chrono::steady_clock::now());
     glm::mat4 vp = e->camera.viewProj();
     if (!e->playing) {  // overlay do editor
         if (e->showGrid && e->mapKind < 0) {
@@ -162,7 +172,9 @@ void engine_frame(Engine* e, float dt) {
     // luzes: as da cena + as mais relevantes dos efeitos (fogo, magia, explosões)
     eng::PointLight lights[eng::kMaxPointLights];
     int nLights = eng::gatherLights(e, lights, eng::kMaxPointLights);
-    e->renderer.render(e->camera, e->sun, e->env, lights, nLights);
+    auto tr = std::chrono::steady_clock::now();
+    e->renderer.render(e->camera, sun, e->env, lights, nLights);
+    e->profRender = ms(tr, std::chrono::steady_clock::now());
 
     // estatísticas (janela de 0,5 s)
     float cpu = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -448,6 +460,13 @@ const char* engine_animation_name(Engine* e) {
 }
 
 // ---------- estatísticas ----------
+void engine_set_quality(Engine* e, int q) { if (e) e->quality = std::clamp(q, 0, 2); }
+
+void engine_get_profile(Engine* e, float* o) {
+    if (!e || !o) return;
+    o[0] = e->profWorld; o[1] = e->profSubmit; o[2] = e->profRender;
+}
+
 void engine_get_stats(Engine* e, float* o) {
     if (!e || !o) return;
     const eng::FrameStats& s = e->renderer.stats();

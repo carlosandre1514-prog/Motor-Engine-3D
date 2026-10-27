@@ -158,7 +158,8 @@ void terrainLayers(out vec3 albedo, out vec3 nt, out float cavity) {
     w[4] = beach * (1.0 - rocky * 0.5);
     w[5] = hint.b * land * 1.4;
     w[6] = rocky * 1.3;
-    const float depth = 0.3;
+    // longe: só as camadas que dominam (menos amostras de textura onde o detalhe nem aparece)
+    float depth = mix(0.3, 0.06, smoothstep(60.0, 140.0, length(uCamPos.xyz - vWorldPos)));
     float wm = 0.0;
     for (int i = 0; i < 7; ++i) wm = max(wm, w[i]);
     vec2 uv = p / 3.0;

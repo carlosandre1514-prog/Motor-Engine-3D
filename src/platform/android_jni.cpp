@@ -46,6 +46,7 @@ JNI_FN(jboolean, nativeCreate)(JNIEnv* env, jclass, jstring shaderDir) {
 JNI_FN(void, nativeDestroy)(JNIEnv*, jclass) { if (g_engine) { engine_destroy(g_engine); g_engine = nullptr; } }
 JNI_FN(void, nativeResize)(JNIEnv*, jclass, jint w, jint h) { if (g_engine) engine_resize(g_engine, w, h); }
 JNI_FN(void, nativeFrame)(JNIEnv*, jclass, jfloat dt) { if (g_engine) engine_frame(g_engine, dt); }
+JNI_FN(void, nativeSetQuality)(JNIEnv*, jclass, jint q) { if (g_engine) engine_set_quality(g_engine, q); }
 
 JNI_FN(void, nativeTouch)(JNIEnv* env, jclass, jint action, jintArray ids, jfloatArray xy) {
     if (!g_engine) return;
