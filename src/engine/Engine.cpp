@@ -6,6 +6,7 @@
 #include "assets/MeshUtils.h"
 #include "assets/TextureManager.h"
 #include "scene/Humanoid.h"
+#include <glm/gtx/matrix_decompose.hpp>
 
 namespace eng {
 
@@ -214,6 +215,37 @@ void addStaticBoxes(Engine* e, const std::vector<BoxCollider>& boxes, StaticColl
     else e->statics.push_back(s);
 }
 
+void spawnGeoExtras(Engine* e, Geo& g, Scene::Handle rootH, bool local, float detailFar) {
+    GameObject* root = e->scene.get(rootH);
+    if (!root) return;
+    // portas (filhas da raiz: acompanham a construção) e elevadores
+    for (const DoorSpec& ds : g.doors) {
+        if (e->doorMesh == kInvalidId) {
+            MeshBuilder mb;
+            mb.box({0.f, 0.f, -0.5f}, {1.f, 1.f, 1.f});  // dobradiça na origem, folha para +X
+            e->doorMesh = mb.build(e->renderer);
+        }
+        glm::vec3 sc, tr, skew; glm::vec4 persp; glm::quat rot;
+        glm::decompose(ds.xf, sc, rot, tr, skew, persp);
+        Scene::Handle dh = e->scene.create(ds.style ? "Porta de vidro" : "Porta", root);
+        GameObject* d = e->scene.get(dh);
+        if (!d) break;
+        d->transform.setPosition(tr);
+        d->transform.setRotation(rot);
+        d->transform.setScale({ds.w, ds.h, ds.style ? 0.04f : 0.06f});
+        auto rh = e->meshRenderers.acquire();
+        if (MeshRenderer* mr = e->meshRenderers.get(rh)) {
+            mr->mesh = e->doorMesh;
+            mr->material = e->mats[int(ds.style ? Mat::Glass : Mat::Wood)];
+            mr->lodFar = detailFar;
+            d->meshRenderer = mr;
+        }
+        if (local) registerObject(e, dh);
+        e->doors.push_back({dh, rot, 0.f, ds.w});
+    }
+    for (const TeleSpec& ts : g.teles) e->teles.push_back({rootH, ts.a, ts.b, ts.la, ts.lb});
+}
+
 Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec3 pos, float yaw, float detailFar) {
     Scene::Handle rootH = e->scene.create(name);
     GameObject* root = e->scene.get(rootH);
@@ -221,9 +253,9 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
     root->transform.setPosition(pos);
     root->transform.setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
     if (local) registerObject(e, rootH);  // raiz antes dos filhos na hierarquia
-    for (int layer = 0; layer < 2; ++layer)
+    for (int layer = 0; layer < 3; ++layer)
     for (int k = 0; k < int(Mat::Count); ++k) {
-        MeshBuilder& mb = layer ? g.detailMats[k] : g.mats[k];
+        MeshBuilder& mb = g.layer(layer)[k];
         if (mb.empty()) continue;
         MeshId id = mb.build(e->renderer);
         if (id == kInvalidId) continue;
@@ -236,10 +268,11 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
             // pisos planos só recebem sombra (economiza draw calls no shadow pass)
             Mat m = Mat(k);
             mr->castShadows = !(m == Mat::Asphalt || m == Mat::Road || m == Mat::Sidewalk || m == Mat::Grass || m == Mat::Court || m == Mat::Terrain);
-            if (layer) mr->lodFar = detailFar;  // LOD: detalhe só perto da câmera
+            if (layer) mr->lodFar = layer == 2 ? std::min(detailFar, kInteriorFar) : detailFar;  // LOD: detalhe/interior só perto
         }
         if (local) registerObject(e, ch);
     }
+    spawnGeoExtras(e, g, rootH, local, detailFar);
     if (local) {
         if (!g.colliders.empty()) {
             auto* comp = new btCompoundShape(true, int(g.colliders.size()));
@@ -289,6 +322,9 @@ void clearScene(Engine* e) {
     e->characters.clear();
     e->retargets.clear();
     e->recipes.clear();
+    e->doors.clear();
+    e->teles.clear();
+    e->doorMesh = kInvalidId;
     e->clipStores.clear();
     e->animEdit = AnimEditState{};
     e->lightObjects.clear();
@@ -506,6 +542,67 @@ static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* sel
     }
 }
 
+// Portas: abrem quando um personagem chega perto (no Play); no editor ficam fechadas
+void updateDoors(Engine* e, float dt) {
+    for (DoorRT& d : e->doors) {
+        GameObject* o = e->scene.get(d.h);
+        if (!o) continue;
+        float target = 0.f;
+        if (e->playing) {
+            glm::vec3 c = glm::vec3(o->transform.world() * glm::vec4(0.5f, 0.5f, 0.f, 1.f));
+            for (const CharacterInfo& ch : e->characters) {
+                GameObject* g = e->scene.get(ch.root);
+                if (!g || !g->active) continue;
+                glm::vec3 p = g->transform.position;
+                if (glm::length(glm::vec2(p.x - c.x, p.z - c.z)) < 1.6f + d.w * 0.5f && std::abs(p.y + ch.height * 0.5f - c.y) < 2.2f) { target = 1.65f; break; }
+            }
+        }
+        float step = 3.5f * dt;
+        float na = d.angle + std::clamp(target - d.angle, -step, step);
+        if (e->playing ? std::abs(na - d.angle) > 1e-5f : d.angle != 0.f) {
+            d.angle = e->playing ? na : 0.f;
+            o->transform.setRotation(d.base * glm::angleAxis(d.angle, glm::vec3(0, 1, 0)));
+        }
+    }
+}
+
+// Elevador: perto de uma ponta aparece o botão que leva à outra
+std::string interactLabel(Engine* e, int* which) {
+    if (!e->playing || e->player < 0 || e->player >= int(e->characters.size())) return "";
+    GameObject* pg = e->scene.get(e->characters[e->player].root);
+    if (!pg) return "";
+    glm::vec3 p = pg->transform.position;
+    for (size_t i = 0; i < e->teles.size(); ++i) {
+        const TeleRT& t = e->teles[i];
+        GameObject* r = e->scene.get(t.root);
+        if (!r) continue;
+        glm::mat4 W = r->transform.world();
+        for (int end = 0; end < 2; ++end) {
+            glm::vec3 q = glm::vec3(W * glm::vec4(end ? t.b : t.a, 1.f));
+            if (glm::length(glm::vec2(p.x - q.x, p.z - q.z)) < 1.8f && std::abs(p.y - q.y) < 2.f) {
+                if (which) *which = int(i) * 2 + end;
+                return end ? t.lb : t.la;
+            }
+        }
+    }
+    return "";
+}
+
+bool interact(Engine* e) {
+    int which = -1;
+    if (interactLabel(e, &which).empty() || which < 0) return false;
+    const TeleRT& t = e->teles[which / 2];
+    GameObject* r = e->scene.get(t.root);
+    CharacterInfo& c = e->characters[e->player];
+    GameObject* pg = e->scene.get(c.root);
+    if (!r || !pg || !pg->rigidBody) return false;
+    glm::vec3 dst = glm::vec3(r->transform.world() * glm::vec4(which % 2 ? t.a : t.b, 1.f));
+    pg->transform.setPosition(dst + glm::vec3(0, 0.05f, 0));
+    e->physics.syncFromTransform(*pg->rigidBody);
+    e->editorCam.target = dst + glm::vec3(0, c.height * 0.85f, 0);
+    return true;
+}
+
 // Move um personagem (jogador ou inimigo): velocidade horizontal, pulo, virar para o movimento e animação
 bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt, glm::vec3 face) {
     GameObject* go = e->scene.get(c.root);
@@ -600,6 +697,14 @@ void deleteObject(Engine* e, Scene::Handle h) {
             e->characters.erase(e->characters.begin() + i);
         }
     }
+    e->doors.erase(std::remove_if(e->doors.begin(), e->doors.end(), [&](const DoorRT& d) {
+        GameObject* o = e->scene.get(d.h);
+        return !o || isGone(&o->transform);
+    }), e->doors.end());
+    e->teles.erase(std::remove_if(e->teles.begin(), e->teles.end(), [&](const TeleRT& t) {
+        GameObject* o = e->scene.get(t.root);
+        return !o || isGone(&o->transform);
+    }), e->teles.end());
     e->lightObjects.erase(std::remove_if(e->lightObjects.begin(), e->lightObjects.end(), [&](const LightObject& l) {
         GameObject* o = e->scene.get(l.obj);
         return !o || isGone(&o->transform);

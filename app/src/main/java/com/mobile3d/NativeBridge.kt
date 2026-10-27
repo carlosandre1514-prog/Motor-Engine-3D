@@ -74,6 +74,10 @@ object NativeBridge {
     @JvmStatic external fun nativeSetTimeOfDay(hour: Float)
     @JvmStatic external fun nativeGetTimeOfDay(): Float
     @JvmStatic external fun nativeExportGlb(objectId: Int, path: String): Boolean
+    @JvmStatic external fun nativePlanetPlaces(): ByteArray
+    @JvmStatic external fun nativePlanetGoto(city: Int): Boolean
+    @JvmStatic external fun nativeRegionName(): ByteArray
+    @JvmStatic external fun nativePlanetMap(size: Int): ByteArray
     @JvmStatic external fun nativeMapSetEditable(on: Boolean): Boolean
     @JvmStatic external fun nativeMapEditable(): Boolean
     @JvmStatic external fun nativeMapSwapModel(kind: String, path: String): Boolean
@@ -95,6 +99,8 @@ object NativeBridge {
     @JvmStatic external fun nativeAnimEditSelect(bone: Int)
     @JvmStatic external fun nativeAnimEditSelected(): Int
     @JvmStatic external fun nativePlayerAim(on: Boolean)
+    @JvmStatic external fun nativeInteractLabel(): ByteArray
+    @JvmStatic external fun nativeInteract(): Boolean
     @JvmStatic external fun nativeAnimEditGet(bone: Int, out3: FloatArray)
     @JvmStatic external fun nativeAnimEditSet(bone: Int, in3: FloatArray)
     @JvmStatic external fun nativeAnimEditResetPose()

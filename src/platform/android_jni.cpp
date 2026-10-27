@@ -195,6 +195,18 @@ JNI_FN(jboolean, nativeMapSwapTexture)(JNIEnv* env, jclass, jint mat, jstring pa
     return g_engine && engine_map_swap_texture(g_engine, mat, str(env, path).c_str());
 }
 
+JNI_FN(jbyteArray, nativePlanetPlaces)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_planet_places(g_engine) : ""); }
+JNI_FN(jboolean, nativePlanetGoto)(JNIEnv*, jclass, jint c) { return g_engine && engine_planet_goto(g_engine, c); }
+JNI_FN(jbyteArray, nativeRegionName)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_region_name(g_engine) : ""); }
+JNI_FN(jbyteArray, nativePlanetMap)(JNIEnv* env, jclass, jint size) {
+    if (!g_engine || size <= 0 || size > 2048) return env->NewByteArray(0);
+    std::string buf(size_t(size) * size * 4, '\0');
+    if (!engine_planet_map(g_engine, size, reinterpret_cast<uint8_t*>(buf.data()))) return env->NewByteArray(0);
+    jbyteArray a = env->NewByteArray(jsize(buf.size()));
+    env->SetByteArrayRegion(a, 0, jsize(buf.size()), reinterpret_cast<const jbyte*>(buf.data()));
+    return a;
+}
+
 // Jogo
 JNI_FN(void, nativeGameStatus)(JNIEnv* env, jclass, jfloatArray out8) {
     if (!g_engine || env->GetArrayLength(out8) < 8) return;
@@ -212,6 +224,8 @@ JNI_FN(jint, nativeAnimEditBegin)(JNIEnv*, jclass) { return g_engine ? engine_an
 JNI_FN(jbyteArray, nativeAnimEditBones)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_anim_edit_bones(g_engine) : ""); }
 JNI_FN(void, nativeAnimEditSelect)(JNIEnv*, jclass, jint b) { if (g_engine) engine_anim_edit_select(g_engine, b); }
 JNI_FN(jint, nativeAnimEditSelected)(JNIEnv*, jclass) { return g_engine ? engine_anim_edit_selected(g_engine) : -1; }
+JNI_FN(jbyteArray, nativeInteractLabel)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_interact_label(g_engine) : ""); }
+JNI_FN(jboolean, nativeInteract)(JNIEnv*, jclass) { return g_engine && engine_interact(g_engine); }
 JNI_FN(void, nativePlayerAim)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_player_aim(g_engine, on ? 1 : 0); }
 JNI_FN(void, nativeAnimEditGet)(JNIEnv* env, jclass, jint b, jfloatArray out3) {
     if (!g_engine || env->GetArrayLength(out3) < 3) return;

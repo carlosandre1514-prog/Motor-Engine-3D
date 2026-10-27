@@ -67,6 +67,8 @@ const char* engine_anim_edit_bones(Engine*);                    // nomes (um por
 void    engine_anim_edit_select(Engine*, int bone);             // destaca o osso na tela
 int     engine_anim_edit_selected(Engine*);                     // osso escolhido (também por toque na tela)
 void    engine_player_aim(Engine*, int on);                     // jogador mirando (botão segurado)
+const char* engine_interact_label(Engine*);                     // texto do botão de ação perto do jogador ("" = nada)
+int     engine_interact(Engine*);                               // usa (ex.: elevador para o terraço)
 void    engine_anim_edit_get(Engine*, int bone, float* euler3);
 void    engine_anim_edit_set(Engine*, int bone, const float* euler3);
 void    engine_anim_edit_reset_pose(Engine*);
@@ -92,7 +94,8 @@ int     engine_create_weapon(Engine*, int kind);
 // 9 carro, 10 poste, 11 muro, 12 rua, 13 cruzamento, 14 calçada, 15 escada, 16 rampa, 17 piso, 18 parede,
 // 19 cerca, 20 banco, 21 caixa d'água. Criada no ponto de foco da câmera.
 int     engine_create_building(Engine*, int kind, uint32_t seed);
-// Mapas: 0 mundo infinito, 1 cidade, 2 favela, 3 colégio, 4 bairro (os de 1 a 4 têm limite com barreira invisível)
+// Mapas: 0 mundo infinito, 1 cidade, 2 favela, 3 colégio, 4 bairro (os de 1 a 4 têm limite com barreira invisível),
+// 5 planeta (6 x 6 km: continentes, oceano, cidades com nomes e estradas)
 void    engine_load_map(Engine*, int kind, uint32_t seed);
 int     engine_map_kind(Engine*);                               // -1 = nenhum
 void    engine_map_overview(Engine*);                           // câmera do alto mostrando o mapa todo
@@ -133,6 +136,12 @@ void    engine_set_project_name(Engine*, const char* name);
 const char* engine_tool_call(Engine*, const char* name, const char* input_json);
 int     engine_add_spec(Engine*, const char* spec_json);        // cria um objeto pela receita JSON e seleciona
 void    engine_set_time_of_day(Engine*, float hour);
+// Planeta (mapa 5): cidades ("nome\tx\tz\ttipo" por linha; tipo 0 capital, 1 cidade, 2 vila), ir para uma cidade
+// (move o jogador/câmera), nome da região onde está e imagem do mapa do mundo (RGBA size x size, norte para cima)
+const char* engine_planet_places(Engine*);
+int     engine_planet_goto(Engine*, int city);
+const char* engine_region_name(Engine*);
+int     engine_planet_map(Engine*, int size, uint8_t* rgba);
 // Mapa editável: refaz o mapa atual com cada construção/árvore/poste/carro/rua como objeto (mover, apagar, cor...).
 // O projeto guarda só o que mudou. Trocas: modelo de arquivo no lugar de "arvore", "pinheiro", "palmeira", "pedra",
 // "casa" e textura (imagem) no lugar de um material da biblioteca. path vazio desfaz. Retornam 0 se falhar.

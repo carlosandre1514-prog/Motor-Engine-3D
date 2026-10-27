@@ -46,6 +46,7 @@ add_library(mobile3d SHARED
   src/engine/Game.cpp
   src/engine/Export.cpp
   src/engine/AnimEdit.cpp
+  src/engine/Planet.cpp
   src/platform/engine_c_api.cpp)
 
 target_compile_definitions(mobile3d PUBLIC GLM_ENABLE_EXPERIMENTAL)

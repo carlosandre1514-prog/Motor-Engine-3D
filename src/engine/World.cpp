@@ -34,7 +34,7 @@ void registerPiece(Engine* e, Scene::Handle h) {
 
 // nome da peça pelo material que mais aparece nela
 const char* pieceName(const Geo& g) {
-    auto has = [&](Mat m) { return !g.mats[int(m)].empty() || !g.detailMats[int(m)].empty(); };
+    auto has = [&](Mat m) { return !g.mats[int(m)].empty() || !g.detailMats[int(m)].empty() || !g.interiorMats[int(m)].empty(); };
     if (has(Mat::FacadeOffice)) return "Arranha-ceu";
     if (has(Mat::FacadeApt)) return "Predio";
     if (has(Mat::BrickWindow) || (has(Mat::Brick) && has(Mat::Metal))) return "Barraco";
@@ -62,10 +62,10 @@ void spawnPieces(Engine* e, Geo& g) {
         bool any = false;
         glm::mat4 inv = glm::inverse(glm::rotate(glm::translate(glm::mat4(1.f), a.origin), a.yaw, glm::vec3(0, 1, 0)));
         glm::mat3 inv3(inv);
-        for (int layer = 0; layer < 2; ++layer)
+        for (int layer = 0; layer < 3; ++layer)
             for (int m = 0; m < int(Mat::Count); ++m) {
-                const MeshBuilder& src = layer ? g.detailMats[m] : g.mats[m];
-                MeshBuilder& dst = layer ? piece.detailMats[m] : piece.mats[m];
+                const MeshBuilder& src = g.layer(layer)[m];
+                MeshBuilder& dst = piece.layer(layer)[m];
                 uint32_t v0 = a.v[layer][m], v1 = b.v[layer][m], i0 = a.i[layer][m], i1 = b.i[layer][m];
                 if (i1 <= i0 || v1 <= v0) continue;
                 for (uint32_t v = v0; v < v1; ++v) {
@@ -83,6 +83,17 @@ void spawnPieces(Engine* e, Geo& g) {
             bc.center = glm::vec3(inv * glm::vec4(bc.center, 1.f));
             bc.yaw -= a.yaw;
             piece.colliders.push_back(bc);
+        }
+        for (size_t d = a.door; d < b.door; ++d) {
+            DoorSpec ds = g.doors[d];
+            ds.xf = inv * ds.xf;
+            piece.doors.push_back(ds);
+        }
+        for (size_t t = a.tele; t < b.tele; ++t) {
+            TeleSpec ts = g.teles[t];
+            ts.a = glm::vec3(inv * glm::vec4(ts.a, 1.f));
+            ts.b = glm::vec3(inv * glm::vec4(ts.b, 1.f));
+            piece.teles.push_back(ts);
         }
         if (!any && piece.colliders.empty()) continue;
         Scene::Handle h = spawnGeo(e, piece, pieceName(piece), true, a.origin, a.yaw, kDetailFar);
@@ -157,8 +168,11 @@ Prototype protoFromGeo(Engine* e, Geo& g) {
         if (id != kInvalidId) p.parts.push_back({id, e->mats[k]});
         MeshId d = g.detailMats[k].build(e->renderer);
         if (d != kInvalidId) p.parts.push_back({d, e->mats[k], 0.f, kDetailFar * 0.6f});
+        MeshId in = g.interiorMats[k].build(e->renderer);
+        if (in != kInvalidId) p.parts.push_back({in, e->mats[k], 0.f, kInteriorFar});
     }
     if (!g.colliders.empty()) { p.colliderHalf = g.colliders[0].half; p.colliderY = g.colliders[0].center.y; }
+    if (g.colliders.size() > 1) p.boxes = g.colliders;  // construção com paredes: um collider por parede
     return p;
 }
 
@@ -195,7 +209,10 @@ void spawnProto(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float s
         if (GameObject* g = e->scene.get(h); g && g->meshRenderer) { g->meshRenderer->lodNear = pp.lodNear; g->meshRenderer->lodFar = pp.lodFar; }
         if (out) out->push_back(h);
     }
-    if (colliders && p.colliderHalf.x > 0.f)
+    if (colliders && !p.boxes.empty()) {
+        glm::quat q = glm::angleAxis(yaw, glm::vec3(0, 1, 0));
+        for (const BoxCollider& b : p.boxes) colliders->push_back({pos + q * (b.center * scale), b.half * scale, yaw + b.yaw, b.pitch});
+    } else if (colliders && p.colliderHalf.x > 0.f)
         colliders->push_back({pos + glm::vec3(0, p.colliderY * scale, 0), p.colliderHalf * scale, yaw});
 }
 
@@ -261,11 +278,16 @@ struct Cells {
             }
             b.colliders.insert(b.colliders.end(), g.colliders.begin(), g.colliders.end());
             g.colliders.clear();
+            b.doors.insert(b.doors.end(), g.doors.begin(), g.doors.end());
+            g.doors.clear();
+            b.teles.insert(b.teles.end(), g.teles.begin(), g.teles.end());
+            g.teles.clear();
             bool anyDetail = false;
             for (auto& d : g.detailMats) anyDetail |= !d.empty();
+            for (auto& d : g.interiorMats) anyDetail |= !d.empty();
             if (anyDetail) spawnGeo(e, g, "Detalhes", false, glm::vec3(0.f), 0.f, kDetailFar);
         }
-        for (auto& [k, g] : big) if (!g.empty() || !g.colliders.empty()) spawnGeo(e, g, "Mapa", false);
+        for (auto& [k, g] : big) if (!g.empty() || !g.colliders.empty() || !g.doors.empty()) spawnGeo(e, g, "Mapa", false);
         m.clear();
     }
 };
@@ -313,8 +335,17 @@ glm::vec3 findLand(Engine* e) {
 
 // ---------------- mundo infinito ----------------
 void releaseChunk(Engine* e, TerrainChunk& c) {
-    for (auto h : c.objects) if (GameObject* g = e->scene.get(h)) { releaseComponents(e, *g); e->scene.destroy(h); }
+    for (auto h : c.objects)
+        if (GameObject* g = e->scene.get(h)) {
+            Scene::forEachInSubtree(*g, [&](GameObject& o) { releaseComponents(e, o); });
+            e->scene.destroy(h);
+        }
     c.objects.clear();
+    e->freeGeoMeshes.insert(e->freeGeoMeshes.end(), c.geoMeshes.begin(), c.geoMeshes.end());
+    c.geoMeshes.clear();
+    // portas/elevadores de objetos que sumiram
+    e->doors.erase(std::remove_if(e->doors.begin(), e->doors.end(), [&](const DoorRT& d) { return !e->scene.get(d.h); }), e->doors.end());
+    e->teles.erase(std::remove_if(e->teles.begin(), e->teles.end(), [&](const TeleRT& t) { return !e->scene.get(t.root); }), e->teles.end());
     if (GameObject* g = e->scene.get(c.ground)) { releaseComponents(e, *g); e->scene.destroy(c.ground); }
     c.ground = {};
     if (c.hfBody) e->physics.removeStatic(c.hfBody);
@@ -328,7 +359,9 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
     c.cx = cx; c.cz = cz; c.used = true;
     const float x0 = cx * kChunk, z0 = cz * kChunk;
     const uint32_t seed = e->mapSeed;
-    HeightFn H = [seed](float x, float z) { return infiniteHeight(x, z, seed); };
+    const bool planet = e->mapKind == MAP_Planet;
+    HeightFn H = planet ? HeightFn([e](float x, float z) { return planetHeight(e, x, z); })
+                        : HeightFn([seed](float x, float z) { return infiniteHeight(x, z, seed); });
     std::vector<Vertex> v; std::vector<uint32_t> idx;
     terrainMesh(v, idx, x0, z0, kChunk, kRes, H, &c.heights);
     if (c.mesh == kInvalidId) c.mesh = e->renderer.createMesh(v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()), false);
@@ -343,16 +376,18 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
     auto slopeAt = [&](float x, float z) { return std::abs(H(x + 1, z) - H(x - 1, z)) + std::abs(H(x, z + 1) - H(x, z - 1)); };
     for (int k = 0; k < 26; ++k) {
         float x = x0 + r.f() * kChunk, z = z0 + r.f() * kChunk, h = H(x, z);
-        if (h < 1.2f || h > 56.f || slopeAt(x, z) > 1.1f) continue;
+        if (h < 1.2f || h > (planet ? 80.f : 56.f) || slopeAt(x, z) > 1.1f) continue;
+        if (planet && planetNoTrees(e, x, z)) continue;
         int kind = h > 30.f ? 1 : (h < 5.f && r.chance(0.6f)) ? 2 : (r.chance(0.3f) ? 1 : 0);
         spawnProto(e, e->treeProto[kind], {x, h - 0.15f, z}, r.range(0.f, 6.28f), r.range(0.8f, 1.35f), &c.objects, &boxes);
     }
     for (int k = 0; k < 5; ++k) {
         float x = x0 + r.f() * kChunk, z = z0 + r.f() * kChunk, h = H(x, z);
-        if (h < 0.3f) continue;
+        if (h < 0.3f || (planet && planetNoTrees(e, x, z))) continue;
         spawnProto(e, e->rockProto, {x, h, z}, r.range(0.f, 6.28f), r.range(0.8f, 2.6f), &c.objects, &boxes);
     }
-    if (hash2(cx, cz, seed + 77) % 4 == 0) {  // vila
+    if (planet) planetDecorateChunk(e, c, x0, z0, kChunk, boxes);  // estradas e cidades do planeta
+    else if (hash2(cx, cz, seed + 77) % 4 == 0) {  // vila
         int n = r.irange(3, 7);
         float vx = x0 + kChunk * 0.5f, vz = z0 + kChunk * 0.5f;
         for (int k = 0; k < n; ++k) {
@@ -746,6 +781,7 @@ void genSuburb(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
 float mapHeight(Engine* e, float x, float z) {
     if (e->mapKind == MAP_Infinite) return infiniteHeight(x, z, e->mapSeed);
     if (e->mapKind == MAP_Favela) return favelaHeight(x, z, e->mapSeed);
+    if (e->mapKind == MAP_Planet) return planetHeight(e, x, z);
     return 0.f;
 }
 
@@ -762,7 +798,7 @@ void clearWorld(Engine* e) {
 }
 
 void updateWorld(Engine* e) {
-    if (e->mapKind == MAP_Infinite) updateInfinite(e, 1);  // no máximo 1 chunk novo por frame
+    if (e->mapKind == MAP_Infinite || e->mapKind == MAP_Planet) updateInfinite(e, 1);  // no máximo 1 chunk novo por frame
 }
 
 void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable) {
@@ -773,7 +809,7 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
     applyMapSwaps(e, true, false);   // texturas trocadas antes (os protótipos usam os materiais)
     makeProtos(e, seed);
     applyMapSwaps(e, false, true);   // modelos trocados (árvores, pedras, casas)
-    e->mapEditable = editable && kind != MAP_Infinite;
+    e->mapEditable = editable && kind != MAP_Infinite && kind != MAP_Planet;
     gEditable = e->mapEditable;
     glm::vec3 spawn(0.f);
     float spawnYaw = 0.f;
@@ -789,6 +825,21 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
             spawn = findLand(e);
             e->editorCam.target = spawn;
             updateInfinite(e, 1000);
+            break;
+        }
+        case MAP_Planet: {
+            planetGenerate(e);
+            e->renderer.fogDensity = 0.0022f;
+            e->chunks.reserve(64);
+            MeshBuilder wb;
+            wb.quad({-1500, 0, 1500}, {1500, 0, 1500}, {1500, 0, -1500}, {-1500, 0, -1500});
+            MeshId wm = wb.build(e->renderer);
+            e->water = addMeshObject(e, "Agua", wm, e->mats[int(Mat::Water)], glm::vec3(0.f), glm::vec3(1.f), glm::vec3(0.f), false);
+            if (GameObject* w = e->scene.get(e->water)) if (w->meshRenderer) w->meshRenderer->castShadows = false;
+            spawn = planetSpawn(e, 0, &spawnYaw);
+            e->editorCam.target = spawn;
+            updateInfinite(e, 1000);
+            setBounds(e, glm::vec2(-e->planet.half), glm::vec2(e->planet.half));
             break;
         }
         case MAP_City: genCity(e, r, spawn, spawnYaw); break;
@@ -917,7 +968,11 @@ Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos) 
 }
 
 void mapOverview(Engine* e) {
-    if (e->hasBounds) {
+    if (e->mapKind == MAP_Planet) {  // planeta: carrega por pedaços; visão de cima da região atual
+        glm::vec3 t = e->editorCam.target;
+        e->editorCam.target = {t.x, mapHeight(e, t.x, t.z), t.z};
+        e->editorCam.distance = 320.f;
+    } else if (e->hasBounds) {
         glm::vec2 c = (e->boundsMin + e->boundsMax) * 0.5f, ext = e->boundsMax - e->boundsMin;
         e->editorCam.target = {c.x, mapHeight(e, c.x, c.y) * 0.5f, c.y};
         e->editorCam.distance = std::max(ext.x, ext.y) * 0.85f;

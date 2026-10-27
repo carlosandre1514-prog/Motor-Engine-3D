@@ -55,6 +55,7 @@ class EngineSnapshot {
     @Volatile var game = FloatArray(8)
     @Volatile var objective = ""
     @Volatile var message = ""
+    @Volatile var interact = ""
 }
 
 class MainActivity : Activity() {
@@ -75,6 +76,7 @@ class MainActivity : Activity() {
     private lateinit var runBtn: TextView
     private lateinit var fireBtn: TextView
     private lateinit var aimBtn: TextView
+    private lateinit var actionBtn: TextView
     private var shownSelection = -2
     private var running = false
     private var spellElement = 0
@@ -1006,6 +1008,12 @@ class MainActivity : Activity() {
             addView(row)
         }
         f.addView(endPanel, FrameLayout.LayoutParams(dp(320), -2, Gravity.CENTER))
+        actionBtn = button("", accent = true) { gl { NativeBridge.nativeInteract() } }.apply {
+            visibility = View.GONE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+        }
+        f.addView(actionBtn, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(40) })
         joystick = JoystickView(this) { x, y ->
             stick = floatArrayOf(x, y)
             val r = running
@@ -1079,6 +1087,9 @@ class MainActivity : Activity() {
         if (snap.objective.isNotEmpty()) sb.append("\n").append(snap.objective)
         gameBar.text = sb.toString()
         hurtOverlay.alpha = if (g[6] > 0f) 0.6f else 0f
+        val act = snap.interact
+        actionBtn.visibility = if (act.isNotEmpty() && g[0] == 0f) View.VISIBLE else View.GONE
+        if (act.isNotEmpty() && actionBtn.text != act) actionBtn.text = act
         val now = System.currentTimeMillis()
         if (snap.message.isNotEmpty() && snap.message != lastMsg) { lastMsg = snap.message; msgUntil = now + 1800; gameMsg.text = lastMsg }
         gameMsg.alpha = if (now < msgUntil && g[0] == 0f) 1f else 0f
@@ -1618,6 +1629,7 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
                     snapshot.game = g
                     snapshot.objective = NativeBridge.gameText(0)
                     snapshot.message = NativeBridge.gameText(1)
+                    snapshot.interact = String(NativeBridge.nativeInteractLabel(), Charsets.UTF_8)
                 }
             }
         })

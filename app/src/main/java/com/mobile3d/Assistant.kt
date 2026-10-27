@@ -110,8 +110,8 @@ class Assistant(
             tool("ver_cena", "Mostra o projeto atual em JSON: mapa, ambiente, regras e todos os objetos editáveis com id, " +
                 "posição, rotação e receita. Use antes de editar para saber os ids e onde as coisas estão.", emptyMap()),
             tool("carregar_mapa", "Troca o cenário inteiro (apaga os objetos atuais). tipo: vazio (só chão 60x60, para criar do zero), " +
-                "cidade, favela, escola, bairro (com limites) ou infinito. Responde os limites do mapa e a posição do jogador.",
-                mapOf("tipo" to mapOf("type" to "string", "enum" to listOf("vazio", "cidade", "favela", "escola", "bairro", "infinito")),
+                "cidade, favela, escola, bairro (com limites), infinito ou planeta (6x6 km com cidades e estradas). Responde os limites do mapa e a posição do jogador.",
+                mapOf("tipo" to mapOf("type" to "string", "enum" to listOf("vazio", "cidade", "favela", "escola", "bairro", "infinito", "planeta")),
                       "semente" to mapOf("type" to "integer", "description" to "variação do mapa (opcional)"),
                       "com_jogador" to mapOf("type" to "boolean", "description" to "cria o personagem do jogador (padrão true)")),
                 listOf("tipo")),

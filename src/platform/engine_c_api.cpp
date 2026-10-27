@@ -97,6 +97,7 @@ void engine_frame(Engine* e, float dt) {
         for (auto& t : e->tracers) t.life = 0.f;
     }
     for (Animator* a : e->animators) a->update(dt, e->playing || e->previewAnim);
+    eng::updateDoors(e, dt);
     eng::updateWorld(e);
     eng::updateEffects(e, dt);
 
@@ -417,6 +418,8 @@ const char* engine_anim_edit_bones(Engine* e) { if (!e) return ""; e->toolResult
 void engine_anim_edit_select(Engine* e, int bone) { if (e) eng::animEditSelect(e, bone); }
 int engine_anim_edit_selected(Engine* e) { return e ? eng::animEditSelected(e) : -1; }
 void engine_player_aim(Engine* e, int on) { if (e) e->aimInput = on != 0; }
+const char* engine_interact_label(Engine* e) { if (!e) return ""; e->toolResult = eng::interactLabel(e); return e->toolResult.c_str(); }
+int engine_interact(Engine* e) { return e && eng::interact(e); }
 void engine_anim_edit_get(Engine* e, int bone, float* euler3) { if (e && euler3) eng::animEditGet(e, bone, euler3); }
 void engine_anim_edit_set(Engine* e, int bone, const float* euler3) { if (e && euler3) eng::animEditSet(e, bone, euler3); }
 void engine_anim_edit_reset_pose(Engine* e) { if (e) eng::animEditResetPose(e); }
@@ -709,6 +712,47 @@ const char* engine_tool_call(Engine* e, const char* name, const char* input) {
 int engine_add_spec(Engine* e, const char* json) { return e && json ? createSpec(e, json) : -1; }
 void engine_set_time_of_day(Engine* e, float hour) { if (e) eng::setTimeOfDay(e, hour); }
 float engine_get_time_of_day(Engine* e) { return e ? e->timeOfDay : 13.f; }
+
+// ---------- planeta ----------
+const char* engine_planet_places(Engine* e) {
+    if (!e) return "";
+    e->toolResult.clear();
+    if (e->mapKind != eng::MAP_Planet) return e->toolResult.c_str();
+    char b[160];
+    for (const eng::PlanetCity& c : e->planet.cities) {
+        std::snprintf(b, sizeof(b), "%s\t%.0f\t%.0f\t%d\n", c.name.c_str(), c.pos.x, c.pos.y, c.kind);
+        e->toolResult += b;
+    }
+    return e->toolResult.c_str();
+}
+int engine_planet_goto(Engine* e, int city) {
+    if (!e || e->mapKind != eng::MAP_Planet || city < 0 || city >= int(e->planet.cities.size())) return 0;
+    float yaw;
+    glm::vec3 p = eng::planetSpawn(e, city, &yaw);
+    e->editorCam.target = p + glm::vec3(0, 1.f, 0);
+    if (engine_has_player(e)) {
+        GameObject* pg = e->scene.get(e->characters[e->player].root);
+        pg->transform.setPosition(p);
+        if (pg->rigidBody) e->physics.syncFromTransform(*pg->rigidBody);
+        if (!e->playing) { e->editorCam.distance = 60.f; e->editorCam.pitch = 0.5f; }
+        ++e->revision;
+    }
+    return 1;
+}
+const char* engine_region_name(Engine* e) {
+    if (!e) return "";
+    e->toolResult.clear();
+    if (e->mapKind != eng::MAP_Planet) return "";
+    glm::vec3 p = e->editorCam.target;
+    if (e->playing && engine_has_player(e)) p = e->scene.get(e->characters[e->player].root)->transform.position;
+    e->toolResult = eng::planetRegion(e, p);
+    return e->toolResult.c_str();
+}
+int engine_planet_map(Engine* e, int size, uint8_t* rgba) {
+    if (!e || e->mapKind != eng::MAP_Planet || !rgba || size <= 0) return 0;
+    eng::planetMapImage(e, size, rgba);
+    return 1;
+}
 
 int engine_map_set_editable(Engine* e, int on) { return e && eng::setMapEditable(e, on != 0); }
 int engine_map_editable(Engine* e) { return e && e->mapEditable; }

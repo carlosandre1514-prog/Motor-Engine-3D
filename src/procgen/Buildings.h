@@ -15,6 +15,10 @@ inline glm::vec4 srgb(float r, float g, float b) {
 }
 
 struct BoxCollider { glm::vec3 center, half; float yaw; float pitch = 0.f; };  // pitch: inclinação em X (rampa/escada)
+// Porta que abre sozinha (dobradiça na origem de xf, folha para +X, abre girando para -Z = para dentro)
+struct DoorSpec { glm::mat4 xf; float w, h; int style; };   // style 0 madeira, 1 vidro
+// Passagem (elevador): perto de `a` aparece o botão `la` que leva a `b`, e vice-versa
+struct TeleSpec { glm::vec3 a, b; const char* la; const char* lb; };
 
 // Geometria agrupada por material + colliders. Construções escrevem aqui; o motor transforma
 // cada material não vazio em um GameObject (poucos draw calls) e os colliders em um corpo estático.
@@ -23,15 +27,21 @@ struct BoxCollider { glm::vec3 center, half; float yaw; float pitch = 0.f; };  /
 struct Geo {
     MeshBuilder mats[int(Mat::Count)];
     MeshBuilder detailMats[int(Mat::Count)];
+    MeshBuilder interiorMats[int(Mat::Count)];  // por dentro (móveis, reboco interno): só desenhado bem perto
     std::vector<BoxCollider> colliders;
     glm::vec3 origin{0.f};
     float yaw = 0.f;
     bool detail = false;  // true: as próximas peças vão para a camada de detalhe
+    bool interior = false;  // true: camada de interior
+    MeshBuilder* layer(int l) { return l == 0 ? mats : l == 1 ? detailMats : interiorMats; }
+    const MeshBuilder* layer(int l) const { return l == 0 ? mats : l == 1 ? detailMats : interiorMats; }
 
     // Mapa editável: cada place() começa uma "peça" (uma construção, um poste, um carro...) que vira objeto próprio
+    std::vector<DoorSpec> doors;
+    std::vector<TeleSpec> teles;
     struct Mark {
-        uint32_t v[2][int(Mat::Count)], i[2][int(Mat::Count)];
-        size_t col;
+        uint32_t v[3][int(Mat::Count)], i[3][int(Mat::Count)];
+        size_t col, door = 0, tele = 0;
         glm::vec3 origin;
         float yaw;
     };
@@ -39,26 +49,25 @@ struct Geo {
     std::vector<Mark> marks;
     Mark mark() const {
         Mark m{};
-        for (int k = 0; k < int(Mat::Count); ++k) {
-            m.v[0][k] = uint32_t(mats[k].v.size()); m.i[0][k] = uint32_t(mats[k].idx.size());
-            m.v[1][k] = uint32_t(detailMats[k].v.size()); m.i[1][k] = uint32_t(detailMats[k].idx.size());
-        }
+        for (int l = 0; l < 3; ++l)
+            for (int k = 0; k < int(Mat::Count); ++k) { m.v[l][k] = uint32_t(layer(l)[k].v.size()); m.i[l][k] = uint32_t(layer(l)[k].idx.size()); }
         m.col = colliders.size();
+        m.door = doors.size(); m.tele = teles.size();
         m.origin = origin; m.yaw = yaw;
         return m;
     }
 
-    MeshBuilder& operator[](Mat m) { return detail ? detailMats[int(m)] : mats[int(m)]; }
+    MeshBuilder& operator[](Mat m) { return interior ? interiorMats[int(m)] : detail ? detailMats[int(m)] : mats[int(m)]; }
     // Posiciona as próximas peças (origem da construção no chão + rotação em Y)
     void place(glm::vec3 pos, float yawRad) {
         origin = pos; yaw = yawRad;
         if (recordMarks) marks.push_back(mark());
         glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1.f), pos), yawRad, glm::vec3(0, 1, 0));
-        for (auto* arr : {mats, detailMats})
+        for (auto* arr : {mats, detailMats, interiorMats})
             for (int k = 0; k < int(Mat::Count); ++k) { arr[k].xf = m; arr[k].color = glm::vec4(1.f); arr[k].uvTile = glm::vec2(0.f); }
     }
     void offset(glm::vec3 local) {  // desloca o sistema local atual
-        for (auto* arr : {mats, detailMats})
+        for (auto* arr : {mats, detailMats, interiorMats})
             for (int k = 0; k < int(Mat::Count); ++k) arr[k].xf = arr[k].xf * glm::translate(glm::mat4(1.f), local);
     }
     // Collider em coordenadas locais da construção atual (min + size, como MeshBuilder::box)
@@ -66,6 +75,12 @@ struct Geo {
         glm::vec3 c = mn + size * 0.5f;
         glm::vec3 w = glm::vec3(mats[0].xf * glm::vec4(c, 1.f));
         colliders.push_back({w, size * 0.5f, yaw});
+    }
+    void door(glm::vec3 hingeLocal, float w, float h, int style = 0) {
+        doors.push_back({mats[0].xf * glm::translate(glm::mat4(1.f), hingeLocal), w, h, style});
+    }
+    void teleport(glm::vec3 aLocal, glm::vec3 bLocal, const char* la, const char* lb) {
+        teles.push_back({glm::vec3(mats[0].xf * glm::vec4(aLocal, 1.f)), glm::vec3(mats[0].xf * glm::vec4(bLocal, 1.f)), la, lb});
     }
     // Collider inclinado (rampa): caixa pelo centro local, girada em X (subindo para +Z com pitch < 0)
     void colliderTilted(glm::vec3 centerLocal, glm::vec3 half, float pitch) {
@@ -75,6 +90,7 @@ struct Geo {
     bool empty() const {
         for (auto& b : mats) if (!b.empty()) return false;
         for (auto& b : detailMats) if (!b.empty()) return false;
+        for (auto& b : interiorMats) if (!b.empty()) return false;
         return true;
     }
 };
@@ -84,6 +100,11 @@ struct DetailScope {
     Geo& g; bool prev;
     explicit DetailScope(Geo& geo) : g(geo), prev(geo.detail) { g.detail = true; }
     ~DetailScope() { g.detail = prev; }
+};
+struct InteriorScope {
+    Geo& g; bool prev;
+    explicit InteriorScope(Geo& geo) : g(geo), prev(geo.interior) { g.interior = true; }
+    ~InteriorScope() { g.interior = prev; }
 };
 
 // Paletas de cores típicas

@@ -53,6 +53,7 @@ struct ProtoPart { MeshId mesh; MaterialId mat; float lodNear = 0.f, lodFar = 1e
 struct Prototype {
     std::string name;
     std::vector<ProtoPart> parts;
+    std::vector<BoxCollider> boxes;   // colliders locais (casas com paredes); vazio = usa colliderHalf
     glm::vec3 colliderHalf{0.f};
     float colliderY = 0.f;     // centro do collider acima da base
 };
@@ -67,6 +68,7 @@ struct TerrainChunk {
     btRigidBody* hfBody = nullptr;
     StaticCollision props;
     std::vector<Scene::Handle> objects;
+    std::vector<MeshId> geoMeshes;   // malhas de construções/ruas deste chunk (voltam para freeGeoMeshes)
 };
 
 // ---- Lógica de jogo (Game.cpp)
@@ -127,9 +129,18 @@ struct AnimEditState {
     std::vector<Channel> previewChannels;
     std::vector<float> previewData;
 };
+// Porta em jogo: abre sozinha quando alguém chega perto
+struct DoorRT { Scene::Handle h; glm::quat base{1, 0, 0, 0}; float angle = 0.f, w = 1.f; };
+// Elevador/passagem: pontos em coordenadas locais do objeto `root` (acompanha se a construção for movida)
+struct TeleRT { Scene::Handle root; glm::vec3 a, b; std::string la, lb; };
 struct LightObject { Scene::Handle obj; glm::vec3 color{1.f}; float intensity = 8.f, radius = 10.f; };
 
-enum MapKind { MAP_None = -1, MAP_Infinite = 0, MAP_City, MAP_Favela, MAP_School, MAP_Suburb, MAP_Count };
+enum MapKind { MAP_None = -1, MAP_Infinite = 0, MAP_City, MAP_Favela, MAP_School, MAP_Suburb, MAP_Planet, MAP_Count };
+
+// Mundo-planeta: continentes, oceano, cidades com nomes inventados e estradas entre elas (Planet.cpp)
+struct PlanetCity { std::string name; glm::vec2 pos; float radius, h; int kind; };  // kind 0 capital, 1 cidade, 2 vila
+struct PlanetRoad { glm::vec2 a, b; int ca, cb; };
+struct PlanetData { float half = 3000.f; std::vector<PlanetCity> cities; std::vector<PlanetRoad> roads; };
 
 struct Tracer { glm::vec3 a, b; float life = 0.f; };
 
@@ -195,6 +206,8 @@ struct Engine {
     glm::vec2 boundsMin{0.f}, boundsMax{0.f};
     std::vector<StaticCollision> statics;
     std::vector<TerrainChunk> chunks;
+    PlanetData planet;
+    std::vector<MeshId> freeGeoMeshes;   // malhas de cidade de chunks descarregados (reaproveitadas)
     std::vector<MeshId> freeChunkMeshes;
     Prototype treeProto[3], rockProto, houseProto[3];
     Scene::Handle water;
@@ -219,6 +232,9 @@ struct Engine {
     std::string projectName = "Projeto";
     float timeOfDay = 13.f;
     std::vector<LightObject> lightObjects;
+    std::vector<DoorRT> doors;
+    std::vector<TeleRT> teles;
+    MeshId doorMesh = kInvalidId;
     GameRules rules;
     GameState game;
     std::string toolResult;             // resposta da última chamada de ferramenta (IA)
@@ -267,6 +283,7 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
                        float detailFar = 160.f);
 // Distâncias de LOD (metros)
 constexpr float kDetailFar = 160.f;   // carros, postes, caixas d'água...
+constexpr float kInteriorFar = 40.f;  // móveis e paredes internas
 constexpr float kTreeLod = 70.f;      // árvore completa -> simplificada
 constexpr float kTreeFar = 420.f;     // árvore some (neblina)
 void addStaticBoxes(Engine* e, const std::vector<BoxCollider>& boxes, StaticCollision* into = nullptr);
@@ -282,6 +299,9 @@ int makeCharacterFromModel(Engine* e, bool controllable);
 void setPlayer(Engine* e, int character);
 void updatePlayer(Engine* e, float dt);
 void updateAttachments(Engine* e);
+void updateDoors(Engine* e, float dt);                 // abre/fecha portas perto de personagens
+std::string interactLabel(Engine* e, int* which = nullptr);  // botão de interação do jogador ("" = nenhum)
+bool interact(Engine* e);
 
 // ---- efeitos (Effects no Engine.cpp)
 int createEffect(Engine* e, int kind, int element);              // objeto com emissor contínuo
@@ -359,5 +379,15 @@ float mapHeight(Engine* e, float x, float z);
 Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos);
 void drawMapOverlay(Engine* e, const glm::mat4& vp);
 void mapOverview(Engine* e);           // câmera do alto enquadrando o mapa
+// ---- planeta (Planet.cpp)
+void planetGenerate(Engine* e);
+float planetHeight(const Engine* e, float x, float z);
+bool planetNoTrees(const Engine* e, float x, float z);
+void planetDecorateChunk(Engine* e, TerrainChunk& c, float x0, float z0, float size, std::vector<BoxCollider>& boxes);
+glm::vec3 planetSpawn(Engine* e, int city, float* yaw);
+std::string planetRegion(Engine* e, glm::vec3 p);
+void planetMapImage(Engine* e, int size, uint8_t* rgba);
+// Cria portas e elevadores do Geo como filhos de `root` (usado por spawnGeo e pelos chunks do planeta)
+void spawnGeoExtras(Engine* e, Geo& g, Scene::Handle root, bool local, float detailFar);
 
 }  // namespace eng

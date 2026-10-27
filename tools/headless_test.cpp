@@ -114,6 +114,101 @@ int main(int argc, char** argv) {
     };
     if (std::getenv("SO_POSES")) { poses("pose"); engine_destroy(e); return g_fail ? 1 : 0; }
 
+    // Interiores: casa com móveis, porta que abre e elevador do prédio até o terraço
+    auto interiors = [&]() {
+        std::printf("[20] interiores, portas e elevador\n");
+        engine_tool_call(e, "carregar_mapa", R"({"tipo":"vazio","com_jogador":true})");
+        engine_tool_call(e, "criar_objetos", R"({"objetos":[{"tipo":"construcao","modelo":"casa","semente":3,"pos":[0,0,-8]},
+            {"tipo":"construcao","modelo":"predio","semente":5,"pos":[30,0,-10]},{"tipo":"construcao","modelo":"barraco","semente":8,"pos":[-14,0,-6]}]})");
+        int player = -1, door = -1, house = -1;
+        for (int id = 0; id < engine_object_count(e); ++id) {
+            if (!engine_object_valid(e, id)) continue;
+            std::string n = engine_object_name(e, id);
+            if (n == "Jogador") player = id;
+            if (n == "Casa") house = id;
+            if (n == "Porta" && door < 0 && engine_object_parent(e, id) == house) door = id;
+        }
+        // por dentro (editor): câmera no meio da sala
+        engine_set_camera(e, 0.f, 1.3f, -7.f, 2.6f, 0.25f, 0.4f);
+        frames(e, 2);
+        save(out, "20_casa_dentro.png");
+        engine_set_camera(e, 0.f, 1.5f, -8.f, 0.4f, 0.35f, 14.f);
+        frames(e, 2);
+        save(out, "20_casa_fora.png");
+        if (player < 0 || door < 0) { std::printf("  [ERRO] sem jogador/porta (%d, %d)\n", player, door); ++g_fail; return; }
+        float dp[3], dr[3], ds[3], pp[3], pr[3], ps[3];
+        engine_get_transform(e, door, dp, dr, ds);
+        engine_get_transform(e, player, pp, pr, ps);
+        engine_set_play(e, 1);
+        float to[3] = {dp[0] + 0.5f, 0.05f, -8.f + dp[2] + 1.2f};
+        engine_set_transform(e, player, to, pr, ps);
+        frames(e, 50);
+        float r1[3]; engine_get_transform(e, door, dp, r1, ds);
+        std::printf("  porta: rotação Y %.0f° com o jogador perto\n", r1[1]);
+        if (std::abs(r1[1]) < 45.f) { std::printf("  [ERRO] porta não abriu\n"); ++g_fail; }
+        // entra na casa
+        engine_player_input(e, 0.f, 0.f, 0);
+        float in[3] = {dp[0] + 0.5f, 0.05f, -8.f + dp[2] - 1.5f};
+        engine_set_transform(e, player, in, pr, ps);
+        frames(e, 20);
+        engine_set_camera(e, in[0], 1.4f, in[2], 0.2f, 0.2f, 2.5f);
+        frames(e, 2);
+        save(out, "20_dentro_play.png");
+        // elevador do prédio: procura o ponto do botão andando para o fundo da recepção
+        std::string label;
+        for (float dz = 0.f; dz < 12.f && label.empty(); dz += 0.4f) {
+            float q[3] = {30.f, 0.05f, -10.f - dz};
+            engine_set_transform(e, player, q, pr, ps);
+            frames(e, 1);
+            label = engine_interact_label(e);
+        }
+        std::printf("  botão: '%s'\n", label.c_str());
+        engine_interact(e);
+        frames(e, 30);
+        float top[3]; engine_get_transform(e, player, top, pr, ps);
+        std::printf("  depois do elevador: y = %.1f m, botão agora: '%s'\n", top[1], engine_interact_label(e));
+        engine_set_camera(e, top[0], top[1] + 1.5f, top[2], 0.6f, 0.45f, 8.f);
+        frames(e, 2);
+        save(out, "20_terraco.png");
+        if (label.empty() || top[1] < 8.f) { std::printf("  [ERRO] elevador\n"); ++g_fail; }
+        engine_set_play(e, 0);
+    };
+    auto planet = [&]() {
+        std::printf("[21] planeta\n");
+        engine_load_map(e, 5, 7);
+        std::string places = engine_planet_places(e);
+        std::printf("%s", places.c_str());
+        int nCities = int(std::count(places.begin(), places.end(), '\n'));
+        std::vector<unsigned char> img(512 * 512 * 4);
+        engine_planet_map(e, 512, img.data());
+        stbi_write_png((out + "/21_mapa_do_mundo.png").c_str(), 512, 512, 4, img.data(), 512 * 4);
+        frames(e, 3);
+        stats(e, "planeta");
+        save(out, "21_planeta_visao.png");
+        int player = engine_selected(e);
+        engine_set_play(e, 1);
+        frames(e, 30);
+        std::printf("  região: %s\n", engine_region_name(e));
+        save(out, "21_capital_play.png");
+        float p0[3], rr[3], ss[3], p1[3];
+        engine_get_transform(e, player, p0, rr, ss);
+        engine_player_input(e, 0.f, 1.f, 1);
+        frames(e, 180);
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_get_transform(e, player, p1, rr, ss);
+        stats(e, "planeta play");
+        std::printf("  andou %.1f m na capital (y %.1f -> %.1f)\n", std::hypot(p1[0] - p0[0], p1[2] - p0[2]), p0[1], p1[1]);
+        engine_set_play(e, 0);
+        if (nCities >= 2 && engine_planet_goto(e, 1)) {
+            for (int k = 0; k < 60; ++k) frames(e, 1);  // streaming: 1 chunk por frame
+            std::printf("  região: %s\n", engine_region_name(e));
+            save(out, "21_cidade2.png");
+        }
+        if (nCities < 3) { std::printf("  [ERRO] poucas cidades\n"); ++g_fail; }
+    };
+    if (std::getenv("SO_PLANETA")) { planet(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
+    if (std::getenv("SO_INTERIORES")) { interiors(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
+
     std::printf("[1] demo PBR + IBL + sombras\n");
     engine_load_demo(e);
     frames(e, 3);
@@ -757,6 +852,9 @@ int main(int argc, char** argv) {
         frames(e, 3);
         save(out, "19_mapa_editado.png");
     }
+
+    interiors();
+    planet();
 
     engine_destroy(e);
     check("destroy");

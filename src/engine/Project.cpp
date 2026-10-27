@@ -50,10 +50,11 @@ int lookup(const std::string& raw, std::initializer_list<std::pair<const char*, 
 
 int mapKindOf(const std::string& s) {
     return lookup(s, {{"vazio", MAP_None}, {"nenhum", MAP_None}, {"infinito", MAP_Infinite}, {"cidade", MAP_City},
-                      {"favela", MAP_Favela}, {"escola", MAP_School}, {"colegio", MAP_School}, {"bairro", MAP_Suburb}}, -2);
+                      {"favela", MAP_Favela}, {"escola", MAP_School}, {"colegio", MAP_School}, {"bairro", MAP_Suburb},
+                      {"planeta", MAP_Planet}, {"mundo", MAP_Planet}}, -2);
 }
 const char* mapKindName(int k) {
-    static const char* n[] = {"infinito", "cidade", "favela", "escola", "bairro"};
+    static const char* n[] = {"infinito", "cidade", "favela", "escola", "bairro", "planeta"};
     return k >= 0 && k < MAP_Count ? n[k] : "vazio";
 }
 int buildingOf(const std::string& s) {
@@ -421,7 +422,7 @@ static bool rebuildMap(Engine* e, bool editable) {
     return importProject(e, j.dump(), &err);
 }
 bool setMapEditable(Engine* e, bool on) {
-    if (e->mapKind == MAP_Infinite && on) { e->lastError = "o mundo infinito não tem fim: nele dá para trocar modelos e texturas, mas não editar peça por peça"; return false; }
+    if ((e->mapKind == MAP_Infinite || e->mapKind == MAP_Planet) && on) { e->lastError = "o mundo infinito não tem fim: nele dá para trocar modelos e texturas, mas não editar peça por peça"; return false; }
     if (e->mapKind < 0) { e->lastError = "esta cena já é toda editável (não tem mapa pronto)"; return false; }
     return rebuildMap(e, on);
 }
