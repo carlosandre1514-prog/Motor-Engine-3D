@@ -1,0 +1,383 @@
+{
+ "ambiente": {
+  "exposicao": 1.0,
+  "grade": true,
+  "hora": 13.0,
+  "neblina": 0.0,
+  "sol": 3.2
+ },
+ "camera": {
+  "alvo": [
+   0.0,
+   0.5,
+   0.0
+  ],
+  "distancia": 25.0,
+  "pitch": 0.75,
+  "yaw": 3.642
+ },
+ "formato": "motor3d-projeto",
+ "mapa": {
+  "semente": 3,
+  "tipo": "vazio"
+ },
+ "nome": "Arena do zero",
+ "objetos": [
+  {
+   "escala": [
+    60.0,
+    0.2,
+    60.0
+   ],
+   "nome": "Chao",
+   "pos": [
+    0.0,
+    -0.1,
+    0.0
+   ],
+   "tamanho": 60,
+   "tipo": "chao"
+  },
+  {
+   "arma": "escopeta",
+   "jogador": true,
+   "nome": "Jogador",
+   "pos": [
+    0.0,
+    0.0,
+    4.0
+   ],
+   "rot_y": 180.0,
+   "semente": 116435545,
+   "tipo": "personagem"
+  },
+  {
+   "comportamentos": [
+    {
+     "destino": [
+      0,
+      2.5,
+      0
+     ],
+     "tipo": "plataforma",
+     "velocidade": 1.5
+    }
+   ],
+   "escala": [
+    3.0,
+    0.4,
+    3.0
+   ],
+   "fisica": true,
+   "forma": "cubo",
+   "massa": 0,
+   "material": "metal",
+   "nome": "Plataforma",
+   "pos": [
+    9.0,
+    0.6,
+    0.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "escala": [
+    0.35,
+    0.7,
+    0.35
+   ],
+   "item": "cristal",
+   "nome": "Cristal",
+   "pos": [
+    9.0,
+    4.5,
+    0.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "comportamentos": [
+    {
+     "destino": [
+      0,
+      3.0,
+      0
+     ],
+     "tipo": "plataforma",
+     "velocidade": 1.5
+    }
+   ],
+   "escala": [
+    3.0,
+    0.4,
+    3.0
+   ],
+   "fisica": true,
+   "forma": "cubo",
+   "massa": 0,
+   "material": "metal",
+   "nome": "Plataforma",
+   "pos": [
+    -0.0,
+    1.4,
+    9.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "escala": [
+    0.35,
+    0.7,
+    0.35
+   ],
+   "item": "cristal",
+   "nome": "Cristal",
+   "pos": [
+    -0.0,
+    5.8,
+    9.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "comportamentos": [
+    {
+     "destino": [
+      0,
+      3.5,
+      0
+     ],
+     "tipo": "plataforma",
+     "velocidade": 1.5
+    }
+   ],
+   "escala": [
+    3.0,
+    0.4,
+    3.0
+   ],
+   "fisica": true,
+   "forma": "cubo",
+   "massa": 0,
+   "material": "metal",
+   "nome": "Plataforma",
+   "pos": [
+    -9.0,
+    2.2,
+    -0.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "escala": [
+    0.35,
+    0.7,
+    0.35
+   ],
+   "item": "cristal",
+   "nome": "Cristal",
+   "pos": [
+    -9.0,
+    7.1,
+    -0.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "comportamentos": [
+    {
+     "destino": [
+      0,
+      4.0,
+      0
+     ],
+     "tipo": "plataforma",
+     "velocidade": 1.5
+    }
+   ],
+   "escala": [
+    3.0,
+    0.4,
+    3.0
+   ],
+   "fisica": true,
+   "forma": "cubo",
+   "massa": 0,
+   "material": "metal",
+   "nome": "Plataforma",
+   "pos": [
+    0.0,
+    3.0,
+    -9.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "escala": [
+    0.35,
+    0.7,
+    0.35
+   ],
+   "item": "cristal",
+   "nome": "Cristal",
+   "pos": [
+    0.0,
+    8.4,
+    -9.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "comportamentos": [
+    "destrutivel"
+   ],
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "forma": "cubo",
+   "material": "madeira",
+   "nome": "Caixa",
+   "pos": [
+    -4.0,
+    0.45,
+    -6.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "comportamentos": [
+    "destrutivel"
+   ],
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "forma": "cubo",
+   "material": "madeira",
+   "nome": "Caixa",
+   "pos": [
+    -2.4,
+    0.45,
+    -6.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "comportamentos": [
+    "destrutivel"
+   ],
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "forma": "cubo",
+   "material": "madeira",
+   "nome": "Caixa",
+   "pos": [
+    -0.8,
+    0.45,
+    -6.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "comportamentos": [
+    "destrutivel"
+   ],
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "forma": "cubo",
+   "material": "madeira",
+   "nome": "Caixa",
+   "pos": [
+    0.8,
+    0.45,
+    -6.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "comportamentos": [
+    "destrutivel"
+   ],
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "forma": "cubo",
+   "material": "madeira",
+   "nome": "Caixa",
+   "pos": [
+    2.4,
+    0.45,
+    -6.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "comportamentos": [
+    "destrutivel"
+   ],
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "forma": "cubo",
+   "material": "madeira",
+   "nome": "Caixa",
+   "pos": [
+    4.0,
+    0.45,
+    -6.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "arma": "pistola",
+   "nome": "Personagem 2",
+   "pos": [
+    0.0,
+    0.0,
+    -14.0
+   ],
+   "semente": 1807240659,
+   "tipo": "inimigo",
+   "vida": 120
+  },
+  {
+   "cor": "#88aaff",
+   "escala": [
+    0.22,
+    0.22,
+    0.22
+   ],
+   "intensidade": 10,
+   "nome": "Luz",
+   "pos": [
+    0.0,
+    6.0,
+    0.0
+   ],
+   "raio": 18,
+   "tipo": "luz"
+  }
+ ],
+ "regras": {
+  "descricao": "Faça 150 pontos: cristais nas plataformas e caixas",
+  "objetivo": "pontos",
+  "quantidade": 150,
+  "tempo": 0.0,
+  "titulo": "Arena do zero",
+  "vida_jogador": 100.0
+ },
+ "versao": 1
+}

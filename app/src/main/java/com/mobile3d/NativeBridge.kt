@@ -63,4 +63,33 @@ object NativeBridge {
     @JvmStatic external fun nativeSetEffectElement(element: Int)
     @JvmStatic external fun nativePlayerCast(element: Int)
     @JvmStatic external fun nativeMakeCharacter(controllable: Boolean): Int
+
+    // Projeto (JSON em bytes UTF-8)
+    @JvmStatic external fun nativeExportProject(): ByteArray
+    @JvmStatic external fun nativeImportProject(json: ByteArray): Boolean
+    @JvmStatic external fun nativeProjectRevision(): Long
+    @JvmStatic external fun nativeSetProjectName(name: ByteArray)
+    @JvmStatic external fun nativeToolCall(name: String, input: ByteArray): ByteArray
+    @JvmStatic external fun nativeAddSpec(json: ByteArray): Int
+    @JvmStatic external fun nativeSetTimeOfDay(hour: Float)
+    @JvmStatic external fun nativeGetTimeOfDay(): Float
+    @JvmStatic external fun nativeExportGlb(objectId: Int, path: String): Boolean
+
+    // Jogo
+    @JvmStatic external fun nativeGameStatus(out8: FloatArray)
+    @JvmStatic external fun nativeGameText(which: Int): ByteArray
+
+    // Animações
+    @JvmStatic external fun nativeAnimationList(): ByteArray
+    @JvmStatic external fun nativeAnimationIndex(): Int
+    @JvmStatic external fun nativeSetAnimation(index: Int)
+    @JvmStatic external fun nativeSetAnimPreview(on: Boolean)
+
+    // Atalhos com String
+    fun exportProject() = String(nativeExportProject(), Charsets.UTF_8)
+    fun importProject(json: String) = nativeImportProject(json.toByteArray(Charsets.UTF_8))
+    fun toolCall(name: String, input: String) = String(nativeToolCall(name, input.toByteArray(Charsets.UTF_8)), Charsets.UTF_8)
+    fun addSpec(json: String) = nativeAddSpec(json.toByteArray(Charsets.UTF_8))
+    fun gameText(which: Int) = String(nativeGameText(which), Charsets.UTF_8)
+    fun animationList() = String(nativeAnimationList(), Charsets.UTF_8).lines().filter { it.isNotEmpty() }
 }

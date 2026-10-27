@@ -1,0 +1,185 @@
+{
+ "ambiente": {
+  "exposicao": 1.0,
+  "grade": true,
+  "hora": 17.0,
+  "neblina": 0.001500000013038516,
+  "sol": 3.2
+ },
+ "camera": {
+  "alvo": [
+   0.0,
+   0.0,
+   10.0
+  ],
+  "distancia": 156.4,
+  "pitch": 0.75,
+  "yaw": 3.642
+ },
+ "formato": "motor3d-projeto",
+ "mapa": {
+  "semente": 3,
+  "tipo": "escola"
+ },
+ "nome": "Fuga da escola",
+ "objetos": [
+  {
+   "aparencia": "aleatorio",
+   "arma": "pistola",
+   "jogador": true,
+   "nome": "Jogador",
+   "pos": [
+    0.0,
+    0.2,
+    66.0
+   ],
+   "rot_y": 180.0,
+   "semente": 24,
+   "tipo": "personagem"
+  },
+  {
+   "nome": "Objetivo",
+   "pos": [
+    -0.0,
+    0.0,
+    21.0
+   ],
+   "tipo": "objetivo"
+  },
+  {
+   "arma": "faca",
+   "dano": 12,
+   "nome": "Personagem 2",
+   "pos": [
+    2.5,
+    0.0,
+    52.0
+   ],
+   "semente": 218598091,
+   "tipo": "inimigo",
+   "vida": 50
+  },
+  {
+   "arma": "faca",
+   "dano": 12,
+   "nome": "Personagem 3",
+   "pos": [
+    -2.5,
+    0.0,
+    43.0
+   ],
+   "semente": 1492375787,
+   "tipo": "inimigo",
+   "vida": 50
+  },
+  {
+   "arma": "faca",
+   "dano": 12,
+   "nome": "Personagem 4",
+   "pos": [
+    2.5,
+    0.0,
+    34.0
+   ],
+   "semente": 1268421273,
+   "tipo": "inimigo",
+   "vida": 50
+  },
+  {
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "nome": "Zona de dano",
+   "pos": [
+    1.5,
+    0.0,
+    46.0
+   ],
+   "raio": 1.5,
+   "tipo": "zona_dano"
+  },
+  {
+   "escala": [
+    0.9,
+    0.9,
+    0.9
+   ],
+   "nome": "Zona de dano",
+   "pos": [
+    -1.5,
+    0.0,
+    34.0
+   ],
+   "raio": 1.5,
+   "tipo": "zona_dano"
+  },
+  {
+   "comportamentos": [
+    "explosivo"
+   ],
+   "cor": "vermelho",
+   "escala": [
+    0.7,
+    0.6,
+    0.7
+   ],
+   "forma": "capsula",
+   "nome": "Barril",
+   "pos": [
+    -3.0,
+    0.6,
+    56.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "comportamentos": [
+    "explosivo"
+   ],
+   "cor": "vermelho",
+   "escala": [
+    0.7,
+    0.6,
+    0.7
+   ],
+   "forma": "capsula",
+   "nome": "Barril",
+   "pos": [
+    -3.0,
+    0.6,
+    45.0
+   ],
+   "tipo": "forma"
+  },
+  {
+   "comportamentos": [
+    "explosivo"
+   ],
+   "cor": "vermelho",
+   "escala": [
+    0.7,
+    0.6,
+    0.7
+   ],
+   "forma": "capsula",
+   "nome": "Barril",
+   "pos": [
+    -3.0,
+    0.6,
+    34.0
+   ],
+   "tipo": "forma"
+  }
+ ],
+ "regras": {
+  "descricao": "Chegue à luz em 1 minuto",
+  "objetivo": "chegar",
+  "quantidade": 0,
+  "tempo": 60.0,
+  "titulo": "Fuga da escola",
+  "vida_jogador": 100.0
+ },
+ "versao": 1
+}

@@ -42,6 +42,9 @@ add_library(mobile3d SHARED
   src/procgen/Character.cpp
   src/engine/Engine.cpp
   src/engine/World.cpp
+  src/engine/Project.cpp
+  src/engine/Game.cpp
+  src/engine/Export.cpp
   src/platform/engine_c_api.cpp)
 
 target_compile_definitions(mobile3d PUBLIC GLM_ENABLE_EXPERIMENTAL)

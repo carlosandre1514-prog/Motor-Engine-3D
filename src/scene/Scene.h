@@ -93,6 +93,7 @@ struct GameObject {
     char name[32] = {};
     bool active = true;
     int32_t id = -1;                 // índice público usado pela API C (editor/hierarquia)
+    int32_t recipe = -1;             // receita (JSON) que recria este objeto ao abrir o projeto; só na raiz
     uint32_t poolIndex = 0, poolGen = 0;
     Transform3D transform;
     MeshRenderer* meshRenderer = nullptr;

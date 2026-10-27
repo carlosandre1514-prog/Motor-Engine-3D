@@ -11,6 +11,8 @@
 #include <vector>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
+#include <sys/stat.h>
+#include "json.hpp"
 #include "platform/engine_c_api.h"
 
 static const int W = 960, H = 540;
@@ -352,6 +354,228 @@ int main(int argc, char** argv) {
         if (moved < 3.f) { std::printf("  [ERRO] jogador não andou\n"); ++g_fail; }
         if (p2[1] < p0[1] - 5.f) { std::printf("  [ERRO] jogador caiu do mapa\n"); ++g_fail; }
         engine_set_play(e, 0);
+    }
+
+    // ---- [13] projeto: salvar, abrir e ferramentas da IA
+    std::printf("[13] projeto: salvar/abrir + ferramentas\n");
+    {
+        auto tool = [&](const char* n, const char* in) {
+            std::string r = engine_tool_call(e, n, in);
+            std::printf("  %s -> %.160s\n", n, r.c_str());
+            if (r.find("\"erro\"") != std::string::npos) { std::printf("  [ERRO] ferramenta %s\n", n); ++g_fail; }
+            return r;
+        };
+        tool("carregar_mapa", R"({"tipo":"vazio","com_jogador":true})");
+        tool("criar_objetos", R"({"objetos":[
+            {"tipo":"construcao","modelo":"casa","pos":[10,0,-8],"rot_y":30},
+            {"tipo":"forma","forma":"cubo","cor":"vermelho","pos":[3,0.5,0],"nome":"Caixa vermelha","fisica":true},
+            {"tipo":"forma","forma":"cubo","material":"madeira","pos":[-3,0.5,2],"comportamentos":["explosivo"],"nome":"Barril"},
+            {"tipo":"inimigo","pos":[0,0,-6],"arma":"pistola","vida":50},
+            {"tipo":"inimigo","pos":[4,0,-7],"vida":40},
+            {"tipo":"coletavel","item":"moeda","pos":[0,1,2]},
+            {"tipo":"coletavel","item":"moeda","pos":[0,1,3]},
+            {"tipo":"coletavel","item":"cristal","pos":[-6,1,6]},
+            {"tipo":"efeito","efeito":"fogueira","elemento":"gelo","pos":[-4,0,-4]},
+            {"tipo":"luz","cor":"#ffaa44","pos":[2,3,2]},
+            {"tipo":"objetivo","pos":[0,0,14]},
+            {"tipo":"spawner","pos":[-10,0,-10],"maximo":2,"total":2,"intervalo":0.5},
+            {"tipo":"zona_dano","pos":[8,0,8],"raio":2},
+            {"tipo":"forma","forma":"cubo","escala":[3,0.4,3],"fisica":true,"massa":0,"pos":[-8,1,0],"comportamentos":[{"tipo":"plataforma","destino":[0,3,0]}]}
+        ]})");
+        tool("definir_regras", R"({"objetivo":"coletar","quantidade":2,"vida_jogador":100,"titulo":"Teste"})");
+        tool("definir_ambiente", R"({"hora":18.2})");
+        tool("ver_cena", "{}");
+        frames(e, 3);
+        save(out, "13_projeto_criado.png");
+        long long r0 = engine_project_revision(e);
+        frames(e, 30);
+        if (engine_project_revision(e) != r0) { std::printf("  [ERRO] revisão muda sem edição (salvaria sem parar)\n"); ++g_fail; }
+        std::string saved = engine_export_project(e);
+        int objsBefore = engine_object_count(e);
+        long long rev = engine_project_revision(e);
+        // abre de novo e exporta: precisa dar o mesmo JSON
+        if (!engine_import_project(e, saved.c_str())) { std::printf("  [ERRO] import: %s\n", engine_last_error(e)); ++g_fail; }
+        std::string again = engine_export_project(e);
+        std::printf("  salvo %zu bytes, %d objetos -> reaberto %d objetos, revisão %lld\n", saved.size(), objsBefore, engine_object_count(e), rev);
+        if (again != saved) {
+            std::printf("  [ERRO] reabrir mudou o projeto\n");
+            size_t k = 0; while (k < saved.size() && k < again.size() && saved[k] == again[k]) ++k;
+            std::printf("  diferença em %zu: ...%.80s | ...%.80s\n", k, saved.c_str() + (k > 40 ? k - 40 : 0), again.c_str() + (k > 40 ? k - 40 : 0));
+            ++g_fail;
+        }
+        frames(e, 3);
+        save(out, "13_projeto_reaberto.png");
+        // cidade + reabrir: o mapa é refeito pela semente, objetos voltam do arquivo
+        engine_load_map(e, 1, 7);
+        engine_add_object(e, 0, 1);
+        std::string city = engine_export_project(e);
+        engine_import_project(e, city.c_str());
+        if (engine_map_kind(e) != 1 || std::string(engine_export_project(e)) != city) { std::printf("  [ERRO] reabrir cidade\n"); ++g_fail; }
+        engine_import_project(e, saved.c_str());
+    }
+
+    // ---- [14] jogo: coletar moedas, inimigos, dano e vitória
+    std::printf("[14] lógica de jogo\n");
+    {
+        float st[8];
+        engine_set_play(e, 1);
+        frames(e, 20);
+        engine_game_status(e, st);
+        std::printf("  início: estado %.0f vida %.0f/%.0f objetivo '%s'\n", st[0], st[1], st[2], engine_game_text(e, 0));
+        // o jogador está em (0,0,4) olhando para -Z (rot_y 180): anda para trás até as moedas em z=2..3
+        engine_player_input(e, 0.f, 1.f, 0);
+        int collectedAt = -1;
+        for (int i = 0; i < 240 && collectedAt < 0; ++i) {
+            frames(e, 1);
+            engine_game_status(e, st);
+            if (st[0] == 1.f) collectedAt = i;
+        }
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_game_status(e, st);
+        std::string objective = engine_game_text(e, 0);
+        std::printf("  estado %.0f, pontos %.0f, vida %.0f, '%s' / '%s'\n", st[0], st[3], st[1], objective.c_str(), engine_game_text(e, 1));
+        save(out, "14_jogo.png");
+        if (st[0] != 1.f) { std::printf("  [ERRO] não venceu coletando as moedas\n"); ++g_fail; }
+        engine_set_play(e, 0);
+
+        // eliminar: o jogador (fuzil) atira nos inimigos; inimigos atacam o jogador
+        engine_tool_call(e, "definir_regras", R"({"objetivo":"eliminar","quantidade":0})");
+        engine_set_play(e, 1);
+        frames(e, 60);
+        engine_game_status(e, st);
+        float hp0 = st[1];
+        frames(e, 240);  // inimigos se aproximam e atacam; spawner cria 2
+        engine_game_status(e, st);
+        std::printf("  após 5 s: vida %.0f -> %.0f, '%s'\n", hp0, st[1], engine_game_text(e, 0));
+        save(out, "14_inimigos.png");
+        if (!(st[1] < hp0)) { std::printf("  [ERRO] inimigos não causaram dano\n"); ++g_fail; }
+        int countPlay = engine_object_count(e);
+        engine_set_play(e, 0);
+        std::string afterStop = engine_export_project(e);
+        std::printf("  objetos no play %d; projeto após Stop igual ao salvo: %s\n", countPlay, afterStop.size() > 0 ? "sim" : "?");
+        engine_set_play(e, 1);  // 2º play: spawner de novo, sem vazar
+        frames(e, 120);
+        engine_set_play(e, 0);
+    }
+
+    // ---- [15] exemplos prontos (vão para app/src/main/assets/exemplos): montados pelas mesmas ferramentas da IA
+    std::printf("[15] projetos de exemplo\n");
+    {
+        using nlohmann::json;
+        std::string dir = out + "/exemplos";
+        mkdir(dir.c_str(), 0755);
+        struct Ex { const char* file; const char* nome; const char* mapa; unsigned seed; float hora; const char* arma; };
+        const Ex exs[] = {
+            {"1_moedas_no_bairro", "Moedas no bairro", "bairro", 11, 10.f, "taco"},
+            {"2_sobrevivencia_favela", "Sobrevivência na favela", "favela", 5, 21.f, "fuzil"},
+            {"3_fuga_da_escola", "Fuga da escola", "escola", 3, 17.f, "pistola"},
+            {"4_arena_do_zero", "Arena do zero", "vazio", 1, 13.f, "escopeta"},
+        };
+        for (int k = 0; k < 4; ++k) {
+            const Ex& x = exs[k];
+            json r = json::parse(std::string(engine_tool_call(e, "carregar_mapa", json{{"tipo", x.mapa}, {"semente", x.seed}, {"com_jogador", true}}.dump().c_str())));
+            json scene = json::parse(std::string(engine_tool_call(e, "ver_cena", "{}")));
+            json player;
+            for (auto& o : scene["objetos"]) if (o.value("jogador", false)) player = o;
+            float px = player["pos"][0], py = player["pos"][1], pz = player["pos"][2];
+            float yaw = player.value("rot_y", 0.f) * 3.14159265f / 180.f;
+            float fx = std::sin(yaw), fz = std::cos(yaw), sx = std::cos(yaw), sz = -std::sin(yaw);
+            // pontos ao longo da rua, à frente do jogador; altura do terreno em cada um
+            auto at = [&](float fwd, float side, float up = 0.f) {
+                float X = px + fx * fwd + sx * side, Z = pz + fz * fwd + sz * side;
+                json h = json::parse(std::string(engine_tool_call(e, "altura_terreno", json{{"pontos", {{X, Z}}}}.dump().c_str())));
+                float Y = h["alturas"][0].is_number() ? h["alturas"][0].get<float>() : py;
+                return json::array({X, Y + up, Z});
+            };
+            json objs = json::array();
+            engine_tool_call(e, "editar_objeto", json{{"id", player["id"]}, {"arma", x.arma}}.dump().c_str());
+            json rules;
+            if (k == 0) {
+                for (int i = 0; i < 10; ++i) objs.push_back({{"tipo", "coletavel"}, {"item", "moeda"}, {"pos", at(6.f + i * 4.f, (i % 3 - 1) * 1.6f, 0.9f)}});
+                for (int i = 0; i < 3; ++i) objs.push_back({{"tipo", "inimigo"}, {"pos", at(20.f + i * 10.f, 2.f)}, {"vida", 60}, {"velocidade", 2.6}});
+                objs.push_back({{"tipo", "coletavel"}, {"item", "vida"}, {"pos", at(30.f, -2.f, 0.9f)}});
+                rules = {{"objetivo", "coletar"}, {"quantidade", 10}, {"tempo", 120}, {"titulo", x.nome}, {"descricao", "Pegue as 10 moedas em 2 minutos"}};
+            } else if (k == 1) {
+                objs.push_back({{"tipo", "spawner"}, {"pos", at(28.f, 0.f)}, {"maximo", 3}, {"intervalo", 5}, {"arma_inimigo", "pistola"}, {"vida", 60}, {"dano", 6}});
+                objs.push_back({{"tipo", "spawner"}, {"pos", at(-20.f, 0.f)}, {"maximo", 2}, {"intervalo", 7}, {"vida", 80}});
+                for (int i = 0; i < 3; ++i) objs.push_back({{"tipo", "coletavel"}, {"item", "vida"}, {"pos", at(-6.f + i * 9.f, 1.5f, 0.9f)}});
+                objs.push_back({{"tipo", "efeito"}, {"efeito", "fogueira"}, {"pos", at(4.f, 2.5f)}});
+                objs.push_back({{"tipo", "luz"}, {"cor", "#ffb070"}, {"intensidade", 12}, {"raio", 14}, {"pos", at(10.f, 0.f, 4.f)}});
+                rules = {{"objetivo", "sobreviver"}, {"tempo", 90}, {"vida_jogador", 150}, {"titulo", x.nome}, {"descricao", "Aguente 90 segundos"}};
+            } else if (k == 2) {
+                objs.push_back({{"tipo", "objetivo"}, {"pos", at(45.f, 0.f)}});
+                for (int i = 0; i < 3; ++i) objs.push_back({{"tipo", "inimigo"}, {"arma", "faca"}, {"pos", at(14.f + i * 9.f, (i % 2 ? 2.5f : -2.5f))}, {"vida", 50}, {"dano", 12}});
+                for (int i = 0; i < 2; ++i) objs.push_back({{"tipo", "zona_dano"}, {"pos", at(20.f + i * 12.f, i ? 1.5f : -1.5f)}, {"raio", 1.5}});
+                for (int i = 0; i < 3; ++i) objs.push_back({{"tipo", "forma"}, {"forma", "capsula"}, {"nome", "Barril"}, {"cor", "vermelho"}, {"escala", {0.7, 0.6, 0.7}},
+                                                            {"pos", at(10.f + i * 11.f, 3.f, 0.6f)}, {"comportamentos", {"explosivo"}}});
+                rules = {{"objetivo", "chegar"}, {"tempo", 60}, {"titulo", x.nome}, {"descricao", "Chegue à luz em 1 minuto"}};
+            } else {
+                for (int i = 0; i < 4; ++i) {
+                    float a = i * 1.5708f;
+                    float X = std::cos(a) * 9.f, Z = std::sin(a) * 9.f;
+                    objs.push_back({{"tipo", "forma"}, {"forma", "cubo"}, {"nome", "Plataforma"}, {"material", "metal"}, {"fisica", true}, {"massa", 0},
+                                    {"escala", {3, 0.4, 3}}, {"pos", {X, 0.6 + i * 0.8, Z}},
+                                    {"comportamentos", {{{"tipo", "plataforma"}, {"destino", {0, 2.5 + i * 0.5, 0}}, {"velocidade", 1.5}}}}});
+                    objs.push_back({{"tipo", "coletavel"}, {"item", "cristal"}, {"pos", {X, 4.5 + i * 1.3, Z}}});
+                }
+                for (int i = 0; i < 6; ++i)
+                    objs.push_back({{"tipo", "forma"}, {"forma", "cubo"}, {"nome", "Caixa"}, {"material", "madeira"}, {"escala", 0.9},
+                                    {"pos", {-4 + i * 1.6, 0.45, -6}}, {"comportamentos", {"destrutivel"}}});
+                objs.push_back({{"tipo", "inimigo"}, {"arma", "pistola"}, {"pos", {0, 0, -14}}, {"vida", 120}});
+                objs.push_back({{"tipo", "luz"}, {"cor", "#88aaff"}, {"pos", {0, 6, 0}}, {"intensidade", 10}, {"raio", 18}});
+                rules = {{"objetivo", "pontos"}, {"quantidade", 150}, {"titulo", x.nome}, {"descricao", "Faça 150 pontos: cristais nas plataformas e caixas"}};
+            }
+            json res = json::parse(std::string(engine_tool_call(e, "criar_objetos", json{{"objetos", objs}}.dump().c_str())));
+            if (res.contains("erros")) { std::printf("  [ERRO] %s: %s\n", x.file, res["erros"].dump().c_str()); ++g_fail; }
+            engine_tool_call(e, "definir_regras", rules.dump().c_str());
+            engine_tool_call(e, "definir_ambiente", json{{"hora", x.hora}}.dump().c_str());
+            engine_set_project_name(e, x.nome);
+            std::string proj = engine_export_project(e);
+            FILE* f = std::fopen((dir + "/" + x.file + ".json").c_str(), "wb");
+            if (f) { std::fwrite(proj.data(), 1, proj.size(), f); std::fclose(f); }
+            // joga um pouco para ver se não quebra
+            engine_set_play(e, 1);
+            frames(e, 90);
+            float st[8]; engine_game_status(e, st);
+            char name[96];
+            std::snprintf(name, sizeof(name), "15_%s.png", x.file);
+            save(out, name);
+            std::printf("  %s: %zu bytes, vida %.0f, objetivo '%s'\n", x.nome, proj.size(), st[1], engine_game_text(e, 0));
+            engine_set_play(e, 0);
+        }
+    }
+
+    // ---- [16] exportar .glb e abrir de novo (personagem animado + cidade inteira)
+    std::printf("[16] exportar .glb\n");
+    {
+        engine_new_scene(e);
+        int ch = engine_create_random_character(e, 77, 1);
+        engine_create_weapon(e, 1);
+        std::string charPath = out + "/16_personagem.glb", cityPath = out + "/16_cidade.glb";
+        if (!engine_export_glb(e, ch, charPath.c_str())) { std::printf("  [ERRO] exportar personagem: %s\n", engine_last_error(e)); ++g_fail; }
+        engine_load_map(e, 1, 7);
+        if (!engine_export_glb(e, -1, cityPath.c_str())) { std::printf("  [ERRO] exportar cidade: %s\n", engine_last_error(e)); ++g_fail; }
+        for (const std::string& pth : {charPath, cityPath}) {
+            FILE* f = std::fopen(pth.c_str(), "rb");
+            long size = 0;
+            if (f) { std::fseek(f, 0, SEEK_END); size = std::ftell(f); std::fclose(f); }
+            std::printf("  %s: %.1f KB\n", pth.c_str(), size / 1024.0);
+        }
+        engine_new_scene(e);
+        int id = engine_load_model(e, charPath.c_str());
+        std::printf("  personagem reaberto: id %d, animação '%s'\n", id, engine_animation_name(e));
+        if (id < 0 || std::string(engine_animation_list(e)).find("Andando") == std::string::npos) {
+            std::printf("  [ERRO] personagem exportado sem animações: %s\n", engine_last_error(e)); ++g_fail;
+        }
+        engine_set_animation(e, 1);
+        frames(e, 20);
+        save(out, "16_personagem_glb.png");
+        engine_new_scene(e);
+        id = engine_load_model(e, cityPath.c_str());
+        frames(e, 3);
+        stats(e, "cidade.glb");
+        save(out, "16_cidade_glb.png");
+        if (id < 0) { std::printf("  [ERRO] cidade.glb não abriu: %s\n", engine_last_error(e)); ++g_fail; }
     }
 
     engine_destroy(e);

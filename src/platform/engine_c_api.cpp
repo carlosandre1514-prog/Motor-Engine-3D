@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <memory>
 #include <vector>
 #include <stb_image.h>
@@ -23,6 +24,35 @@ using eng::RigidBody;
 using eng::RigidBodyPool;
 using eng::Scene;
 using eng::TouchPoint;
+
+// Cria pelo formato de projeto (receita salva no objeto) e seleciona
+static int createSpec(Engine* e, const std::string& spec, bool select = true) {
+    std::string err;
+    int id = eng::createFromSpecJson(e, spec, &err);
+    if (id >= 0 && select) eng::selectHandle(e, e->objects[id]);
+    return id;
+}
+static std::string fmt3(const char* key, glm::vec3 v) {
+    char b[96];
+    std::snprintf(b, sizeof(b), "\"%s\":[%.3f,%.3f,%.3f]", key, v.x, v.y, v.z);
+    return b;
+}
+// Edição de material/cor/textura vai para a receita (raiz) ou para "pecas" (peça selecionada)
+static void recordEdit(Engine* e, const char* key, const std::string& value) {
+    GameObject* sel = e->scene.get(e->selected);
+    GameObject* root = eng::rootOf(e, sel);
+    if (!root) return;
+    if (root == sel) {
+        if (!std::strcmp(key, "material")) { eng::recipeSet(e, *root, "cor", "null"); eng::recipeSet(e, *root, "textura", "null"); eng::recipeSet(e, *root, "pecas", "null"); }
+        if (!std::strcmp(key, "textura")) eng::recipeSet(e, *root, "cor", "null");
+        eng::recipeSet(e, *root, key, value);
+        return;
+    }
+    int idx = 0, found = -1;
+    Scene::forEachInSubtree(*root, [&](GameObject& g) { if (&g == sel) found = idx; ++idx; });
+    if (found < 0) return;
+    eng::recipePartSet(e, *root, found, key, value);
+}
 
 // ---------- ciclo de vida ----------
 Engine* engine_create(const char* shader_dir) {
@@ -61,11 +91,12 @@ void engine_frame(Engine* e, float dt) {
 
     if (e->playing) {
         eng::updatePlayer(e, dt);
+        eng::gameUpdate(e, dt);
         e->physics.step(dt);
     } else {
         for (auto& t : e->tracers) t.life = 0.f;
     }
-    for (Animator* a : e->animators) a->update(dt, e->playing);
+    for (Animator* a : e->animators) a->update(dt, e->playing || e->previewAnim);
     eng::updateWorld(e);
     eng::updateEffects(e, dt);
 
@@ -160,6 +191,8 @@ void engine_set_play(Engine* e, int playing) {
         e->savedCam = {e->editorCam.target, e->editorCam.yaw, e->editorCam.pitch, e->editorCam.distance};
         e->moveInput = glm::vec2(0.f);
         e->runInput = e->jumpRequest = e->fireRequest = false;
+        e->playing = true;  // a lógica de jogo só cria/danifica com o Play ligado
+        eng::gameStart(e);
         if (e->player >= 0) {  // câmera atrás do jogador
             if (GameObject* pg = e->scene.get(e->characters[e->player].root)) {
                 glm::vec3 f = pg->transform.rotation * glm::vec3(0, 0, 1);
@@ -169,6 +202,7 @@ void engine_set_play(Engine* e, int playing) {
             }
         }
     } else {
+        eng::gameStop(e);
         for (auto& s : e->snapshot)
             if (GameObject* g = e->scene.get(s.h)) {
                 g->transform.setPosition(s.p); g->transform.setRotation(s.r); g->transform.setScale(s.s);
@@ -190,7 +224,7 @@ int engine_is_playing(Engine* e) { return e && e->playing; }
 void engine_new_scene(Engine* e) {
     if (!e) return;
     eng::clearScene(e);
-    eng::addFloor(e);
+    createSpec(e, R"({"tipo":"chao","tamanho":40})", false);
     e->editorCam.target = glm::vec3(0.f, 0.5f, 0.f);
     e->editorCam.distance = 8.f;
 }
@@ -198,22 +232,16 @@ void engine_new_scene(Engine* e) {
 void engine_load_demo(Engine* e) {
     if (!e) return;
     eng::clearScene(e);
-    eng::addFloor(e);
-    auto add = [&](const char* name, eng::MeshId mesh, eng::MaterialId m, glm::vec3 pos, glm::vec3 scale, glm::vec3 eul, ColliderType ct) {
-        Scene::Handle h = eng::addMeshObject(e, name, mesh, m, pos, scale, eul);
-        eng::addBody(e, h, ct, 1.f);
-    };
-    add("Cubo laranja", e->cube, e->matPalette[0], {-1.6f, 0.5f, 0.f}, glm::vec3(1.f), {0.f, 20.f, 0.f}, ColliderType::Box);
-    add("Cubo metal", e->cube, e->matPalette[1], {0.f, 0.4f, -0.4f}, glm::vec3(0.8f), {0.f, 35.f, 0.f}, ColliderType::Box);
-    add("Esfera ouro", e->sphere, e->matPalette[2], {1.5f, 0.5f, 0.3f}, glm::vec3(1.f), {}, ColliderType::Sphere);
-    add("Esfera azul", e->sphere, e->matPalette[3], {0.3f, 0.35f, 1.3f}, glm::vec3(0.7f), {}, ColliderType::Sphere);
-    add("Capsula", e->capsule, e->matPalette[1], {-0.4f, 0.6f, 1.8f}, glm::vec3(0.6f), {0.f, 0.f, 90.f}, ColliderType::Capsule);
-    add("Pedra", e->rock, e->matPalette[5], {2.6f, 0.45f, -1.2f}, glm::vec3(1.f), {10.f, 30.f, 0.f}, ColliderType::ConvexMesh);
-    e->points[0].position = {-2.5f, 2.f, 2.f};
-    e->points[0].color = {1.f, 0.55f, 0.25f};
-    e->points[0].intensity = 8.f;
-    e->points[0].radius = 8.f;
-    e->pointCount = 1;
+    createSpec(e, R"({"tipo":"chao","tamanho":40})", false);
+    const char* objs[] = {
+        R"({"tipo":"forma","forma":"cubo","paleta":"laranja","nome":"Cubo laranja","pos":[-1.6,0.5,0],"rot":[0,20,0]})",
+        R"({"tipo":"forma","forma":"cubo","paleta":"aco","nome":"Cubo metal","pos":[0,0.4,-0.4],"escala":[0.8,0.8,0.8],"rot":[0,35,0]})",
+        R"({"tipo":"forma","forma":"esfera","paleta":"ouro","nome":"Esfera ouro","pos":[1.5,0.5,0.3]})",
+        R"({"tipo":"forma","forma":"esfera","paleta":"azul","nome":"Esfera azul","pos":[0.3,0.35,1.3],"escala":[0.7,0.7,0.7]})",
+        R"({"tipo":"forma","forma":"capsula","paleta":"aco","nome":"Capsula","pos":[-0.4,0.6,1.8],"escala":[0.6,0.6,0.6],"rot":[0,0,90]})",
+        R"({"tipo":"forma","forma":"pedra","paleta":"pedra","nome":"Pedra","pos":[2.6,0.45,-1.2],"rot":[10,30,0]})",
+        R"({"tipo":"luz","nome":"Luz","pos":[-2.5,2,2],"cor":[1,0.55,0.25],"intensidade":8,"raio":8})"};
+    for (const char* o : objs) createSpec(e, o, false);
     e->editorCam.target = glm::vec3(0.f, 0.4f, 0.f);
     e->editorCam.distance = 7.f;
     e->editorCam.yaw = 0.6f; e->editorCam.pitch = 0.45f;
@@ -223,34 +251,25 @@ void engine_load_demo(Engine* e) {
 void engine_load_physics_demo(Engine* e) {
     if (!e) return;
     eng::clearScene(e);
-    eng::addFloor(e);
+    createSpec(e, R"({"tipo":"chao","tamanho":40})", false);
+    char spec[320];
     int k = 0;
     for (int row = 0; row < 5; ++row)
         for (int i = 0; i < 5 - row; ++i) {
-            char name[32]; std::snprintf(name, sizeof(name), "Caixa %d", ++k);
-            Scene::Handle h = eng::addMeshObject(e, name, e->cube, e->matPalette[4],
-                                                 {(i - (4 - row) * 0.5f) * 0.82f, 0.4f + row * 0.8f, 0.f}, glm::vec3(0.8f));
-            eng::addBody(e, h, ColliderType::Box, 1.f);
+            std::snprintf(spec, sizeof(spec), R"({"tipo":"forma","forma":"cubo","paleta":"madeira","nome":"Caixa %d","pos":[%.3f,%.3f,0],"escala":[0.8,0.8,0.8]})",
+                          ++k, (i - (4 - row) * 0.5f) * 0.82f, 0.4f + row * 0.8f);
+            createSpec(e, spec, false);
         }
+    static const char* forms[] = {"esfera", "capsula", "pedra"};
     for (int i = 0; i < 12; ++i) {
-        char name[32];
         float x = -2.5f + (i % 4) * 1.6f, z = -1.5f + (i / 4) * 1.4f, y = 5.f + (i % 3) * 1.2f;
-        glm::vec3 eul(i * 23.f, i * 41.f, i * 17.f);
         int kind = i % 3;
-        Scene::Handle h;
-        if (kind == 0) {
-            std::snprintf(name, sizeof(name), "Esfera %d", i);
-            h = eng::addMeshObject(e, name, e->sphere, e->matPalette[i % 2 ? 2 : 3], {x, y, z}, glm::vec3(0.7f));
-            eng::addBody(e, h, ColliderType::Sphere, 1.f);
-        } else if (kind == 1) {
-            std::snprintf(name, sizeof(name), "Capsula %d", i);
-            h = eng::addMeshObject(e, name, e->capsule, e->matPalette[0], {x, y, z}, glm::vec3(0.5f), eul);
-            eng::addBody(e, h, ColliderType::Capsule, 1.f);
-        } else {
-            std::snprintf(name, sizeof(name), "Pedra %d", i);
-            h = eng::addMeshObject(e, name, e->rock, e->matPalette[5], {x, y, z}, glm::vec3(0.9f), eul);
-            eng::addBody(e, h, ColliderType::ConvexMesh, 2.f);
-        }
+        const char* pal = kind == 0 ? (i % 2 ? "ouro" : "azul") : kind == 1 ? "laranja" : "pedra";
+        float sc = kind == 0 ? 0.7f : kind == 1 ? 0.5f : 0.9f;
+        std::snprintf(spec, sizeof(spec), R"({"tipo":"forma","forma":"%s","paleta":"%s","nome":"%s %d","pos":[%.2f,%.2f,%.2f],"escala":[%.2f,%.2f,%.2f],"rot":[%d,%d,%d],"massa":%d})",
+                      forms[kind], pal, kind == 0 ? "Esfera" : kind == 1 ? "Capsula" : "Pedra", i, x, y, z, sc, sc, sc,
+                      kind ? i * 23 : 0, kind ? i * 41 : 0, kind ? i * 17 : 0, kind == 2 ? 2 : 1);
+        createSpec(e, spec, false);
     }
     e->editorCam.target = glm::vec3(0.f, 1.5f, 0.f);
     e->editorCam.distance = 13.f;
@@ -259,34 +278,15 @@ void engine_load_physics_demo(Engine* e) {
 
 int engine_load_model(Engine* e, const char* path) {
     if (!e || !path) return -1;
-    auto model = std::make_unique<eng::LoadedModel>();
-    eng::LoadContext ctx{e->renderer, e->scene, e->meshRenderers, e->animatorPool};
-    size_t len = std::strlen(path);
-    bool fbx = len > 4 && (std::strcmp(path + len - 4, ".fbx") == 0 || std::strcmp(path + len - 4, ".FBX") == 0);
-    if (!(fbx ? eng::loadFbx(path, ctx, *model) : eng::loadGltf(path, ctx, *model))) {
-        e->lastError = model->error;
-        for (auto h : model->allNodes) if (GameObject* g = e->scene.get(h)) eng::releaseComponents(e, *g);
-        for (auto h : model->roots) e->scene.destroy(h);
-        return -1;
-    }
-    int rootId = -1;
-    for (auto h : model->allNodes) {
-        int id = eng::registerObject(e, h);
-        if (rootId < 0) rootId = id;
-    }
-    for (Animator* a : model->animators) e->animators.push_back(a);
-    e->models.push_back(std::move(model));
+    std::string spec = "{\"tipo\":\"modelo\",\"arquivo\":" + eng::jsonString(path) + "}";
+    int rootId = createSpec(e, spec, false);
+    if (rootId < 0) return -1;
     e->lastError.clear();
-
-    // Modelo pousado no chão e centrado no foco; enquadra a câmera nele
+    // chão cresce para caber o modelo; câmera enquadra
     if (GameObject* root = eng::objectById(e, rootId)) {
         e->scene.updateTransforms();
         AABB b;
         if (eng::subtreeBounds(e, *root, b)) {
-            glm::vec3 c = (b.min + b.max) * 0.5f;
-            glm::vec3 at = e->mapKind >= 0 ? e->editorCam.target : glm::vec3(0.f);
-            float ground = eng::mapHeight(e, at.x, at.z);
-            root->transform.setPosition(root->transform.position + glm::vec3(at.x - c.x, ground - b.min.y, at.z - c.z));
             float extent = std::max(b.max.x - b.min.x, b.max.z - b.min.z) * 4.f;
             e->scene.forEach([&](GameObject& g, Scene::Handle) {
                 if (std::strcmp(g.name, "Chao") != 0 || g.transform.scale.x >= extent) return;
@@ -304,51 +304,15 @@ const char* engine_last_error(Engine* e) { return e ? e->lastError.c_str() : "";
 
 int engine_add_object(Engine* e, int kind, int withPhysics) {
     if (!e) return -1;
-    eng::ensureBasics(e);
-    static int counter = 0;
-    char name[32];
-    eng::MeshId mesh = e->cube; ColliderType ct = ColliderType::Box; eng::MaterialId mat = e->matPalette[0];
-    glm::vec3 scale(1.f);
-    switch (kind) {
-        case 1: mesh = e->sphere; ct = ColliderType::Sphere; mat = e->matPalette[3]; std::snprintf(name, sizeof(name), "Esfera %d", ++counter); break;
-        case 2: mesh = e->capsule; ct = ColliderType::Capsule; mat = e->matPalette[2]; scale = glm::vec3(0.6f); std::snprintf(name, sizeof(name), "Capsula %d", ++counter); break;
-        case 3: mesh = e->rock; ct = ColliderType::ConvexMesh; mat = e->matPalette[5]; std::snprintf(name, sizeof(name), "Pedra %d", ++counter); break;
-        default: std::snprintf(name, sizeof(name), "Cubo %d", ++counter); break;
-    }
-    glm::vec3 pos = e->editorCam.target;
-    pos.y = std::max(pos.y, eng::mapHeight(e, pos.x, pos.z)) + 2.f;  // nasce acima do foco (cai no Play)
-    Scene::Handle h = eng::addMeshObject(e, name, mesh, mat, pos, scale);
-    if (withPhysics) eng::addBody(e, h, ct, 1.f);
-    eng::selectHandle(e, h);
-    GameObject* g = e->scene.get(h);
-    return g ? g->id : -1;
+    static const char* forms[] = {"cubo", "esfera", "capsula", "pedra"};
+    char spec[96];
+    std::snprintf(spec, sizeof(spec), R"({"tipo":"forma","forma":"%s","fisica":%s})", forms[std::clamp(kind, 0, 3)], withPhysics ? "true" : "false");
+    return createSpec(e, spec);
 }
 
 void engine_delete_selected(Engine* e) {
-    if (!e) return;
-    GameObject* sel = e->scene.get(e->selected);
-    if (!sel) return;
-    std::vector<const eng::Transform3D*> gone;
-    Scene::forEachInSubtree(*sel, [&](GameObject& g) { gone.push_back(&g.transform); });
-    auto isGone = [&](const eng::Transform3D* t) { return t && std::find(gone.begin(), gone.end(), t) != gone.end(); };
-    // armas presas a personagens apagados (ou a própria arma apagada) saem da lista
-    e->attachments.erase(std::remove_if(e->attachments.begin(), e->attachments.end(), [&](const eng::Attachment& a) {
-        GameObject* o = e->scene.get(a.obj);
-        return !o || isGone(&o->transform) || (a.anim && isGone(a.anim->space));
-    }), e->attachments.end());
-    for (Animator* a : e->animators) if (isGone(a->space)) a->space = nullptr;
-    for (size_t i = 0; i < e->characters.size(); ++i) {
-        eng::CharacterInfo& c = e->characters[i];
-        GameObject* r = e->scene.get(c.root);
-        if (r && isGone(&r->transform)) {
-            c.root = {}; c.anim = nullptr;
-            if (e->player == int(i)) e->player = -1;
-        }
-        GameObject* w = e->scene.get(c.weapon);
-        if (w && isGone(&w->transform)) { c.weapon = {}; c.weaponKind = -1; }
-    }
-    Scene::forEachInSubtree(*sel, [&](GameObject& g) { eng::releaseComponents(e, g); });
-    e->scene.destroy(e->selected);
+    if (!e || !e->scene.get(e->selected)) return;
+    eng::deleteObject(e, e->selected);
     eng::selectHandle(e, {});
 }
 
@@ -384,17 +348,18 @@ void engine_set_transform(Engine* e, int id, const float* p, const float* r, con
     g->transform.setEulerDegrees({r[0], r[1], r[2]});
     g->transform.setScale({s[0], s[1], s[2]});
     if (g->rigidBody) e->physics.syncFromTransform(*g->rigidBody);
+    ++e->revision;
 }
 void engine_set_gizmo_mode(Engine* e, int m) {
     if (e) e->gizmo.mode = m == 1 ? Gizmo::Mode::Rotate : m == 2 ? Gizmo::Mode::Scale : Gizmo::Mode::Translate;
 }
 
 // ---------- visual ----------
-void engine_set_exposure(Engine* e, float x) { if (e) e->env.exposure = std::clamp(x, 0.05f, 8.f); }
+void engine_set_exposure(Engine* e, float x) { if (e) { e->env.exposure = std::clamp(x, 0.05f, 8.f); ++e->revision; } }
 float engine_get_exposure(Engine* e) { return e ? e->env.exposure : 1.f; }
-void engine_set_sun_intensity(Engine* e, float x) { if (e) e->sun.intensity = std::clamp(x, 0.f, 20.f); }
+void engine_set_sun_intensity(Engine* e, float x) { if (e) { e->sun.intensity = std::clamp(x, 0.f, 20.f); ++e->revision; } }
 float engine_get_sun_intensity(Engine* e) { return e ? e->sun.intensity : 0.f; }
-void engine_set_grid(Engine* e, int v) { if (e) e->showGrid = v != 0; }
+void engine_set_grid(Engine* e, int v) { if (e) { e->showGrid = v != 0; ++e->revision; } }
 
 // ---------- animação ----------
 static void animatorsOfSelection(Engine* e, std::vector<Animator*>& out) {
@@ -413,6 +378,40 @@ int engine_cycle_animation(Engine* e) {
     for (Animator* a : list) if (a->clipCount > 0) { a->setClip(a->clipIndex + 1); idx = a->clipIndex; }
     return idx;
 }
+const char* engine_animation_list(Engine* e) {
+    if (!e) return "";
+    std::vector<Animator*> list;
+    animatorsOfSelection(e, list);
+    e->toolResult.clear();
+    for (Animator* a : list) {
+        if (a->clipCount <= 0) continue;
+        int keep = a->clipIndex;
+        for (int i = 0; i < a->clipCount; ++i) {
+            a->clipIndex = i;
+            const AnimationClip* c = a->clip();
+            e->toolResult += c && c->name[0] ? std::string(c->name) : "Animação " + std::to_string(i + 1);
+            e->toolResult += '\n';
+        }
+        a->clipIndex = keep;
+        break;
+    }
+    return e->toolResult.c_str();
+}
+int engine_animation_index(Engine* e) {
+    if (!e) return -1;
+    std::vector<Animator*> list;
+    animatorsOfSelection(e, list);
+    for (Animator* a : list) if (a->clipCount > 0) return a->clipIndex;
+    return -1;
+}
+void engine_set_animation(Engine* e, int index) {
+    if (!e) return;
+    std::vector<Animator*> list;
+    animatorsOfSelection(e, list);
+    for (Animator* a : list) if (a->clipCount > 0) a->setClip(index);
+}
+void engine_set_anim_preview(Engine* e, int on) { if (e) e->previewAnim = on != 0; }
+
 const char* engine_animation_name(Engine* e) {
     if (!e) return "";
     std::vector<Animator*> list;
@@ -432,45 +431,46 @@ void engine_get_stats(Engine* e, float* o) {
 // ---------- criação procedural ----------
 int engine_create_character(Engine* e, const float* p) {
     if (!e || !p) return -1;
-    eng::CharacterParams c;
-    auto col = [&](int i) { return eng::srgb(p[i] * 255.f, p[i + 1] * 255.f, p[i + 2] * 255.f); };
-    c.height = std::clamp(p[0], 1.f, 2.4f);
-    c.build = std::clamp(int(p[1] + 0.5f), 0, 2);
-    c.skin = col(2); c.shirt = col(5); c.pants = col(8); c.shoes = col(11); c.hair = col(14);
-    c.hairStyle = std::clamp(int(p[17] + 0.5f), 0, 3);
-    c.longSleeves = p[18] > 0.5f;
-    glm::vec3 pos = e->editorCam.target;
-    pos.y = e->mapKind < 0 ? 0.f : eng::mapHeight(e, pos.x, pos.z) + 0.05f;
-    int id = eng::createCharacter(e, c, pos, 0.f, p[19] > 0.5f);
-    if (id >= 0) eng::selectHandle(e, e->objects[id]);
-    return id;
+    char spec[600];
+    auto col = [&](int i) { char b[48]; std::snprintf(b, sizeof(b), "[%.3f,%.3f,%.3f]", p[i], p[i + 1], p[i + 2]); return std::string(b); };
+    static const char* builds[] = {"magro", "normal", "forte"};
+    static const char* hair[] = {"careca", "curto", "comprido", "bone"};
+    std::snprintf(spec, sizeof(spec),
+                  R"({"tipo":"personagem","jogador":%s,"aparencia":{"altura":%.2f,"corpo":"%s","pele":%s,"camisa":%s,"calca":%s,"tenis":%s,"cabelo":%s,"estilo_cabelo":"%s","manga_comprida":%s}})",
+                  p[19] > 0.5f ? "true" : "false", std::clamp(p[0], 1.f, 2.4f), builds[std::clamp(int(p[1] + 0.5f), 0, 2)],
+                  col(2).c_str(), col(5).c_str(), col(8).c_str(), col(11).c_str(), col(14).c_str(),
+                  hair[std::clamp(int(p[17] + 0.5f), 0, 3)], p[18] > 0.5f ? "true" : "false");
+    return createSpec(e, spec);
 }
 
 int engine_create_random_character(Engine* e, uint32_t seed, int controllable) {
     if (!e) return -1;
-    glm::vec3 pos = e->editorCam.target;
-    pos.y = e->mapKind < 0 ? 0.f : eng::mapHeight(e, pos.x, pos.z) + 0.05f;
-    int id = eng::createCharacter(e, eng::randomCharacter(seed), pos, 0.f, controllable != 0);
-    if (id >= 0) eng::selectHandle(e, e->objects[id]);
-    return id;
+    char spec[120];
+    std::snprintf(spec, sizeof(spec), R"({"tipo":"personagem","semente":%u,"jogador":%s})", seed ? seed : 1u, controllable ? "true" : "false");
+    return createSpec(e, spec);
 }
 
 int engine_create_weapon(Engine* e, int kind) {
     if (!e) return -1;
+    static const char* names[] = {"pistola", "fuzil", "escopeta", "sniper", "faca", "taco"};
     int ch = eng::characterOfSelection(e);
     if (ch < 0 && engine_has_player(e)) ch = e->player;
-    int id = eng::createWeapon(e, kind, ch);
-    if (ch < 0 && id >= 0) eng::selectHandle(e, e->objects[id]);
-    return id;
+    char spec[120];
+    if (ch >= 0) {
+        GameObject* owner = e->scene.get(e->characters[ch].root);
+        std::snprintf(spec, sizeof(spec), R"({"tipo":"arma","arma":"%s","portador":%d})", names[std::clamp(kind, 0, 5)], owner ? owner->id : -1);
+        return createSpec(e, spec, false);
+    }
+    std::snprintf(spec, sizeof(spec), R"({"tipo":"arma","arma":"%s"})", names[std::clamp(kind, 0, 5)]);
+    return createSpec(e, spec);
 }
 
 int engine_create_building(Engine* e, int kind, uint32_t seed) {
     if (!e) return -1;
-    glm::vec3 pos = e->editorCam.target;
-    Scene::Handle h = eng::createBuilding(e, kind, seed, pos);
-    eng::selectHandle(e, h);
-    GameObject* g = e->scene.get(h);
-    return g ? g->id : -1;
+    static const char* names[] = {"casa", "sobrado", "barraco", "predio", "arranha_ceu", "escola", "arvore", "pinheiro", "palmeira", "carro", "poste", "muro"};
+    char spec[120];
+    std::snprintf(spec, sizeof(spec), R"({"tipo":"construcao","modelo":"%s","semente":%u})", names[std::clamp(kind, 0, 11)], seed ? seed : 1u);
+    return createSpec(e, spec);
 }
 
 void engine_load_map(Engine* e, int kind, uint32_t seed) {
@@ -497,6 +497,7 @@ template <class F> static void forSelectedRenderers(Engine* e, F&& f) {
 void engine_set_object_material(Engine* e, int i) {
     if (!e || i < 0 || i >= int(Mat::Count)) return;
     forSelectedRenderers(e, [&](eng::MeshRenderer& mr) { mr.material = e->mats[i]; });
+    recordEdit(e, "material", eng::jsonString(eng::matName(Mat(i))));
 }
 
 void engine_set_object_color(Engine* e, float r, float g, float b) {
@@ -507,6 +508,9 @@ void engine_set_object_color(Engine* e, float r, float g, float b) {
             if (g2.emitter) { g2.emitter->customColor = true; g2.emitter->color = c; }
         });
     forSelectedRenderers(e, [&](eng::MeshRenderer& mr) { mr.material = eng::tintedMaterial(e, mr.material, c); });
+    char v[64];
+    std::snprintf(v, sizeof(v), "[%.3f,%.3f,%.3f]", c.r, c.g, c.b);
+    recordEdit(e, "cor", v);
 }
 
 int engine_set_object_texture(Engine* e, const char* path) {
@@ -529,6 +533,7 @@ int engine_set_object_texture(Engine* e, const char* path) {
         remap.push_back({mr.material, id});
         mr.material = id;
     });
+    recordEdit(e, "textura", eng::jsonString(path));
     return 1;
 }
 
@@ -536,7 +541,7 @@ int engine_set_object_texture(Engine* e, const char* path) {
 int engine_has_player(Engine* e) {
     return e && e->player >= 0 && e->player < int(e->characters.size()) && e->scene.get(e->characters[e->player].root);
 }
-void engine_set_player(Engine* e) { if (e) { int c = eng::characterOfSelection(e); if (c >= 0) eng::setPlayer(e, c); } }
+void engine_set_player(Engine* e) { if (e) { int c = eng::characterOfSelection(e); if (c >= 0) { eng::setPlayer(e, c); ++e->revision; } } }
 void engine_player_input(Engine* e, float x, float y, int run) {
     if (!e) return;
     e->moveInput = glm::vec2(std::clamp(x, -1.f, 1.f), std::clamp(y, -1.f, 1.f));
@@ -609,6 +614,7 @@ void engine_touch(Engine* e, int action, int n, const int* ids, const float* xy)
         if (e->tapCandidate && !e->gizmoGrabbed && m >= 1) handleTap(e, {t[0].x, t[0].y});
         if (e->gizmoGrabbed) {
             if (GameObject* g = e->gizmo.target; g && g->rigidBody) e->physics.syncFromTransform(*g->rigidBody);
+            ++e->revision;
         }
         e->tapCandidate = false;
         e->gizmoGrabbed = false;
@@ -618,11 +624,13 @@ void engine_touch(Engine* e, int action, int n, const int* ids, const float* xy)
 }
 
 // ---------- efeitos ----------
+static const char* kFxKeys[] = {"fogueira", "tocha", "fumaca", "faiscas", "aura", "portal", "explosao", "orbe", "coluna_luz"};
+static const char* kElKeys[] = {"fogo", "gelo", "trevas", "luz", "veneno", "raio", "arcano"};
 int engine_create_effect(Engine* e, int kind, int element) {
     if (!e) return -1;
-    int id = eng::createEffect(e, kind, element);
-    if (id >= 0) eng::selectHandle(e, e->objects[id]);
-    return id;
+    char spec[120];
+    std::snprintf(spec, sizeof(spec), R"({"tipo":"efeito","efeito":"%s","elemento":"%s"})", kFxKeys[std::clamp(kind, 0, 8)], kElKeys[std::clamp(element, 0, 6)]);
+    return createSpec(e, spec);
 }
 void engine_spawn_effect(Engine* e, int kind, int element, float x, float y, float z) {
     if (e) eng::spawnEffect(e, kind, element, {x, y, z});
@@ -634,6 +642,10 @@ void engine_set_effect_element(Engine* e, int element) {
     Scene::forEachInSubtree(*sel, [&](GameObject& g) {
         if (g.emitter) { g.emitter->element = std::clamp(element, 0, int(eng::EL_Count) - 1); g.emitter->customColor = false; }
     });
+    if (GameObject* root = eng::rootOf(e, sel)) {
+        eng::recipeSet(e, *root, "cor", "null");
+        eng::recipeSet(e, *root, "elemento", eng::jsonString(kElKeys[std::clamp(element, 0, 6)]));
+    }
 }
 void engine_player_cast(Engine* e, int element) { if (e && e->playing) eng::castSpell(e, element); }
 
@@ -648,5 +660,57 @@ void engine_set_camera(Engine* e, float tx, float ty, float tz, float yaw, float
 int engine_make_character(Engine* e, int controllable) {
     if (!e) return -1;
     e->lastError.clear();
-    return eng::makeCharacterFromModel(e, controllable != 0);
+    int id = eng::makeCharacterFromModel(e, controllable != 0);
+    if (GameObject* g = eng::objectById(e, id)) eng::recipeSet(e, *g, "personagem", "true");
+    return id;
+}
+
+// ---------- projeto ----------
+const char* engine_export_project(Engine* e) {
+    if (!e) return "";
+    e->toolResult = eng::exportProject(e, false);
+    return e->toolResult.c_str();
+}
+int engine_import_project(Engine* e, const char* json) {
+    if (!e || !json) return 0;
+    std::string err;
+    bool ok = eng::importProject(e, json, &err);
+    if (!ok) e->lastError = err;
+    return ok ? 1 : 0;
+}
+long long engine_project_revision(Engine* e) { return e ? (long long)e->revision : 0; }
+void engine_set_project_name(Engine* e, const char* name) { if (e && name) e->projectName = name; }
+const char* engine_tool_call(Engine* e, const char* name, const char* input) {
+    if (!e || !name) return "{\"erro\":\"motor não iniciado\"}";
+    e->toolResult = eng::toolCall(e, name, input ? input : "{}");
+    return e->toolResult.c_str();
+}
+int engine_add_spec(Engine* e, const char* json) { return e && json ? createSpec(e, json) : -1; }
+void engine_set_time_of_day(Engine* e, float hour) { if (e) eng::setTimeOfDay(e, hour); }
+float engine_get_time_of_day(Engine* e) { return e ? e->timeOfDay : 13.f; }
+
+int engine_export_glb(Engine* e, int object_id, const char* path) {
+    if (!e || !path) return 0;
+    std::string err;
+    bool ok = eng::exportGlb(e, object_id, path, &err);
+    e->lastError = err;
+    return ok ? 1 : 0;
+}
+
+// ---------- jogo ----------
+void engine_game_status(Engine* e, float* o) {
+    if (!e || !o) return;
+    const eng::GameState& G = e->game;
+    o[0] = float(G.state); o[1] = G.playerHp; o[2] = G.playerMax; o[3] = float(G.score);
+    o[4] = G.time; o[5] = e->rules.tempo; o[6] = G.hurtTimer; o[7] = e->rules.objetivo != "livre" ? 1.f : 0.f;
+}
+const char* engine_game_text(Engine* e, int which) {
+    if (!e) return "";
+    switch (which) {
+        case 0: e->toolResult = eng::gameStatusText(e); break;
+        case 1: e->toolResult = e->game.message; break;
+        case 2: e->toolResult = e->rules.titulo; break;
+        default: e->toolResult = e->rules.descricao; break;
+    }
+    return e->toolResult.c_str();
 }

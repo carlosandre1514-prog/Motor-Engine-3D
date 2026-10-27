@@ -65,6 +65,48 @@ struct TerrainChunk {
     std::vector<Scene::Handle> objects;
 };
 
+// ---- Lógica de jogo (Game.cpp)
+enum BehaviorType { BH_Enemy, BH_Health, BH_Collect, BH_Goal, BH_Spawner, BH_DamageZone, BH_Rotate, BH_Float, BH_Platform,
+                    BH_Explosive, BH_Count };
+struct Behavior {
+    int type = BH_Health;
+    Scene::Handle obj;
+    // parâmetros (o significado depende do tipo)
+    float vida = 100.f, velocidade = 3.f, dano = 10.f, alcance = 25.f, raio = 2.f, intervalo = 5.f, tempo = 3.f;
+    int pontos = 10, maximo = 6, total = 0, element = 0;
+    float cura = 0.f;
+    bool ranged = false;
+    std::string armaInimigo;     // spawner: arma dos inimigos criados
+    glm::vec3 destino{0.f};
+    // estado em tempo de jogo
+    float timer = 0.f, hp = 100.f, deadTime = 0.f, accum = 0.f, fxTimer = 0.f;
+    int spawnedCount = 0, alive = 0;
+    bool dead = false, aggro = false, done = false;
+    glm::vec3 start{0.f};
+    glm::quat startRot{1, 0, 0, 0};
+    int parent = -1;             // inimigo criado por um spawner (índice do spawner)
+    bool kinematic = false;
+};
+struct GameRules {
+    std::string objetivo = "livre";  // livre, sobreviver, coletar, chegar, eliminar, pontos
+    int quantidade = 0;
+    float tempo = 0.f;               // limite de tempo (s); 0 = sem limite
+    float vidaJogador = 100.f;
+    std::string titulo, descricao;
+};
+struct GameState {
+    int state = 0;                   // 0 jogando, 1 vitória, 2 derrota
+    float time = 0.f;
+    int score = 0, collected = 0, killed = 0, totalCollect = 0, totalEnemies = 0;
+    float playerHp = 100.f, playerMax = 100.f, hurtTimer = 0.f;
+    std::vector<Behavior> behaviors;
+    std::vector<Scene::Handle> spawned;           // criados durante o Play (apagados no Stop)
+    std::vector<Scene::Handle> hidden;            // escondidos durante o Play (voltam no Stop)
+    std::vector<RigidBody*> disabledBodies;
+    std::string message;                          // aviso curto (ex.: "Vitória!")
+};
+struct LightObject { Scene::Handle obj; glm::vec3 color{1.f}; float intensity = 8.f, radius = 10.f; };
+
 enum MapKind { MAP_None = -1, MAP_Infinite = 0, MAP_City, MAP_Favela, MAP_School, MAP_Suburb, MAP_Count };
 
 struct Tracer { glm::vec3 a, b; float life = 0.f; };
@@ -143,8 +185,19 @@ struct Engine {
     Tracer tracers[16];
     struct CamState { glm::vec3 target; float yaw, pitch, distance; } savedCam{};
 
+    // Projeto
+    std::vector<std::string> recipes;   // JSON de criação de cada objeto raiz (GameObject::recipe)
+    uint64_t revision = 0;              // muda a cada edição (salvamento automático)
+    std::string projectName = "Projeto";
+    float timeOfDay = 13.f;
+    std::vector<LightObject> lightObjects;
+    GameRules rules;
+    GameState game;
+    std::string toolResult;             // resposta da última chamada de ferramenta (IA)
+
     bool playing = false;
     bool showGrid = true;
+    bool previewAnim = true;          // animações rodando também no editor
     int width = 1, height = 1;
     Scene::Handle selected;
     std::string lastError;
@@ -210,8 +263,37 @@ int gatherLights(Engine* e, PointLight* out, int max);           // luzes da cen
 void drawEffectsOverlay(Engine* e, const glm::mat4& vp, bool editor);
 bool pickEmitter(Engine* e, glm::vec3 o, glm::vec3 d, float& t, GameObject*& hit);
 
+// ---- personagens: movimento compartilhado por jogador e inimigos (Engine.cpp)
+bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt);
+void deleteObject(Engine* e, Scene::Handle h);
+
+// ---- jogo (Game.cpp)
+void gameStart(Engine* e);
+void gameStop(Engine* e);
+void gameUpdate(Engine* e, float dt);
+void damageAt(Engine* e, GameObject* hit, float dmg, glm::vec3 from);
+void damageRadius(Engine* e, glm::vec3 c, float radius, float dmg, bool hurtPlayer = false);
+int behaviorTypeFromName(const std::string& n);
+
+// ---- projeto (Project.cpp): formato JSON único para salvar, abrir e comandos da IA
+int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err);
+std::string exportProject(Engine* e, bool withIds);
+bool importProject(Engine* e, const std::string& json, std::string* err);
+std::string toolCall(Engine* e, const std::string& name, const std::string& inputJson);
+void setTimeOfDay(Engine* e, float hour);
+int recordRecipe(Engine* e, GameObject& root, const std::string& specJson);
+// Muda um campo da receita do objeto raiz (ex.: cor/material editados no inspetor). valueJson: JSON do valor.
+void recipeSet(Engine* e, GameObject& root, const char* key, const std::string& valueJson);
+void recipePartSet(Engine* e, GameObject& root, int partIndex, const char* key, const std::string& valueJson);
+std::string jsonString(const std::string& s);   // "texto" com escapes JSON
+GameObject* rootOf(Engine* e, GameObject* g);   // raiz editável (com id) acima de g
+int loadModelFile(Engine* e, const char* path); // .glb/.gltf/.fbx -> id da raiz (-1 = erro em lastError)
+std::string gameStatusText(Engine* e);
+// Exporta para .glb: rootId >= 0 = só esse objeto (na origem), -1 = cena inteira (Export.cpp)
+bool exportGlb(Engine* e, int rootId, const std::string& path, std::string* err);         // texto do objetivo para o HUD
+
 // ---- mundo (World.cpp)
-void loadMap(Engine* e, int kind, uint32_t seed);
+void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer = true);
 void clearWorld(Engine* e);
 void updateWorld(Engine* e);           // streaming do mundo infinito
 float mapHeight(Engine* e, float x, float z);

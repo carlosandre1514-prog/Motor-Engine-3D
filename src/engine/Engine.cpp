@@ -277,6 +277,11 @@ void clearScene(Engine* e) {
     e->animators.clear();
     e->characters.clear();
     e->retargets.clear();
+    e->recipes.clear();
+    e->lightObjects.clear();
+    e->game = GameState{};
+    e->rules = GameRules{};
+    ++e->revision;
     e->attachments.clear();
     e->models.clear();
     e->snapshot.clear();
@@ -474,6 +479,10 @@ static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* sel
     } else if (any) {
         fxImpact(e->particles, e->fxRng, hit, dir);
     }
+    if (any && obj) {  // dano em inimigos / objetos com vida
+        static const float dmg[] = {25.f, 20.f, 60.f, 100.f, 35.f, 30.f};
+        damageAt(e, obj, dmg[std::clamp(kind, 0, 5)], from);
+    }
     if (any && obj && obj->rigidBody && obj->rigidBody->mass > 0.f) {
         RigidBody* rb = obj->rigidBody;
         glm::vec3 imp = dir * power * rb->mass * 0.4f;
@@ -481,6 +490,40 @@ static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* sel
         btVector3 rel = btVector3(hit.x, hit.y, hit.z) - rb->body->getCenterOfMassPosition();
         rb->body->applyImpulse({imp.x, imp.y, imp.z}, rel);
     }
+}
+
+// Move um personagem (jogador ou inimigo): velocidade horizontal, pulo, virar para o movimento e animação
+bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt) {
+    GameObject* go = e->scene.get(c.root);
+    if (!go || !go->rigidBody || !go->rigidBody->body) return false;
+    btRigidBody* b = go->rigidBody->body;
+    float mag = std::min(1.f, glm::length(move));
+    if (mag > 1e-3f) move = glm::normalize(move);
+    btVector3 vel = b->getLinearVelocity();
+    glm::vec3 center = go->transform.position + glm::vec3(0, c.height * 0.5f, 0);
+    glm::vec3 hit; GameObject* obj = nullptr; float frac;
+    bool grounded = e->physics.raycastIgnoring(center, center - glm::vec3(0, c.height * 0.5f + 0.25f, 0), b, hit, obj, frac);
+    btVector3 nv(move.x * speed * mag, vel.y(), move.z * speed * mag);
+    if (jump && grounded) nv.setY(5.2f);
+    b->setLinearVelocity(nv);
+    b->activate(true);
+    if (mag > 0.05f) {
+        glm::quat target = glm::angleAxis(std::atan2(move.x, move.z), glm::vec3(0, 1, 0));
+        glm::quat q = glm::slerp(go->transform.rotation, target, 1.f - std::exp(-12.f * dt));
+        btTransform t = b->getWorldTransform();
+        t.setRotation({q.x, q.y, q.z, q.w});
+        b->setWorldTransform(t);
+        go->transform.setRotation(q);
+    }
+    if (c.anim) {
+        float hs = std::sqrt(nv.x() * nv.x() + nv.z() * nv.z());
+        int clip = hs < 0.4f ? CC_Idle : hs < 4.f ? CC_Walk : CC_Run;
+        if (isGun(c.weaponKind)) clip += CC_IdleArmed;
+        clip = c.clipMap[clip];
+        if (grounded && clip >= 0 && c.anim->clipIndex != clip) c.anim->setClip(clip);
+        c.anim->speed = hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
+    }
+    return grounded;
 }
 
 void updatePlayer(Engine* e, float dt) {
@@ -491,50 +534,59 @@ void updatePlayer(Engine* e, float dt) {
     GameObject* go = e->scene.get(c.root);
     if (!go || !go->rigidBody || !go->rigidBody->body) return;
     btRigidBody* b = go->rigidBody->body;
+    bool alive = e->game.state == 0;  // derrota/vitória: o jogador para
 
     float yaw = e->editorCam.yaw;
     glm::vec3 fwd(-std::sin(yaw), 0.f, -std::cos(yaw)), right(std::cos(yaw), 0.f, -std::sin(yaw));
-    glm::vec3 move = right * e->moveInput.x + fwd * e->moveInput.y;
-    float mag = std::min(1.f, glm::length(move));
-    if (mag > 1e-3f) move = glm::normalize(move);
-    float speed = (e->runInput ? 6.5f : 2.6f) * mag;
-
-    btVector3 vel = b->getLinearVelocity();
-    glm::vec3 center = go->transform.position + glm::vec3(0, c.height * 0.5f, 0);
-    glm::vec3 hit; GameObject* obj = nullptr; float frac;
-    bool grounded = e->physics.raycastIgnoring(center, center - glm::vec3(0, c.height * 0.5f + 0.25f, 0), b, hit, obj, frac);
-    btVector3 nv(move.x * speed, vel.y(), move.z * speed);
-    if (e->jumpRequest && grounded) nv.setY(5.2f);
+    glm::vec3 move = alive ? right * e->moveInput.x + fwd * e->moveInput.y : glm::vec3(0.f);
+    driveCharacter(e, c, move, e->runInput ? 6.5f : 2.6f, alive && e->jumpRequest, dt);
     e->jumpRequest = false;
-    b->setLinearVelocity(nv);
-    b->activate(true);
 
-    // vira na direção do movimento
-    if (mag > 0.05f) {
-        glm::quat target = glm::angleAxis(std::atan2(move.x, move.z), glm::vec3(0, 1, 0));
-        glm::quat q = glm::slerp(go->transform.rotation, target, 1.f - std::exp(-12.f * dt));
-        btTransform t = b->getWorldTransform();
-        t.setRotation({q.x, q.y, q.z, q.w});
-        b->setWorldTransform(t);
-        go->transform.setRotation(q);
-    }
-
-    // animação conforme a velocidade
-    if (c.anim) {
-        float hs = std::sqrt(nv.x() * nv.x() + nv.z() * nv.z());
-        int clip = hs < 0.4f ? CC_Idle : hs < 4.f ? CC_Walk : CC_Run;
-        if (isGun(c.weaponKind)) clip += CC_IdleArmed;
-        clip = c.clipMap[clip];
-        if (grounded && clip >= 0 && c.anim->clipIndex != clip) c.anim->setClip(clip);
-        c.anim->speed = hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
-    }
-
-    if (e->fireRequest && e->fireCooldown <= 0.f) fire(e, c, *go, b);
+    if (alive && e->fireRequest && e->fireCooldown <= 0.f) fire(e, c, *go, b);
     e->fireRequest = false;
 
     // câmera em terceira pessoa segue o jogador
     glm::vec3 focus = go->transform.position + glm::vec3(0, c.height * 0.85f, 0);
     e->editorCam.target = glm::mix(e->editorCam.target, focus, 1.f - std::exp(-10.f * dt));
+}
+
+void deleteObject(Engine* e, Scene::Handle h) {
+    GameObject* sel = e->scene.get(h);
+    if (!sel) return;
+    std::vector<const Transform3D*> gone;
+    Scene::forEachInSubtree(*sel, [&](GameObject& g) { gone.push_back(&g.transform); });
+    auto isGone = [&](const Transform3D* t) { return t && std::find(gone.begin(), gone.end(), t) != gone.end(); };
+    // armas presas a personagens apagados (ou a própria arma apagada) saem da lista
+    e->attachments.erase(std::remove_if(e->attachments.begin(), e->attachments.end(), [&](const Attachment& a) {
+        GameObject* o = e->scene.get(a.obj);
+        return !o || isGone(&o->transform) || (a.anim && isGone(a.anim->space));
+    }), e->attachments.end());
+    std::vector<Animator*> ownAnims;  // animators dos nós apagados saem da lista e voltam ao pool
+    Scene::forEachInSubtree(*sel, [&](GameObject& g) { if (g.animator) ownAnims.push_back(g.animator); });
+    e->animators.erase(std::remove_if(e->animators.begin(), e->animators.end(), [&](Animator* a) {
+        return std::find(ownAnims.begin(), ownAnims.end(), a) != ownAnims.end();
+    }), e->animators.end());
+    for (Animator* a : e->animators) if (isGone(a->space)) a->space = nullptr;
+    for (size_t i = e->characters.size(); i-- > 0;) {
+        CharacterInfo& c = e->characters[i];
+        GameObject* w = e->scene.get(c.weapon);
+        if (w && isGone(&w->transform)) { c.weapon = {}; c.weaponKind = -1; }
+        GameObject* r = e->scene.get(c.root);
+        if (!r || isGone(&r->transform)) {
+            if (e->player == int(i)) e->player = -1;
+            else if (e->player > int(i)) --e->player;
+            e->characters.erase(e->characters.begin() + i);
+        }
+    }
+    e->lightObjects.erase(std::remove_if(e->lightObjects.begin(), e->lightObjects.end(), [&](const LightObject& l) {
+        GameObject* o = e->scene.get(l.obj);
+        return !o || isGone(&o->transform);
+    }), e->lightObjects.end());
+    if (e->scene.get(e->selected) && isGone(&e->scene.get(e->selected)->transform)) selectHandle(e, {});
+    Scene::forEachInSubtree(*sel, [&](GameObject& g) { releaseComponents(e, g); });
+    for (Animator* a : ownAnims) e->animatorPool.release(a);
+    e->scene.destroy(h);
+    ++e->revision;
 }
 
 // ---------------- efeitos ----------------
@@ -633,6 +685,7 @@ void castSpell(Engine* e, int element) {
         addFlash(e, fxExplosion(e->particles, e->fxRng, pal, end, 0.5f), 0.2f);
         addFlash(e, {from, pal.light, 15.f, 10.f}, 0.18f);
         radialImpulse(e, end, 3.f, 7.f, go->rigidBody->body);
+        if (any && obj) damageAt(e, obj, 60.f, from);
         return;
     }
     for (auto& p : e->projectiles) {
@@ -670,7 +723,10 @@ void updateEffects(Engine* e, float dt) {
         if (any || p.life <= 0.f) {
             glm::vec3 at = any ? hit : next;
             addFlash(e, fxExplosion(e->particles, e->fxRng, p.pal, at, any ? 0.8f : 0.4f), 0.4f);
-            if (any) radialImpulse(e, at, 4.5f, 9.f, p.ignore);
+            if (any) {
+                radialImpulse(e, at, 4.5f, 9.f, p.ignore);
+                damageRadius(e, at, 4.5f, 45.f);
+            }
             p.active = false;
             continue;
         }
@@ -703,6 +759,8 @@ int gatherLights(Engine* e, PointLight* out, int max) {
         push({o->transform.worldPosition() + glm::vec3(0, 0.8f * s, 0), em.palette().light, inten, 7.f * s});
     });
     for (auto& p : e->projectiles) if (p.active) push({p.pos, p.pal.light, 8.f, 8.f});
+    for (const LightObject& lo : e->lightObjects)
+        if (GameObject* o = e->scene.get(lo.obj); o && o->active) push({o->transform.worldPosition(), lo.color, lo.intensity, lo.radius});
     for (auto& f : e->flashes)
         if (f.life > 0.f) { FxLight l = f.light; l.intensity *= f.life / f.maxLife; push(l); }
     for (auto& b : e->bolts) if (b.life > 0.f) push({b.pts[b.n / 2], b.color, 20.f, 14.f});

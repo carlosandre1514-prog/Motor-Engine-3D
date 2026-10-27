@@ -228,6 +228,7 @@ MeshId Renderer::createMesh(const Vertex* v, uint32_t vc, const uint32_t* idx, u
     if (meshCount_ >= kMaxMeshes || vc == 0 || ic == 0) { ENG_LOG("createMesh: limite atingido ou mesh vazio\n"); return kInvalidId; }
     Mesh& m = meshes_[meshCount_];
     m.indexCount = ic;
+    m.vertexCount = vc;
     m.skinned = skinned;
     m.bounds = {glm::vec3(1e9f), glm::vec3(-1e9f)};
     for (uint32_t i = 0; i < vc; ++i) { m.bounds.min = glm::min(m.bounds.min, v[i].pos); m.bounds.max = glm::max(m.bounds.max, v[i].pos); }
@@ -264,6 +265,7 @@ void Renderer::updateMesh(MeshId id, const Vertex* v, uint32_t vc, const uint32_
     if (id >= meshCount_ || vc == 0 || ic == 0) return;
     Mesh& m = meshes_[id];
     m.indexCount = ic;
+    m.vertexCount = vc;
     m.bounds = {glm::vec3(1e9f), glm::vec3(-1e9f)};
     for (uint32_t i = 0; i < vc; ++i) { m.bounds.min = glm::min(m.bounds.min, v[i].pos); m.bounds.max = glm::max(m.bounds.max, v[i].pos); }
     glBindVertexArray(0);

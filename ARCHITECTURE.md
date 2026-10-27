@@ -97,13 +97,31 @@ Engine ─ Scene ─ Renderer ─ Physics ─ Assets ─ Editor
 - Personagem importado: cápsula de física, animações próprias casadas por nome (idle/walk/run) ou as 8 do motor,
   arma na mão (referencial corrigido) e virada automática para +Z.
 
+## Projeto, jogo e IA (src/engine/Project.cpp, Game.cpp)
+- Formato único em JSON (chaves em português): cada objeto raiz guarda a **receita** que o cria
+  (`{"tipo":"construcao","modelo":"casa","semente":7}`, `{"tipo":"inimigo","arma":"pistola"}`...). Salvar = mapa
+  (tipo + semente, refeito igual ao abrir) + ambiente + regras + receitas com o transform atual. Os botões do editor,
+  o arquivo do projeto e o assistente de IA usam o mesmo caminho (`createFromSpecJson`).
+- `revision` muda a cada edição: o app salva quando ela muda (30 s, ao pausar e ao sair). Gravação atômica (tmp + rename).
+- Lógica de jogo: comportamentos montados no Play a partir das receitas (inimigo com IA de perseguir/atirar/bater,
+  coletável, objetivo, spawner, zona de dano, girar, flutuar, plataforma cinemática, destrutível, explosivo), dano por
+  tiro/magia/explosão, regras de vitória/derrota. O Stop apaga o que o Play criou e restaura o resto.
+- Ferramentas (`engine_tool_call`): ver_cena, carregar_mapa, criar_objetos, editar_objeto, remover_objetos,
+  definir_regras, definir_ambiente, altura_terreno, focar_camera. O app (Assistant.kt) chama a API da Anthropic com
+  essas ferramentas e executa cada uma na thread GL.
+
+## Exportação .glb (src/engine/Export.cpp)
+Malhas e texturas lidas de volta da GPU (glMapBufferRange / FBO + glReadPixels), materiais PBR com cor por vértice
+(COLOR_0), esqueleto como nós + skin (inverseBind do motor) e animações assadas a 30 fps a partir da pose calculada
+pelo Animator (inclui retarget). Objeto selecionado vai para a origem; LOD simplificado não é exportado.
+
 ## Estado
 Feito: Pool/Scene, PBR, glTF (meshes, materiais, AO, alpha mask, double-sided, skins, animações), CSM com culling
 por cascata, instancing, Animator, Bullet (Box/Sphere/Capsule/ConvexMesh), editor por toque (gizmo mover/girar/escalar,
 seleção, hierarquia, inspetor), céu + IBL, estatísticas.
 
 Próximos: compressão de texturas ASTC/ETC2 no CI (toktx), UI em Flutter, transparência real (BLEND),
-morph targets, animação de nós sem skin, salvar/carregar cena, backends Vulkan/Metal.
+morph targets, animação de nós sem skin, scripts (Lua), backends Vulkan/Metal.
 
 ## Estrutura
 ```
@@ -117,8 +135,10 @@ src/physics/ Physics.h
 src/editor/ EditorCamera.h Gizmo.h
 src/procgen/ Noise.h MeshBuilder.h TextureGen.* Buildings.* Character.* Weapons.cpp
 src/engine/ Engine.h Engine.cpp (cena, personagens, jogador) World.cpp (mapas, mundo infinito)
+           Project.cpp (formato do projeto, ferramentas da IA) Game.cpp (comportamentos, regras)
 src/platform/ engine_c_api.h engine_c_api.cpp android_jni.cpp
-app/       Android (Kotlin): GLSurfaceView + UI do editor
+app/       Android (Kotlin): GLSurfaceView + UI do editor, ProjectStore (projetos/autosave), Assistant (IA)
+app/src/main/assets/exemplos/  projetos prontos (gerados pelo teste headless)
 tools/     headless_test.cpp (renderiza as cenas em PNG no Linux/CI)
 flutter/   engine_bindings.dart (rascunho)
 ```

@@ -29,7 +29,7 @@ struct Vertex {
 
 struct Mesh {
     GLuint vao = 0, vbo = 0, ibo = 0;
-    uint32_t indexCount = 0;
+    uint32_t indexCount = 0, vertexCount = 0;
     bool skinned = false;
     AABB bounds{glm::vec3(-0.5f), glm::vec3(0.5f)};
 };

@@ -31,7 +31,13 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
@@ -45,6 +51,9 @@ class EngineSnapshot {
     @Volatile var hasPlayer = false
     @Volatile var playerWeapon = -1
     @Volatile var ready = false
+    @Volatile var game = FloatArray(8)
+    @Volatile var objective = ""
+    @Volatile var message = ""
 }
 
 class MainActivity : Activity() {
@@ -71,10 +80,34 @@ class MainActivity : Activity() {
     private val effects = arrayOf("Fogueira", "Tocha", "Fumaça", "Faíscas", "Aura mágica", "Portal", "Explosão (repete)", "Orbe mágico", "Coluna de luz")
     private var stick = floatArrayOf(0f, 0f)
 
+    // Projeto e salvamento automático
+    private lateinit var store: ProjectStore
+    @Volatile private var savedRev = -1L          // revisão do motor já gravada no arquivo (lida na thread GL)
+    private var projectName = ""
+    private lateinit var gameBar: TextView
+    private lateinit var gameMsg: TextView
+    private lateinit var endPanel: LinearLayout
+    private lateinit var endTitle: TextView
+    private lateinit var endText: TextView
+    private lateinit var hurtOverlay: View
+    private var lastMsg = ""
+    private var msgUntil = 0L
+
+    // Assistente de IA
+    private lateinit var aiPanel: LinearLayout
+    private lateinit var aiLog: TextView
+    private lateinit var aiScroll: ScrollView
+    private lateinit var aiInput: EditText
+    private lateinit var aiSend: TextView
+    private var assistant: GameAgent? = null
+    @Volatile private var aiBusy = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        store = ProjectStore(this)
         view = EngineView(this, copyShaders())
+        view.onReady = { openStartupProject() }  // thread GL: motor (re)criado -> abre o projeto salvo
 
         val root = FrameLayout(this)
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
@@ -101,13 +134,244 @@ class MainActivity : Activity() {
         hud = buildHud().apply { visibility = View.GONE }
         root.addView(hud, FrameLayout.LayoutParams(-1, -1))
 
+        aiPanel = buildAiPanel().apply { visibility = View.GONE }
+        root.addView(aiPanel, FrameLayout.LayoutParams(dp(340), -2, Gravity.BOTTOM or Gravity.END).apply {
+            rightMargin = dp(8); bottomMargin = dp(8)
+        })
+
         setContentView(root)
         ui.post(refresh)
+        ui.postDelayed(autosave, AUTOSAVE_MS)
     }
 
-    override fun onPause() { super.onPause(); view.onPause() }
+    // Fechar/minimizar: salva antes de pausar a thread GL (espera até 2 s)
+    override fun onPause() {
+        saveBlocking()
+        super.onPause()
+        view.onPause()
+    }
     override fun onResume() { super.onResume(); view.onResume() }
     override fun onDestroy() { ui.removeCallbacksAndMessages(null); super.onDestroy() }
+
+    // ---------------- projeto: abrir, salvar, autosave ----------------
+    private val autosave = object : Runnable {
+        override fun run() {
+            gl { saveIfChanged() }
+            ui.postDelayed(this, AUTOSAVE_MS)
+        }
+    }
+
+    // thread GL
+    private fun saveIfChanged(force: Boolean = false): Boolean {
+        if (!snap.ready || projectName.isEmpty()) return false
+        val rev = NativeBridge.nativeProjectRevision()
+        if (!force && rev == savedRev) return false
+        try {
+            store.write(projectName, NativeBridge.exportProject())
+            savedRev = rev
+            return true
+        } catch (e: Exception) {
+            toast("Erro ao salvar: ${e.message}")
+            return false
+        }
+    }
+
+    private fun saveBlocking() {
+        if (!snap.ready) return
+        val latch = CountDownLatch(1)
+        view.queueEvent { try { saveIfChanged() } finally { latch.countDown() } }
+        latch.await(2, TimeUnit.SECONDS)
+    }
+
+    // thread GL
+    private fun openStartupProject() {
+        val name = store.current
+        if (name.isNotEmpty() && openProjectGl(name)) { toast("Projeto \"$name\" aberto (continua de onde parou)"); return }
+        newProjectGl(store.uniqueName("Meu jogo"), -1)
+    }
+
+    // thread GL
+    private fun openProjectGl(name: String): Boolean {
+        val json = store.read(name) ?: return false
+        if (!NativeBridge.importProject(json)) { toast("Projeto \"$name\" com erro: " + NativeBridge.nativeLastError()); return false }
+        setCurrent(name)
+        savedRev = NativeBridge.nativeProjectRevision()
+        val warn = NativeBridge.nativeLastError()
+        if (warn.isNotBlank()) toast("Aviso ao abrir: $warn")
+        return true
+    }
+
+    // thread GL. map: -1 vazio (chão + jogador), 0..4 mapas prontos
+    private fun newProjectGl(name: String, map: Int) {
+        setCurrent(name)
+        if (map < 0) NativeBridge.toolCall("carregar_mapa", "{\"tipo\":\"vazio\",\"com_jogador\":true}")
+        else NativeBridge.nativeLoadMap(map, seed())
+        NativeBridge.toolCall("definir_regras", "{\"objetivo\":\"livre\",\"titulo\":\"\",\"descricao\":\"\"}")
+        saveIfChanged(force = true)
+        toast("Projeto \"$name\" criado (salvamento automático ligado)")
+    }
+
+    private fun setCurrent(name: String) {
+        projectName = name
+        store.current = name
+        NativeBridge.nativeSetProjectName(name.toByteArray(Charsets.UTF_8))
+        runOnUiThread { if (::playBtn.isInitialized) title = name }
+    }
+
+    private fun stopPlayIfNeeded() { if (snap.playing) togglePlay() }
+
+    private fun projectDialog() {
+        val items = arrayOf("💾 Salvar agora", "📄 Novo projeto…", "📂 Abrir projeto…", "📑 Duplicar (salvar como)…", "✏ Renomear…",
+                            "⭐ Abrir exemplo pronto…", "📤 Exportar arquivo .json…", "📥 Importar arquivo .json…", "🔗 Abrir de link…",
+                            "🗑 Excluir projetos…", "🚪 Sair do projeto", "📦 Exportar modelo 3D (.glb)…")
+        dialog().setTitle("Projeto: $projectName").setItems(items) { _, which ->
+            when (which) {
+                0 -> gl { if (saveIfChanged(force = true)) toast("Salvo ✔") }
+                1 -> newProjectDialog()
+                2 -> openProjectDialog()
+                3 -> askText("Duplicar como", store.uniqueName("$projectName cópia")) { n ->
+                    val name = store.uniqueName(n)
+                    stopPlayIfNeeded()
+                    gl { saveIfChanged(); setCurrent(name); saveIfChanged(force = true); toast("Agora editando \"$name\"") }
+                }
+                4 -> askText("Novo nome", projectName) { n ->
+                    val to = ProjectStore.safe(n)
+                    gl {
+                        saveIfChanged(force = true)
+                        if (to.isNotEmpty() && store.rename(projectName, to)) { setCurrent(to); saveIfChanged(force = true); toast("Renomeado") }
+                        else toast("Já existe um projeto com esse nome")
+                    }
+                }
+                5 -> examplesDialog()
+                6 -> { saveBlocking(); exportProject() }
+                7 -> pickFile(REQ_PROJECT)
+                8 -> askText("Link do projeto (.json, GitHub ou outro)", "https://") { url -> downloadProject(url) }
+                9 -> deleteProjectsDialog()
+                11 -> exportGlbDialog()
+                else -> { stopPlayIfNeeded(); saveBlocking(); toast("Projeto salvo"); openProjectDialog(exitMode = true) }
+            }
+        }.show()
+    }
+
+    private fun newProjectDialog() {
+        val maps = arrayOf("Vazio (criar do zero)", "Cidade", "Favela", "Colégio", "Bairro", "Mundo infinito")
+        askText("Nome do novo projeto", store.uniqueName("Meu jogo")) { n ->
+            list("Começar com qual mapa?", maps) { m ->
+                stopPlayIfNeeded()
+                val kind = when (m) { 0 -> -1; 1 -> 1; 2 -> 2; 3 -> 3; 4 -> 4; else -> 0 }
+                if (kind >= 0) toast("Gerando mapa…")
+                gl { saveIfChanged(); newProjectGl(store.uniqueName(n), kind) }
+            }
+        }
+    }
+
+    private fun openProjectDialog(exitMode: Boolean = false) {
+        val names = store.list()
+        val items = (listOf("📄 Novo projeto…") + names.map { if (it == projectName) "● $it" else it }).toTypedArray()
+        val d = dialog().setTitle(if (exitMode) "Seus projetos (o atual foi salvo)" else "Abrir projeto").setItems(items) { _, which ->
+            if (which == 0) { newProjectDialog(); return@setItems }
+            val name = names[which - 1]
+            stopPlayIfNeeded()
+            toast("Abrindo $name…")
+            gl { saveIfChanged(); if (openProjectGl(name)) toast("Projeto \"$name\" aberto") }
+        }
+        if (!exitMode) d.setNegativeButton("Cancelar", null)
+        d.show()
+    }
+
+    private fun deleteProjectsDialog() {
+        val names = store.list().filter { it != projectName }
+        if (names.isEmpty()) { toast("Só existe o projeto aberto (não dá para excluir o que está aberto)"); return }
+        list("Excluir qual projeto? (não tem volta)", names.toTypedArray()) { i ->
+            dialog().setTitle("Excluir \"${names[i]}\"?").setPositiveButton("Excluir") { _, _ -> store.delete(names[i]); toast("Excluído") }
+                .setNegativeButton("Cancelar", null).show()
+        }
+    }
+
+    private fun examplesDialog() {
+        val files = assets.list("exemplos").orEmpty().filter { it.endsWith(".json") }.sorted()
+        if (files.isEmpty()) { toast("Nenhum exemplo no app"); return }
+        val titles = files.map { f ->
+            try { JSONObject(assets.open("exemplos/$f").bufferedReader().readText()).optString("nome", f) } catch (e: Exception) { f }
+        }
+        list("Exemplos (abre como projeto novo)", titles.toTypedArray()) { i ->
+            val json = assets.open("exemplos/${files[i]}").bufferedReader().readText()
+            importAsNewProject(json, titles[i])
+        }
+    }
+
+    private fun importAsNewProject(json: String, fallbackName: String) {
+        val name = store.uniqueName(try { JSONObject(json).optString("nome", fallbackName) } catch (e: Exception) { fallbackName })
+        stopPlayIfNeeded()
+        toast("Abrindo $name…")
+        gl {
+            saveIfChanged()
+            if (NativeBridge.importProject(json)) {
+                setCurrent(name)
+                saveIfChanged(force = true)
+                toast("Projeto \"$name\" pronto. Aperte ▶ Play!")
+            } else toast("Arquivo inválido: " + NativeBridge.nativeLastError())
+        }
+    }
+
+    private fun downloadProject(link: String) {
+        var url = link.trim()
+        // link de página do GitHub -> arquivo cru
+        Regex("https://github.com/([^/]+)/([^/]+)/blob/(.+)").matchEntire(url)?.let { m ->
+            url = "https://raw.githubusercontent.com/${m.groupValues[1]}/${m.groupValues[2]}/${m.groupValues[3]}"
+        }
+        toast("Baixando…")
+        Thread {
+            try {
+                val c = URL(url).openConnection() as HttpURLConnection
+                c.connectTimeout = 15000; c.readTimeout = 30000
+                val json = c.inputStream.bufferedReader().readText()
+                runOnUiThread { importAsNewProject(json, url.substringAfterLast('/').removeSuffix(".json")) }
+            } catch (e: Exception) { toast("Não consegui baixar: ${e.message}") }
+        }.start()
+    }
+
+    private fun exportProject() {
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "$projectName.json")
+        }
+        startActivityForResult(i, REQ_EXPORT)
+    }
+
+    private var pendingGlb: File? = null
+
+    // .glb = glTF binário: abre no Blender, Unity (glTFast), Godot, Unreal, sites de visualização e de novo aqui
+    private fun exportGlbDialog() {
+        val items = arrayOf("Objeto selecionado (personagem com animações, construção, arma…)", "Cena / mapa inteiro")
+        list("Exportar modelo 3D (.glb)", items) { which ->
+            val id = if (which == 0) snap.selected else -1
+            if (which == 0 && id < 0) { toast("Toque num objeto primeiro"); return@list }
+            stopPlayIfNeeded()
+            toast("Gerando .glb…")
+            val name = (if (which == 0) snap.selectedName else projectName).ifBlank { "modelo" }.replace(Regex("[^\\p{L}\\p{N} _-]"), "_")
+            gl {
+                val f = File(cacheDir, "export.glb")
+                if (NativeBridge.nativeExportGlb(id, f.absolutePath)) runOnUiThread {
+                    pendingGlb = f
+                    startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/octet-stream"
+                        putExtra(Intent.EXTRA_TITLE, "$name.glb")
+                    }, REQ_GLB)
+                } else toast("Não deu: " + NativeBridge.nativeLastError())
+            }
+        }
+    }
+
+    private fun askText(title: String, initial: String, onOk: (String) -> Unit) {
+        val et = EditText(this).apply { setText(initial); setSelectAllOnFocus(true); setTextColor(Color.WHITE); setSingleLine() }
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(et) }
+        dialog().setTitle(title).setView(box)
+            .setPositiveButton("OK") { _, _ -> val t = et.text.toString().trim(); if (t.isNotEmpty()) onOk(t) }
+            .setNegativeButton("Cancelar", null).show()
+    }
 
     // O renderer lê os shaders por caminho de arquivo: copia os assets (.vert/.frag/.glsl) para o storage interno.
     private fun copyShaders(): String {
@@ -132,23 +396,26 @@ class MainActivity : Activity() {
         }
         playBtn = button("▶ Play", accent = true) { togglePlay() }
         bar.addView(playBtn)
+        bar.addView(button("📁 Projeto") { projectDialog() })
         bar.addView(separator())
         val labels = listOf("Mover", "Girar", "Escala")
         modeBtns = labels.mapIndexed { i, l -> button(l) { setMode(i) } }
         modeBtns.forEach { bar.addView(it) }
         bar.addView(separator())
         bar.addView(button("+ Criar") { createMenu() })
+        bar.addView(button("🎮 Jogo") { gameMenu() })
         bar.addView(button("Mapas") { mapsDialog() })
         bar.addView(button("Objetos") { hierarchyDialog() })
         bar.addView(button("Focar") { gl { NativeBridge.nativeFocus() } })
         bar.addView(button("Excluir") { gl { NativeBridge.nativeDeleteSelected() } })
         bar.addView(separator())
         bar.addView(button("Material") { materialDialog() })
-        bar.addView(button("Animação") { cycleAnimation() })
+        bar.addView(button("Animação") { animationDialog() })
         bar.addView(button("Importar 3D") { pickFile(REQ_MODEL) })
         bar.addView(button("Visual") {
             visualPanel.visibility = if (visualPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         })
+        bar.addView(button("🤖 IA", accent = true) { toggleAi() })
         setMode(0)
         return HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -163,6 +430,9 @@ class MainActivity : Activity() {
         stick = floatArrayOf(0f, 0f)
         joystick.reset()
         gl { NativeBridge.nativePlayerInput(0f, 0f, false); NativeBridge.nativeSetPlay(play) }
+        lastMsg = ""; msgUntil = 0L
+        snap.game = FloatArray(8); snap.objective = ""; snap.message = ""
+        if (::endPanel.isInitialized) endPanel.visibility = View.GONE
         playBtn.text = if (play) "■ Stop" else "▶ Play"
         (playBtn.background as GradientDrawable).setColor(if (play) 0xFFC0392B.toInt() else 0xFF2E86DE.toInt())
         updateOverlays()
@@ -207,13 +477,16 @@ class MainActivity : Activity() {
     }
 
     private fun characterMenu() {
-        val items = arrayOf("Aleatório", "Personalizar…", "Usar modelo importado (.glb/.fbx selecionado) como personagem",
-                            "Controlar o personagem selecionado no Play")
+        val items = arrayOf("Aleatório", "Personalizar…", "✏ Editar o personagem selecionado…",
+                            "Usar modelo importado (.glb/.fbx selecionado) como personagem", "Controlar o personagem selecionado no Play",
+                            "Ver / trocar animações…")
         dialog().setTitle("Personagem").setItems(items) { _, which ->
             when (which) {
                 0 -> gl { NativeBridge.nativeCreateRandomCharacter(seed(), false) }
                 1 -> characterEditor()
-                2 -> gl {
+                2 -> if (snap.selected < 0) toast("Toque num personagem primeiro") else characterEditor(edit = true)
+                5 -> animationDialog()
+                3 -> gl {
                     val id = NativeBridge.nativeMakeCharacter(true)
                     val msg = NativeBridge.nativeLastError()
                     toast(if (id < 0) "Não deu: $msg" else if (msg.isNotEmpty()) "Personagem pronto ($msg)" else "Personagem pronto! Aperte ▶ Play")
@@ -224,7 +497,9 @@ class MainActivity : Activity() {
     }
 
     // Editor de personagem: altura, corpo, cores, cabelo
-    private fun characterEditor() {
+    private fun hex(c: Int) = String.format("\"#%06x\"", c and 0xFFFFFF)
+
+    private fun characterEditor(edit: Boolean = false) {
         val skins = intArrayOf(0xFFFAD6B9.toInt(), 0xFFE8B48C.toInt(), 0xFFC68C69.toInt(), 0xFF966242.toInt(), 0xFF64402A.toInt(), 0xFF462E20.toInt())
         val clothes = intArrayOf(0xFFC82828.toInt(), 0xFF286EBE.toInt(), 0xFFF0F0F0.toInt(), 0xFF1E1E23.toInt(), 0xFFFAC828.toInt(),
                                  0xFF289650.toInt(), 0xFFF0781E.toInt(), 0xFF7846A0.toInt(), 0xFF5AA0DC.toInt(), 0xFFE678A0.toInt())
@@ -244,11 +519,26 @@ class MainActivity : Activity() {
         p.addView(choice("Cabelo", arrayOf("Careca", "Curto", "Comprido", "Boné"), hairStyle) { hairStyle = it })
         val sleeves = CheckBox(this).apply { text = "Manga comprida"; setTextColor(Color.WHITE) }
         val control = CheckBox(this).apply { text = "Controlar no Play (jogador)"; setTextColor(Color.WHITE); isChecked = !snap.hasPlayer }
-        p.addView(sleeves); p.addView(control)
+        p.addView(sleeves)
+        if (!edit) p.addView(control)
 
-        dialog().setTitle("Criar personagem")
+        dialog().setTitle(if (edit) "Editar \"${snap.selectedName}\"" else "Criar personagem")
             .setView(ScrollView(this).apply { addView(p) })
-            .setPositiveButton("Criar") { _, _ ->
+            .setPositiveButton(if (edit) "Aplicar" else "Criar") { _, _ ->
+                if (edit) {  // recria com a nova aparência, mantendo posição, arma e comportamentos
+                    val id = snap.selected
+                    val builds = arrayOf("magro", "normal", "forte")
+                    val styles = arrayOf("careca", "curto", "comprido", "bone")
+                    val json = "{\"id\":$id,\"aparencia\":{\"altura\":${String.format(Locale.US, "%.2f", height)},\"corpo\":\"${builds[build]}\"," +
+                        "\"pele\":${hex(sel[0])},\"camisa\":${hex(sel[1])},\"calca\":${hex(sel[2])},\"tenis\":${hex(sel[3])}," +
+                        "\"cabelo\":${hex(sel[4])},\"estilo_cabelo\":\"${styles[hairStyle]}\",\"manga_comprida\":${sleeves.isChecked}}}"
+                    gl {
+                        val r = NativeBridge.toolCall("editar_objeto", json)
+                        val nid = try { JSONObject(r).optInt("id", -1) } catch (e: Exception) { -1 }
+                        if (nid >= 0) NativeBridge.nativeSelect(nid) else toast("Não deu: $r")
+                    }
+                    return@setPositiveButton
+                }
                 val params = FloatArray(20)
                 params[0] = height; params[1] = build.toFloat()
                 for (i in 0 until 5) {
@@ -265,22 +555,27 @@ class MainActivity : Activity() {
     }
 
     private fun mapsDialog() {
-        val items = arrayOf("Mundo infinito (procedural, sem fim)", "Cidade (com limite)", "Favela no morro (com limite)",
-                            "Colégio (com limite)", "Bairro residencial (com limite)", "Vitrine de materiais", "Física: pilha de objetos",
-                            "Cena vazia", "Visão geral do mapa atual")
-        dialog().setTitle("Mapas e cenas").setItems(items) { _, which ->
-            if (which < 8 && snap.playing) togglePlay()
-            if (which < 5) toast("Gerando mapa…")
-            gl {
-                when (which) {
-                    in 0..4 -> NativeBridge.nativeLoadMap(which, seed())
-                    5 -> NativeBridge.nativeLoadDemo()
-                    6 -> NativeBridge.nativeLoadPhysicsDemo()
-                    7 -> NativeBridge.nativeNewScene()
-                    else -> NativeBridge.nativeMapOverview()
+        val items = arrayOf("🏙 Cidade", "🏘 Favela no morro", "🏫 Colégio", "🏡 Bairro residencial", "🌍 Mundo infinito (sem fim)",
+                            "➕ Criar novo mapa / cena vazia (do zero)", "🔭 Visão geral do mapa atual")
+        dialog().setTitle("Mapas").setItems(items) { _, which ->
+            if (which == 6) { gl { NativeBridge.nativeMapOverview() }; return@setItems }
+            dialog().setTitle("Trocar o cenário?")
+                .setMessage("Os objetos atuais deste projeto serão substituídos. (Para guardar o atual, use 📁 Projeto → Duplicar antes.)")
+                .setPositiveButton("Trocar") { _, _ ->
+                    stopPlayIfNeeded()
+                    if (which < 5) toast("Gerando mapa…")
+                    gl {
+                        if (which < 5) {
+                            val kind = if (which == 4) 0 else which + 1
+                            NativeBridge.nativeLoadMap(kind, seed())
+                            toast("Pronto! A borda vermelha é a barreira invisível. Aperte ▶ Play para jogar.")
+                        } else {
+                            NativeBridge.toolCall("carregar_mapa", "{\"tipo\":\"vazio\",\"com_jogador\":true}")
+                            toast("Cena vazia: use + Criar para montar do zero")
+                        }
+                    }
                 }
-                if (which in 0..4) toast("Pronto! Aperte ▶ Play para jogar com o personagem. A borda vermelha é a barreira invisível.")
-            }
+                .setNegativeButton("Cancelar", null).show()
         }.show()
     }
 
@@ -338,16 +633,147 @@ class MainActivity : Activity() {
             .setNegativeButton("Cancelar", null).show()
     }
 
-    private fun cycleAnimation() {
+    private var animPreview = true
+
+    // Lista as animações do objeto selecionado (ou do primeiro animado) e toca a escolhida
+    private fun animationDialog() {
         gl {
-            val name = NativeBridge.nativeCycleAnimation()
-            toast(if (name.isEmpty()) "Nenhuma animação (crie um personagem ou carregue um .glb com esqueleto)" else "Animação: $name")
+            val names = NativeBridge.animationList()
+            val cur = NativeBridge.nativeAnimationIndex()
+            runOnUiThread {
+                if (names.isEmpty()) {
+                    toast("Nenhuma animação aqui. Crie um personagem (+ Criar → Personagem) ou importe um .glb/.fbx com esqueleto e selecione")
+                    return@runOnUiThread
+                }
+                val items = names.mapIndexed { i, n -> (if (i == cur) "▶ " else "    ") + n }.toMutableList()
+                items.add(if (animPreview) "⏸ Pausar animações no editor" else "▶ Tocar animações no editor")
+                dialog().setTitle("Animações de \"${snap.selectedName.ifEmpty { "cena" }}\"")
+                    .setItems(items.toTypedArray()) { _, which ->
+                        if (which == names.size) {
+                            animPreview = !animPreview
+                            val on = animPreview
+                            gl { NativeBridge.nativeSetAnimPreview(on) }
+                        } else {
+                            gl { NativeBridge.nativeSetAnimation(which) }
+                            toast("Tocando: ${names[which]}. No Play, andar/correr trocam sozinhos")
+                        }
+                    }
+                    .setNegativeButton("Fechar", null).show()
+            }
+        }
+    }
+
+    // ---------------- menu Jogo: regras, inimigos, itens, comportamentos ----------------
+    private fun gameMenu() {
+        val items = arrayOf("🎯 Objetivo e regras…", "👾 Inimigo com pistola", "👾 Inimigo com fuzil", "🔪 Inimigo com faca",
+                            "👊 Inimigo desarmado", "🌀 Portal que cria inimigos", "🪙 Moeda", "💎 Cristal (50 pontos)", "❤ Vida (cura)",
+                            "🏁 Ponto de chegada", "🔥 Zona de dano (fogo)", "☠ Zona de veneno", "🛢 Barril explosivo",
+                            "📦 Caixa quebrável", "⚙ Comportamento do objeto selecionado…")
+        dialog().setTitle("Jogo").setItems(items) { _, which ->
+            val spec = when (which) {
+                1 -> "{\"tipo\":\"inimigo\",\"arma\":\"pistola\"}"
+                2 -> "{\"tipo\":\"inimigo\",\"arma\":\"fuzil\",\"dano\":8}"
+                3 -> "{\"tipo\":\"inimigo\",\"arma\":\"faca\",\"dano\":15,\"velocidade\":4}"
+                4 -> "{\"tipo\":\"inimigo\",\"velocidade\":4}"
+                5 -> "{\"tipo\":\"spawner\",\"maximo\":4,\"total\":8,\"arma_inimigo\":\"pistola\"}"
+                6 -> "{\"tipo\":\"coletavel\",\"item\":\"moeda\"}"
+                7 -> "{\"tipo\":\"coletavel\",\"item\":\"cristal\"}"
+                8 -> "{\"tipo\":\"coletavel\",\"item\":\"vida\"}"
+                9 -> "{\"tipo\":\"objetivo\"}"
+                10 -> "{\"tipo\":\"zona_dano\",\"elemento\":\"fogo\"}"
+                11 -> "{\"tipo\":\"zona_dano\",\"elemento\":\"veneno\",\"dano\":10,\"raio\":3}"
+                12 -> "{\"tipo\":\"forma\",\"forma\":\"capsula\",\"nome\":\"Barril\",\"cor\":\"vermelho\",\"escala\":[0.7,0.6,0.7],\"comportamentos\":[\"explosivo\"]}"
+                13 -> "{\"tipo\":\"forma\",\"forma\":\"cubo\",\"nome\":\"Caixa\",\"material\":\"madeira\",\"escala\":0.8,\"comportamentos\":[\"destrutivel\"]}"
+                else -> null
+            }
+            when {
+                which == 0 -> rulesDialog()
+                which == 14 -> behaviorDialog()
+                spec != null -> gl {
+                    if (NativeBridge.addSpec(spec) < 0) toast("Erro: " + NativeBridge.nativeLastError())
+                    else toast(items[which].drop(2).trim() + " criado no foco da câmera. Mova com as setas.")
+                }
+            }
+        }.show()
+    }
+
+    private fun rulesDialog() {
+        val goals = arrayOf("livre", "coletar", "eliminar", "chegar", "sobreviver", "pontos")
+        val labels = arrayOf("Livre (sem fim)", "Coletar itens", "Eliminar inimigos", "Chegar ao ponto", "Sobreviver (tempo)", "Fazer pontos")
+        var goal = 0
+        val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        p.addView(choice("Objetivo", labels, 0) { goal = it })
+        fun field(hint: String, value: String, numeric: Boolean = true) = EditText(this).apply {
+            this.hint = hint; setText(value); setTextColor(Color.WHITE); setHintTextColor(0x88FFFFFF.toInt()); setSingleLine()
+            if (numeric) inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val qty = field("Quantidade (0 = todos)", "0")
+        val time = field("Tempo limite em segundos (0 = sem)", "0")
+        val life = field("Vida do jogador", "100")
+        val titleF = field("Título do jogo (opcional)", "", numeric = false)
+        p.addView(label("Quantidade (coletar/eliminar/pontos; 0 = todos)")); p.addView(qty)
+        p.addView(label("Tempo limite em segundos (0 = sem limite)")); p.addView(time)
+        p.addView(label("Vida do jogador")); p.addView(life)
+        p.addView(label("Título (aparece ao jogar)")); p.addView(titleF)
+        dialog().setTitle("Objetivo e regras").setView(ScrollView(this).apply { addView(p) })
+            .setPositiveButton("Salvar") { _, _ ->
+                val j = JSONObject()
+                j.put("objetivo", goals[goal])
+                j.put("quantidade", qty.text.toString().toIntOrNull() ?: 0)
+                j.put("tempo", time.text.toString().toDoubleOrNull() ?: 0.0)
+                j.put("vida_jogador", life.text.toString().toDoubleOrNull() ?: 100.0)
+                j.put("titulo", titleF.text.toString())
+                gl { val r = NativeBridge.toolCall("definir_regras", j.toString()); toast(if (r.contains("erro")) r else "Regras salvas. Aperte ▶ Play") }
+            }
+            .setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun behaviorDialog() {
+        val id = snap.selected
+        if (id < 0) { toast("Toque num objeto primeiro"); return }
+        val names = arrayOf("girar", "flutuar", "plataforma", "destrutivel", "explosivo", "inimigo")
+        val labels = arrayOf("🔄 Girar", "🎈 Flutuar", "⬆ Plataforma (sobe e desce 3 m)", "📦 Destrutível (quebra com tiros)",
+                             "💥 Explosivo", "👾 Inimigo (só personagens)", "🧹 Tirar todos os comportamentos")
+        list("Comportamento de \"${snap.selectedName}\"", labels) { k ->
+            val input = if (k == names.size) "{\"id\":$id,\"comportamentos\":[]}"
+                        else "{\"id\":$id,\"comportamento\":\"${names[k]}\"}"
+            val tool = if (k == names.size) "editar_objeto" else "adicionar_comportamento"
+            gl {
+                val r = NativeBridge.toolCall(tool, input)
+                toast(if (r.contains("\"erro\"")) r else "Pronto: vale no ▶ Play")
+            }
         }
     }
 
     // ---------------- HUD de jogo ----------------
     private fun buildHud(): FrameLayout {
         val f = FrameLayout(this)
+        hurtOverlay = View(this).apply { setBackgroundColor(0x66FF0000); alpha = 0f; isClickable = false }
+        f.addView(hurtOverlay, FrameLayout.LayoutParams(-1, -1))
+        gameBar = TextView(this).apply {
+            setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = GradientDrawable().apply { setColor(0x99000000.toInt()); cornerRadius = dp(10).toFloat() }
+        }
+        f.addView(gameBar, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(56) })
+        gameMsg = TextView(this).apply {
+            setTextColor(0xFFFFE082.toInt()); typeface = Typeface.DEFAULT_BOLD
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f); setShadowLayer(4f, 0f, 0f, Color.BLACK); alpha = 0f
+        }
+        f.addView(gameMsg, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(110) })
+        endPanel = panel().apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+            endTitle = label("", bold = true).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f); gravity = Gravity.CENTER }
+            endText = label("").apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(12)) }
+            addView(endTitle); addView(endText)
+            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+            row.addView(button("↻ Jogar de novo", accent = true) { restartGame() })
+            row.addView(button("✎ Voltar ao editor") { togglePlay() })
+            addView(row)
+        }
+        f.addView(endPanel, FrameLayout.LayoutParams(dp(320), -2, Gravity.CENTER))
         joystick = JoystickView(this) { x, y ->
             stick = floatArrayOf(x, y)
             val r = running
@@ -391,6 +817,38 @@ class MainActivity : Activity() {
         return f.apply { isClickable = false }
     }
 
+    private fun restartGame() {
+        endPanel.visibility = View.GONE
+        stick = floatArrayOf(0f, 0f)
+        joystick.reset()
+        gl { NativeBridge.nativePlayerInput(0f, 0f, false); NativeBridge.nativeSetPlay(false); NativeBridge.nativeSetPlay(true) }
+    }
+
+    // Barra de vida/pontos/tempo, avisos e tela de fim (atualizado pelo refresh)
+    private fun updateGameHud() {
+        if (!snap.playing) { endPanel.visibility = View.GONE; return }
+        val g = snap.game
+        val sb = StringBuilder()
+        val hp = g[1].toInt(); val max = g[2].toInt().coerceAtLeast(1)
+        val hearts = (hp * 10 / max).coerceIn(0, 10)
+        sb.append("❤ ").append("█".repeat(hearts)).append("░".repeat(10 - hearts)).append(" $hp")
+        sb.append("   ⭐ ").append(g[3].toInt())
+        val t = if (g[5] > 0f) (g[5] - g[4]).coerceAtLeast(0f) else g[4]
+        sb.append("   ⏱ ").append(String.format(Locale.US, "%d:%02d", t.toInt() / 60, t.toInt() % 60))
+        if (snap.objective.isNotEmpty()) sb.append("\n").append(snap.objective)
+        gameBar.text = sb.toString()
+        hurtOverlay.alpha = if (g[6] > 0f) 0.6f else 0f
+        val now = System.currentTimeMillis()
+        if (snap.message.isNotEmpty() && snap.message != lastMsg) { lastMsg = snap.message; msgUntil = now + 1800; gameMsg.text = lastMsg }
+        gameMsg.alpha = if (now < msgUntil && g[0] == 0f) 1f else 0f
+        if (g[0] != 0f && endPanel.visibility != View.VISIBLE) {
+            endTitle.text = if (g[0] == 1f) "🏆 Vitória!" else "💀 Fim de jogo"
+            endTitle.setTextColor(if (g[0] == 1f) 0xFFFFD54F.toInt() else 0xFFEF5350.toInt())
+            endText.text = snap.message + String.format(Locale.US, "\nPontos: %d   Tempo: %d:%02d", g[3].toInt(), g[4].toInt() / 60, g[4].toInt() % 60)
+            endPanel.visibility = View.VISIBLE
+        } else if (g[0] == 0f) endPanel.visibility = View.GONE
+    }
+
     private fun roundButton(text: String, color: Int) = TextView(this).apply {
         this.text = text
         setTextColor(Color.WHITE)
@@ -401,11 +859,154 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(dp(66), dp(66)).apply { topMargin = dp(8) }
     }
 
+    // ---------------- assistente de IA ----------------
+    private val prefs by lazy { getSharedPreferences("motor3d", MODE_PRIVATE) }
+
+    private fun buildAiPanel(): LinearLayout {
+        val p = panel()
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(label("🤖 Assistente", bold = true).apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        header.addView(button("⚙") { aiSettings() })
+        header.addView(button("🗑") { assistant?.reset(); aiLog.text = ""; aiSay("Conversa nova. O que vamos criar?") })
+        header.addView(button("✕") { aiPanel.visibility = View.GONE; hideKeyboard() })
+        p.addView(header)
+        aiLog = label("").apply { setTextIsSelectable(true); setLineSpacing(0f, 1.1f) }
+        aiScroll = ScrollView(this).apply { addView(aiLog) }
+        p.addView(aiScroll, LinearLayout.LayoutParams(-1, dp(220)))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        aiInput = EditText(this).apply {
+            hint = "Ex.: faça um jogo de sobrevivência na favela à noite"
+            setHintTextColor(0x88FFFFFF.toInt()); setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxLines = 4
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        }
+        row.addView(aiInput)
+        aiSend = button("Enviar", accent = true) { aiSendClicked() }
+        row.addView(aiSend)
+        p.addView(row)
+        return p
+    }
+
+    private fun toggleAi() {
+        if (aiPanel.visibility == View.VISIBLE) { aiPanel.visibility = View.GONE; hideKeyboard(); return }
+        if (!aiConfigured()) { aiSettings(openAfter = true); return }
+        aiPanel.visibility = View.VISIBLE
+        if (aiLog.text.isEmpty()) aiSay("Oi! Diga o jogo que você quer e eu monto aqui no editor. Ex.: \"cidade à noite com 5 inimigos de pistola e 10 moedas para coletar\".")
+    }
+
+    private fun aiConfigured() = if (prefs.getInt("provedor", 0) == 0) !prefs.getString("api_key", "").isNullOrBlank()
+                                 else !prefs.getString("outra_url", "").isNullOrBlank() && !prefs.getString("outra_modelo", "").isNullOrBlank()
+
+    private fun newAgent(): GameAgent =
+        if (prefs.getInt("provedor", 0) == 0)
+            Assistant(prefs.getString("api_key", "") ?: "", prefs.getString("modelo", Assistant.DEFAULT_MODEL) ?: Assistant.DEFAULT_MODEL, ::runToolOnGl)
+        else
+            OpenAiAgent(prefs.getString("outra_url", "") ?: "", prefs.getString("outra_key", "") ?: "",
+                        prefs.getString("outra_modelo", "") ?: "", ::runToolOnGl)
+
+    // Provedor: Claude (Anthropic) ou qualquer API no padrão OpenAI (OpenAI, Gemini, DeepSeek, Groq, OpenRouter...)
+    private fun aiSettings(openAfter: Boolean = false) {
+        val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), dp(8)) }
+        fun field(value: String?, hint: String, secret: Boolean = false) = EditText(this).apply {
+            setText(value ?: ""); setTextColor(Color.WHITE); setHintTextColor(0x88FFFFFF.toInt()); setSingleLine(); this.hint = hint
+            if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        var provider = prefs.getInt("provedor", 0)
+        val claudeBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val otherBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        p.addView(choice("Qual IA", arrayOf("Claude (Anthropic)", "Outra IA (padrão OpenAI)"), provider) {
+            provider = it
+            claudeBox.visibility = if (it == 0) View.VISIBLE else View.GONE
+            otherBox.visibility = if (it == 1) View.VISIBLE else View.GONE
+        })
+        // Claude
+        claudeBox.addView(label("Chave da API (console.anthropic.com → API Keys)"))
+        val key = field(prefs.getString("api_key", ""), "sk-ant-...", secret = true)
+        claudeBox.addView(key)
+        val models = Assistant.MODELS
+        var model = models.indexOf(prefs.getString("modelo", Assistant.DEFAULT_MODEL)).coerceAtLeast(0)
+        claudeBox.addView(choice("Modelo", arrayOf("Opus 5.5 (melhor)", "Sonnet 5.5", "Haiku 5.5 (rápido)"), model) { model = it })
+        // Outra IA
+        val url = field(prefs.getString("outra_url", ""), "https://.../v1")
+        val okey = field(prefs.getString("outra_key", ""), "chave da API", secret = true)
+        val omodel = field(prefs.getString("outra_modelo", ""), "nome do modelo (veja na sua conta)")
+        otherBox.addView(choice("Atalhos de endereço", OpenAiAgent.PRESETS.map { it.first }.toTypedArray(), -1) { url.setText(OpenAiAgent.PRESETS[it].second) })
+        otherBox.addView(label("Endereço da API")); otherBox.addView(url)
+        otherBox.addView(label("Chave da API")); otherBox.addView(okey)
+        otherBox.addView(label("Modelo (precisa aceitar ferramentas / function calling)")); otherBox.addView(omodel)
+        claudeBox.visibility = if (provider == 0) View.VISIBLE else View.GONE
+        otherBox.visibility = if (provider == 1) View.VISIBLE else View.GONE
+        p.addView(claudeBox); p.addView(otherBox)
+        p.addView(label("As chaves ficam salvas só neste celular.").apply { alpha = 0.7f })
+        dialog().setTitle("Assistente de IA").setView(ScrollView(this).apply { addView(p) })
+            .setPositiveButton("Salvar") { _, _ ->
+                prefs.edit().putInt("provedor", provider)
+                    .putString("api_key", key.text.toString().trim()).putString("modelo", models[model])
+                    .putString("outra_url", url.text.toString().trim()).putString("outra_key", okey.text.toString().trim())
+                    .putString("outra_modelo", omodel.text.toString().trim()).apply()
+                assistant = null  // recria com a configuração nova (a conversa recomeça)
+                if (openAfter && aiConfigured()) toggleAi()
+            }
+            .setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun aiSay(text: String) = runOnUiThread {
+        if (aiLog.text.isNotEmpty()) aiLog.append("\n\n")
+        aiLog.append(text)
+        aiScroll.post { aiScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    // Ferramenta do motor na thread GL (o assistente roda numa thread de rede e espera a resposta)
+    private fun runToolOnGl(name: String, input: String): String {
+        var out = "{\"erro\":\"tempo esgotado\"}"
+        val latch = CountDownLatch(1)
+        view.queueEvent { try { out = NativeBridge.toolCall(name, input) } finally { latch.countDown() } }
+        latch.await(60, TimeUnit.SECONDS)
+        return out
+    }
+
+    private fun aiSendClicked() {
+        if (aiBusy) { assistant?.cancelled = true; aiSay("(parando…)"); return }
+        val text = aiInput.text.toString().trim()
+        if (text.isEmpty()) return
+        if (!aiConfigured()) { aiSettings(); return }
+        stopPlayIfNeeded()
+        aiInput.setText("")
+        hideKeyboard()
+        aiSay("🧑 $text")
+        val a = assistant ?: newAgent().also { assistant = it }
+        aiBusy = true
+        aiSend.text = "Parar"
+        Thread {
+            try {
+                a.send(text) { msg -> aiSay(if (msg.startsWith("🔧")) msg else "🤖 $msg") }
+            } catch (e: Exception) {
+                val m = e.message ?: e.toString()
+                aiSay("⚠ Erro: " + when {
+                    m.contains("401") || m.contains("authentication", true) -> "chave da API inválida (⚙ para trocar)"
+                    m.contains("429") -> "limite de uso atingido; tente em instantes"
+                    m.contains("credit", true) || m.contains("billing", true) -> "sem créditos na conta da API"
+                    m.contains("Unable to resolve host") || m.contains("timeout", true) -> "sem internet"
+                    else -> m.take(300)
+                })
+            } finally {
+                aiBusy = false
+                runOnUiThread { aiSend.text = "Enviar" }
+                view.queueEvent { saveIfChanged() }
+            }
+        }.start()
+    }
+
+    private fun hideKeyboard() =
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(view.windowToken, 0)
+
     // ---------------- painel visual ----------------
     private fun buildVisualPanel(): LinearLayout {
         val p = panel()
         p.addView(label("Visual", bold = true))
         p.addView(slider("Exposição", 0.1f, 3f, 1f) { v -> gl { NativeBridge.nativeSetExposure(v) } })
+        p.addView(slider("Hora do dia", 0f, 24f, 13f) { v -> gl { NativeBridge.nativeSetTimeOfDay(v) } })
         p.addView(slider("Sol", 0f, 8f, 3.2f) { v -> gl { NativeBridge.nativeSetSunIntensity(v) } })
         p.addView(CheckBox(this).apply {
             text = "Grade do editor"
@@ -529,7 +1130,9 @@ class MainActivity : Activity() {
 
     private fun updateOverlays() {
         inspector.visibility = if (snap.selected >= 0 && !snap.playing) View.VISIBLE else View.GONE
-        hud.visibility = if (snap.playing && snap.hasPlayer) View.VISIBLE else View.GONE
+        hud.visibility = if (snap.playing) View.VISIBLE else View.GONE
+        val controls = if (snap.hasPlayer) View.VISIBLE else View.GONE
+        if (::joystick.isInitialized) { joystick.visibility = controls; (fireBtn.parent as View).visibility = controls }
         if (::fireBtn.isInitialized) fireBtn.text = if (snap.playerWeapon in 0..3) "Atirar" else "Bater"
     }
 
@@ -542,6 +1145,7 @@ class MainActivity : Activity() {
                     s[0], s[1], s[2], s[3].toInt(), compact(s[4]), s[5].toInt())
             }
             updateOverlays()
+            updateGameHud()
             if (inspector.visibility == View.VISIBLE) {
                 if (shownSelection != snap.selected) { inspTitle.text = snap.selectedName; shownSelection = snap.selected }
                 val editing = fields.any { it.hasFocus() }
@@ -553,7 +1157,7 @@ class MainActivity : Activity() {
                     }
                 }
             }
-            ui.postDelayed(this, 250)
+            ui.postDelayed(this, if (snap.playing) 150 else 250)
         }
     }
 
@@ -577,6 +1181,37 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
+        if (requestCode == REQ_GLB) {
+            val f = pendingGlb ?: return
+            Thread {
+                try {
+                    contentResolver.openOutputStream(uri)!!.use { out -> f.inputStream().use { it.copyTo(out) } }
+                    toast(String.format(Locale.US, "Modelo salvo (%.1f MB)", f.length() / 1048576.0))
+                } catch (e: Exception) { toast("Erro ao salvar: ${e.message}") }
+            }.start()
+            return
+        }
+        if (requestCode == REQ_EXPORT) {
+            gl {
+                val json = NativeBridge.exportProject()
+                Thread {
+                    try {
+                        contentResolver.openOutputStream(uri)!!.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                        toast("Projeto exportado")
+                    } catch (e: Exception) { toast("Erro ao exportar: ${e.message}") }
+                }.start()
+            }
+            return
+        }
+        if (requestCode == REQ_PROJECT) {
+            Thread {
+                try {
+                    val json = contentResolver.openInputStream(uri)!!.bufferedReader().readText()
+                    runOnUiThread { importAsNewProject(json, displayName(uri).removeSuffix(".json")) }
+                } catch (e: Exception) { toast("Erro ao ler: ${e.message}") }
+            }.start()
+            return
+        }
         val name = displayName(uri)
         val lower = name.lowercase(Locale.US)
         if (requestCode == REQ_MODEL && !lower.endsWith(".glb") && !lower.endsWith(".gltf") && !lower.endsWith(".fbx")) {
@@ -660,11 +1295,16 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_MODEL = 42
         private const val REQ_IMAGE = 43
+        private const val REQ_PROJECT = 44
+        private const val REQ_EXPORT = 45
+        private const val REQ_GLB = 46
+        private const val AUTOSAVE_MS = 30_000L
     }
 }
 
 class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceView(activity) {
     val snapshot = EngineSnapshot()
+    var onReady: (() -> Unit)? = null  // chamado na thread GL quando o motor é (re)criado
 
     init {
         setEGLContextClientVersion(3)
@@ -680,8 +1320,8 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
             override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
                 // Contexto novo (1ª vez ou contexto perdido): recria o motor e a cena
                 if (NativeBridge.nativeCreate(shaderDir)) {
-                    NativeBridge.nativeLoadDemo()
                     snapshot.ready = true
+                    onReady?.invoke() ?: NativeBridge.nativeNewScene()
                 } else {
                     post { Toast.makeText(context, "Falha ao iniciar o motor (shaders). Veja o logcat: Mobile3D", Toast.LENGTH_LONG).show() }
                 }
@@ -707,6 +1347,13 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
                 snapshot.selected = sel
                 snapshot.hasPlayer = NativeBridge.nativeHasPlayer()
                 snapshot.playerWeapon = NativeBridge.nativePlayerWeapon()
+                if (snapshot.playing) {
+                    val g = FloatArray(8)
+                    NativeBridge.nativeGameStatus(g)
+                    snapshot.game = g
+                    snapshot.objective = NativeBridge.gameText(0)
+                    snapshot.message = NativeBridge.gameText(1)
+                }
             }
         })
         renderMode = RENDERMODE_CONTINUOUSLY

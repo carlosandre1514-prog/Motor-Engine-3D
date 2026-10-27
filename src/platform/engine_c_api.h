@@ -55,6 +55,10 @@ void    engine_set_grid(Engine*, int visible);
 // Animação (objeto selecionado ou, sem seleção animada, todos)
 int     engine_cycle_animation(Engine*);                        // próxima animação; retorna o índice ou -1
 const char* engine_animation_name(Engine*);
+const char* engine_animation_list(Engine*);                     // nomes das animações (uma por linha)
+int     engine_animation_index(Engine*);
+void    engine_set_animation(Engine*, int index);
+void    engine_set_anim_preview(Engine*, int on);               // 1 = animações tocam também no editor
 
 // Estatísticas: out[0] fps, [1] ms por frame, [2] ms de CPU do motor, [3] draw calls, [4] triângulos, [5] objetos
 void    engine_get_stats(Engine*, float* out6);
@@ -99,6 +103,25 @@ int     engine_create_effect(Engine*, int kind, int element);
 void    engine_spawn_effect(Engine*, int kind, int element, float x, float y, float z);  // instantâneo
 void    engine_set_effect_element(Engine*, int element);        // muda o elemento do efeito selecionado
 void    engine_player_cast(Engine*, int element);               // magia do jogador (Play)
+
+// ---- Projeto (formato JSON; ver src/engine/Project.cpp)
+const char* engine_export_project(Engine*);                     // JSON do projeto (válido até a próxima chamada)
+int     engine_import_project(Engine*, const char* json);       // 0 se inválido (ver engine_last_error)
+long long engine_project_revision(Engine*);                     // muda a cada edição (salvamento automático)
+void    engine_set_project_name(Engine*, const char* name);
+// Ferramentas do assistente: ver_cena, carregar_mapa, criar_objetos, editar_objeto, remover_objetos,
+// definir_regras, definir_ambiente, altura_terreno, focar_camera, adicionar_comportamento. Entrada e saída em JSON.
+const char* engine_tool_call(Engine*, const char* name, const char* input_json);
+int     engine_add_spec(Engine*, const char* spec_json);        // cria um objeto pela receita JSON e seleciona
+void    engine_set_time_of_day(Engine*, float hour);
+// Exporta para .glb (glTF binário: Blender, Unity, Godot...). object_id -1 = cena inteira. 0 se falhar.
+int     engine_export_glb(Engine*, int object_id, const char* path);
+float   engine_get_time_of_day(Engine*);
+
+// ---- Jogo (Play): out[0] estado (0 jogando, 1 vitória, 2 derrota), [1] vida, [2] vida máx, [3] pontos,
+// [4] tempo, [5] limite de tempo (0 = sem), [6] dano recente (>0 pisca), [7] tem objetivo (0/1)
+void    engine_game_status(Engine*, float* out8);
+const char* engine_game_text(Engine*, int which);               // 0 objetivo, 1 mensagem, 2 título, 3 descrição
 
 // Touch: action 0=down 1=move 2=up; ids/xy em arrays de n dedos (pixels)
 void    engine_touch(Engine*, int action, int n, const int* ids, const float* xy);

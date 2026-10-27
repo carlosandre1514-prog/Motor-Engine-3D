@@ -1,0 +1,250 @@
+{
+ "ambiente": {
+  "exposicao": 1.0,
+  "grade": true,
+  "hora": 10.0,
+  "neblina": 0.0017999999690800905,
+  "sol": 3.2
+ },
+ "camera": {
+  "alvo": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "distancia": 358.7,
+  "pitch": 0.75,
+  "yaw": 3.642
+ },
+ "formato": "motor3d-projeto",
+ "mapa": {
+  "semente": 11,
+  "tipo": "bairro"
+ },
+ "nome": "Moedas no bairro",
+ "objetos": [
+  {
+   "aparencia": "aleatorio",
+   "arma": "taco",
+   "jogador": true,
+   "nome": "Jogador",
+   "pos": [
+    -38.0,
+    0.2,
+    -24.0
+   ],
+   "semente": 80,
+   "tipo": "personagem"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -39.6,
+    0.9,
+    -18.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -38.0,
+    0.9,
+    -14.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -36.4,
+    0.9,
+    -10.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -39.6,
+    0.9,
+    -6.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -38.0,
+    0.9,
+    -2.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -36.4,
+    0.9,
+    2.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -39.6,
+    0.9,
+    6.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -38.0,
+    0.9,
+    10.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -36.4,
+    0.9,
+    14.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.55,
+    0.55,
+    0.12
+   ],
+   "item": "moeda",
+   "nome": "Moeda",
+   "pos": [
+    -39.6,
+    0.9,
+    18.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "nome": "Personagem 2",
+   "pos": [
+    -36.0,
+    0.0,
+    -4.0
+   ],
+   "semente": 1846027043,
+   "tipo": "inimigo",
+   "velocidade": 2.6,
+   "vida": 60
+  },
+  {
+   "nome": "Personagem 3",
+   "pos": [
+    -36.0,
+    0.0,
+    6.0
+   ],
+   "semente": 740091155,
+   "tipo": "inimigo",
+   "velocidade": 2.6,
+   "vida": 60
+  },
+  {
+   "nome": "Personagem 4",
+   "pos": [
+    -36.0,
+    0.0,
+    16.0
+   ],
+   "semente": 153036257,
+   "tipo": "inimigo",
+   "velocidade": 2.6,
+   "vida": 60
+  },
+  {
+   "escala": [
+    0.45,
+    0.45,
+    0.45
+   ],
+   "item": "vida",
+   "nome": "Vida",
+   "pos": [
+    -40.0,
+    0.9,
+    6.0
+   ],
+   "tipo": "coletavel"
+  }
+ ],
+ "regras": {
+  "descricao": "Pegue as 10 moedas em 2 minutos",
+  "objetivo": "coletar",
+  "quantidade": 10,
+  "tempo": 120.0,
+  "titulo": "Moedas no bairro",
+  "vida_jogador": 100.0
+ },
+ "versao": 1
+}

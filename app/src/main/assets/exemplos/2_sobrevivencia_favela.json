@@ -1,0 +1,147 @@
+{
+ "ambiente": {
+  "exposicao": 1.0,
+  "grade": true,
+  "hora": 21.0,
+  "neblina": 0.0020000000949949026,
+  "sol": 0.3
+ },
+ "camera": {
+  "alvo": [
+   0.0,
+   25.117,
+   0.0
+  ],
+  "distancia": 251.6,
+  "pitch": 0.75,
+  "yaw": 3.642
+ },
+ "formato": "motor3d-projeto",
+ "mapa": {
+  "semente": 5,
+  "tipo": "favela"
+ },
+ "nome": "Sobrevivência na favela",
+ "objetos": [
+  {
+   "aparencia": "aleatorio",
+   "arma": "fuzil",
+   "jogador": true,
+   "nome": "Jogador",
+   "pos": [
+    0.0,
+    2.8,
+    -128.0
+   ],
+   "semente": 38,
+   "tipo": "personagem"
+  },
+  {
+   "arma_inimigo": "pistola",
+   "dano": 6,
+   "intervalo": 5,
+   "maximo": 3,
+   "nome": "Spawner de inimigos",
+   "pos": [
+    0.0,
+    17.096,
+    -100.0
+   ],
+   "tipo": "spawner",
+   "vida": 60
+  },
+  {
+   "intervalo": 7,
+   "maximo": 2,
+   "nome": "Spawner de inimigos",
+   "pos": [
+    0.0,
+    2.5,
+    -148.0
+   ],
+   "tipo": "spawner",
+   "vida": 80
+  },
+  {
+   "escala": [
+    0.45,
+    0.45,
+    0.45
+   ],
+   "item": "vida",
+   "nome": "Vida",
+   "pos": [
+    1.5,
+    3.4,
+    -134.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.45,
+    0.45,
+    0.45
+   ],
+   "item": "vida",
+   "nome": "Vida",
+   "pos": [
+    1.5,
+    3.4,
+    -125.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "escala": [
+    0.45,
+    0.45,
+    0.45
+   ],
+   "item": "vida",
+   "nome": "Vida",
+   "pos": [
+    1.5,
+    6.589,
+    -116.0
+   ],
+   "tipo": "coletavel"
+  },
+  {
+   "efeito": "fogueira",
+   "nome": "Fogueira (Fogo)",
+   "pos": [
+    2.5,
+    2.5,
+    -124.0
+   ],
+   "tipo": "efeito"
+  },
+  {
+   "cor": "#ffb070",
+   "escala": [
+    0.22,
+    0.22,
+    0.22
+   ],
+   "intensidade": 12,
+   "nome": "Luz",
+   "pos": [
+    0.0,
+    8.01,
+    -118.0
+   ],
+   "raio": 14,
+   "tipo": "luz"
+  }
+ ],
+ "regras": {
+  "descricao": "Aguente 90 segundos",
+  "objetivo": "sobreviver",
+  "quantidade": 0,
+  "tempo": 90.0,
+  "titulo": "Sobrevivência na favela",
+  "vida_jogador": 150.0
+ },
+ "versao": 1
+}

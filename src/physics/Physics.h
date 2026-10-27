@@ -148,6 +148,24 @@ public:
         world_->updateSingleAabb(rb.body);
     }
     void resetAccumulator() { accum_ = 0.f; }
+    // Tira/põe o corpo da simulação (inimigo morto, objeto coletado)
+    void setEnabled(RigidBody& rb, bool on) {
+        if (!rb.body) return;
+        if (on) { if (!rb.body->isInWorld()) world_->addRigidBody(rb.body); }
+        else if (rb.body->isInWorld()) world_->removeRigidBody(rb.body);
+    }
+    // Estático <-> cinemático (plataforma que se move no Play; o corpo segue o Transform)
+    void setKinematic(RigidBody& rb, bool on) {
+        if (!rb.body) return;
+        int f = rb.body->getCollisionFlags();
+        if (on) {
+            rb.body->setCollisionFlags((f & ~btCollisionObject::CF_STATIC_OBJECT) | btCollisionObject::CF_KINEMATIC_OBJECT);
+            rb.body->setActivationState(DISABLE_DEACTIVATION);
+        } else {
+            rb.body->setCollisionFlags((f & ~btCollisionObject::CF_KINEMATIC_OBJECT) | (rb.mass <= 0.f ? btCollisionObject::CF_STATIC_OBJECT : 0));
+            rb.body->forceActivationState(ACTIVE_TAG);
+        }
+    }
 
     // Corpos estáticos de cenário (prédios, terreno, barreiras). A forma pertence ao chamador.
     btRigidBody* addStatic(btCollisionShape* shape, glm::vec3 pos, glm::quat rot = glm::quat(1, 0, 0, 0), float friction = 0.8f) {

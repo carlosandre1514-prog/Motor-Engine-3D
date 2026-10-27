@@ -40,4 +40,17 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = '17' }
+
+    // arquivos repetidos entre as bibliotecas do SDK (Jackson, OkHttp...) que não vão para o APK
+    packaging {
+        resources {
+            excludes += ['META-INF/versions/9/module-info.class', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*',
+                         'META-INF/NOTICE*', 'META-INF/INDEX.LIST', 'META-INF/*.md']
+        }
+    }
+}
+
+dependencies {
+    // Assistente de IA (Claude): SDK oficial da Anthropic para Java/Kotlin
+    implementation 'com.anthropic:anthropic-java:3.2.0'
 }

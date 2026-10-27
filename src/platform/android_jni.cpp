@@ -3,6 +3,7 @@
 #include <EGL/egl.h>
 #include <android/log.h>
 #include <jni.h>
+#include <cstring>
 #include <string>
 #include "platform/engine_c_api.h"
 
@@ -16,6 +17,21 @@ static std::string str(JNIEnv* env, jstring s) {
     std::string r = c ? c : "";
     env->ReleaseStringUTFChars(s, c);
     return r;
+}
+
+// Texto JSON vai e volta como bytes UTF-8 (o JNI usa UTF-8 "modificado", que quebra com emoji)
+static std::string bytes(JNIEnv* env, jbyteArray a) {
+    if (!a) return {};
+    jsize n = env->GetArrayLength(a);
+    std::string s(size_t(n), '\0');
+    if (n) env->GetByteArrayRegion(a, 0, n, reinterpret_cast<jbyte*>(s.data()));
+    return s;
+}
+static jbyteArray toBytes(JNIEnv* env, const char* s) {
+    jsize n = jsize(s ? std::strlen(s) : 0);
+    jbyteArray a = env->NewByteArray(n);
+    if (n) env->SetByteArrayRegion(a, 0, n, reinterpret_cast<const jbyte*>(s));
+    return a;
 }
 
 extern "C" {
@@ -151,6 +167,39 @@ JNI_FN(void, nativeGetStats)(JNIEnv* env, jclass, jfloatArray out6) {
     engine_get_stats(g_engine, s);
     env->SetFloatArrayRegion(out6, 0, 6, s);
 }
+
+// Projeto
+JNI_FN(jbyteArray, nativeExportProject)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_export_project(g_engine) : ""); }
+JNI_FN(jboolean, nativeImportProject)(JNIEnv* env, jclass, jbyteArray json) {
+    return g_engine && engine_import_project(g_engine, bytes(env, json).c_str());
+}
+JNI_FN(jlong, nativeProjectRevision)(JNIEnv*, jclass) { return g_engine ? jlong(engine_project_revision(g_engine)) : 0; }
+JNI_FN(void, nativeSetProjectName)(JNIEnv* env, jclass, jbyteArray name) { if (g_engine) engine_set_project_name(g_engine, bytes(env, name).c_str()); }
+JNI_FN(jbyteArray, nativeToolCall)(JNIEnv* env, jclass, jstring name, jbyteArray input) {
+    return toBytes(env, g_engine ? engine_tool_call(g_engine, str(env, name).c_str(), bytes(env, input).c_str()) : "{\"erro\":\"motor não iniciado\"}");
+}
+JNI_FN(jint, nativeAddSpec)(JNIEnv* env, jclass, jbyteArray json) { return g_engine ? engine_add_spec(g_engine, bytes(env, json).c_str()) : -1; }
+JNI_FN(void, nativeSetTimeOfDay)(JNIEnv*, jclass, jfloat h) { if (g_engine) engine_set_time_of_day(g_engine, h); }
+JNI_FN(jfloat, nativeGetTimeOfDay)(JNIEnv*, jclass) { return g_engine ? engine_get_time_of_day(g_engine) : 13.f; }
+
+JNI_FN(jboolean, nativeExportGlb)(JNIEnv* env, jclass, jint id, jstring path) {
+    return g_engine && engine_export_glb(g_engine, id, str(env, path).c_str());
+}
+
+// Jogo
+JNI_FN(void, nativeGameStatus)(JNIEnv* env, jclass, jfloatArray out8) {
+    if (!g_engine || env->GetArrayLength(out8) < 8) return;
+    float s[8];
+    engine_game_status(g_engine, s);
+    env->SetFloatArrayRegion(out8, 0, 8, s);
+}
+JNI_FN(jbyteArray, nativeGameText)(JNIEnv* env, jclass, jint which) { return toBytes(env, g_engine ? engine_game_text(g_engine, which) : ""); }
+
+// Animações
+JNI_FN(jbyteArray, nativeAnimationList)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_animation_list(g_engine) : ""); }
+JNI_FN(jint, nativeAnimationIndex)(JNIEnv*, jclass) { return g_engine ? engine_animation_index(g_engine) : -1; }
+JNI_FN(void, nativeSetAnimation)(JNIEnv*, jclass, jint i) { if (g_engine) engine_set_animation(g_engine, i); }
+JNI_FN(void, nativeSetAnimPreview)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_set_anim_preview(g_engine, on ? 1 : 0); }
 
 }  // extern "C"
 

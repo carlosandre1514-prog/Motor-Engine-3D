@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:glEsVersion="0x00030002" android:required="true" />
+    <!-- assistente de IA e "Abrir de link" -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="Motor 3D"

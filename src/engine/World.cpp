@@ -653,7 +653,7 @@ void updateWorld(Engine* e) {
     if (e->mapKind == MAP_Infinite) updateInfinite(e, 1);  // no máximo 1 chunk novo por frame
 }
 
-void loadMap(Engine* e, int kind, uint32_t seed) {
+void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer) {
     clearScene(e);
     e->mapKind = kind;
     e->mapSeed = seed;
@@ -681,9 +681,14 @@ void loadMap(Engine* e, int kind, uint32_t seed) {
         default: genSuburb(e, r, spawn, spawnYaw); e->mapKind = MAP_Suburb; break;
     }
     e->mapKind = kind < MAP_Count ? kind : MAP_Suburb;
-    // jogador
-    int id = createCharacter(e, randomCharacter(seed * 7 + 3), spawn + glm::vec3(0, 0.2f, 0), spawnYaw, true);
-    selectHandle(e, objectById(e, id) ? e->objects[id] : Scene::Handle{});
+    // jogador (salvo como receita: ao reabrir o projeto, o mapa é refeito sem ele e ele volta do arquivo)
+    if (withPlayer) {
+        char spec[160];
+        std::snprintf(spec, sizeof(spec), "{\"tipo\":\"personagem\",\"aparencia\":\"aleatorio\",\"semente\":%u,\"jogador\":true,\"nome\":\"Jogador\","
+                      "\"pos\":[%.3f,%.3f,%.3f],\"rot_y\":%.1f}", seed * 7 + 3, spawn.x, spawn.y + 0.2f, spawn.z, glm::degrees(spawnYaw));
+        int id = createFromSpecJson(e, spec, nullptr);
+        selectHandle(e, objectById(e, id) ? e->objects[id] : Scene::Handle{});
+    }
     // câmera do editor começa com a visão geral do mapa
     mapOverview(e);
 }
