@@ -311,7 +311,13 @@ void recipePartSet(Engine* e, GameObject& root, int partIndex, const char* key, 
 
 std::string jsonString(const std::string& s) { return json(s).dump(-1, ' ', false, json::error_handler_t::replace); }
 
-std::string kitPath(Engine* e, const std::string& name) { return e->renderer.shaderDir() + "/kit/" + name + ".gltf"; }
+std::string kitPath(Engine* e, const std::string& name) {
+    std::string base = e->renderer.shaderDir() + "/kit/" + name;
+    if (name.find('.') != std::string::npos) return base;  // já tem extensão
+    FILE* f = std::fopen((base + ".glb").c_str(), "rb");     // armas/... vêm em .glb, peças da cidade em .gltf
+    if (f) { std::fclose(f); return base + ".glb"; }
+    return base + ".gltf";
+}
 
 int loadModelFile(Engine* e, const char* pathIn) {
     // "kit:Nome" = peça do kit de cidade que vem com o app (shaders/kit/Nome.gltf): o projeto guarda só o nome
@@ -386,6 +392,63 @@ static bool protoFromModel(Engine* e, const std::string& path, Prototype& proto)
     if (parts.empty()) return false;
     proto.parts = parts;
     return true;
+}
+
+// Arma de arquivo e acessórios no projeto. Arma solta: "arquivo", "virar", "tamanho", "acessorios";
+// no personagem as mesmas chaves com "arma_" na frente (e "acessorios").
+WeaponLook weaponLookOf(const json& spec, bool onCharacter) {
+    WeaponLook l;
+    std::string p = onCharacter ? "arma_" : "";
+    l.file = str(spec, (p + "arquivo").c_str());
+    l.flip = flag(spec, (p + "virar").c_str(), false);
+    l.size = num(spec, (p + "tamanho").c_str(), 1.f);
+    if (auto it = spec.find("acessorios"); it != spec.end() && it->is_array())
+        for (const auto& a : *it) {
+            if (!a.is_string()) continue;
+            std::string n = norm(a.get<std::string>());
+            if (n.find("mira") != std::string::npos || n.find("red") != std::string::npos) l.accessories |= ACC_RedDot;
+            else if (n.find("coronha") != std::string::npos) l.accessories |= ACC_Stock;
+            else if (n.find("empunhadura") != std::string::npos || n.find("grip") != std::string::npos) l.accessories |= ACC_Foregrip;
+        }
+    return l;
+}
+
+json accessoriesJson(uint32_t acc) {
+    json a = json::array();
+    if (acc & ACC_RedDot) a.push_back("mira");
+    if (acc & ACC_Stock) a.push_back("coronha");
+    if (acc & ACC_Foregrip) a.push_back("empunhadura");
+    return a;
+}
+
+std::string accessoriesList(uint32_t acc) { return accessoriesJson(acc).dump(); }
+
+bool modelParts(Engine* e, const std::string& path, const char* only, std::vector<ProtoPart>& parts, AABB& box, std::vector<std::string>* names) {
+    int id = loadModelFile(e, path.c_str());
+    GameObject* root = objectById(e, id);
+    if (!root) return false;
+    e->scene.updateTransforms();
+    glm::mat4 un = glm::translate(glm::mat4(1.f), -root->transform.position);  // desfaz o "pousar no foco" do loadModelFile
+    parts.clear();
+    if (names) names->clear();
+    box = AABB{glm::vec3(1e30f), glm::vec3(-1e30f)};
+    std::string want = only ? norm(only) : std::string();
+    Scene::forEachInSubtree(*root, [&](GameObject& g) {
+        if (!g.meshRenderer) return;
+        const Mesh* m = e->renderer.mesh(g.meshRenderer->mesh);
+        if (!m || m->skinned) return;
+        std::string chain;
+        for (const Transform3D* t = &g.transform; t; t = t->parent) if (t->owner) chain += norm(t->owner->name) + "/";
+        if (!want.empty() && chain.find(want) == std::string::npos) return;
+        if (names) names->push_back(chain);
+        const glm::mat4* pal;
+        glm::mat4 local = un * renderMatrix(e, g, &pal);
+        parts.push_back({g.meshRenderer->mesh, g.meshRenderer->material, 0.f, 1e30f, local});
+        AABB b = transformAABB(m->bounds, local);
+        box.min = glm::min(box.min, b.min); box.max = glm::max(box.max, b.max);
+    });
+    deleteObject(e, Scene::handleOf(*root));
+    return !parts.empty();
 }
 
 bool kitPrototype(Engine* e, const char* name, Prototype& out, float lodFar) {
@@ -530,7 +593,7 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         if (!controllable && prevPlayer < 0 && !enemy) e->player = ci;
         if (auto it = spec.find("arma"); it != spec.end() && it->is_string() && !it->get<std::string>().empty()) {
             int wk = weaponOf(it->get<std::string>());
-            if (wk >= 0) createWeapon(e, wk, ci);
+            if (wk >= 0 && createWeapon(e, wk, ci, weaponLookOf(spec, true)) < 0) e->lastError.clear();  // arquivo sumiu: fica sem arma
         }
         spec.erase("jogador");
         return finish(e, e->objects[id], spec, true);
@@ -542,12 +605,18 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
             GameObject* owner = objectById(e, it->get<int>());
             int ci = charIndexOf(e, rootOf(e, owner));
             if (ci < 0) return fail("portador não é personagem");
-            createWeapon(e, wk, ci);
-            recipeSet(e, *e->scene.get(e->characters[ci].root), "arma", json(weaponKey(wk)).dump());
+            WeaponLook look = weaponLookOf(spec, false);
+            if (createWeapon(e, wk, ci, look) < 0) return fail(e->lastError);
+            GameObject& root = *e->scene.get(e->characters[ci].root);
+            recipeSet(e, root, "arma", json(weaponKey(wk)).dump());
+            recipeSet(e, root, "arma_arquivo", look.file.empty() ? "null" : json(look.file).dump());
+            recipeSet(e, root, "arma_virar", look.flip ? "true" : "null");
+            recipeSet(e, root, "arma_tamanho", look.size != 1.f ? json(look.size).dump() : "null");
+            recipeSet(e, root, "acessorios", look.accessories ? accessoriesJson(look.accessories).dump() : "null");
             return owner->id;
         }
-        int id = createWeapon(e, wk, -1);
-        if (id < 0) return fail("não consegui criar a arma");
+        int id = createWeapon(e, wk, -1, weaponLookOf(spec, false));
+        if (id < 0) return fail(e->lastError.empty() ? "não consegui criar a arma" : e->lastError);
         GameObject* g = objectById(e, id);
         if (!hasPos) spec["pos"] = arr3(pos + glm::vec3(0, 0.6f, 0));
         spec["arma"] = weaponKey(wk);

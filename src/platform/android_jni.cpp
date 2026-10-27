@@ -130,6 +130,9 @@ JNI_FN(jint, nativeCreateRandomCharacter)(JNIEnv*, jclass, jint seed, jboolean c
     return g_engine ? engine_create_random_character(g_engine, uint32_t(seed), controllable ? 1 : 0) : -1;
 }
 JNI_FN(jint, nativeCreateWeapon)(JNIEnv*, jclass, jint kind) { return g_engine ? engine_create_weapon(g_engine, kind) : -1; }
+JNI_FN(jint, nativeCreateWeaponEx)(JNIEnv* env, jclass, jint kind, jstring file, jboolean flip, jfloat size, jint acc) {
+    return g_engine ? engine_create_weapon_ex(g_engine, kind, str(env, file).c_str(), flip ? 1 : 0, size, acc) : -1;
+}
 JNI_FN(jint, nativeCreateBuilding)(JNIEnv*, jclass, jint kind, jint seed) {
     return g_engine ? engine_create_building(g_engine, kind, uint32_t(seed)) : -1;
 }

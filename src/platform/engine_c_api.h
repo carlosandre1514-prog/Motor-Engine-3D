@@ -92,6 +92,10 @@ int     engine_create_character(Engine*, const float* params20);
 int     engine_create_random_character(Engine*, uint32_t seed, int controllable);
 // Arma: 0 pistola, 1 fuzil, 2 escopeta, 3 sniper, 4 faca, 5 taco. Equipa no personagem selecionado (ou no jogador).
 int     engine_create_weapon(Engine*, int kind);
+// Arma com aparência própria: file = arquivo 3D (vazio = a do motor), flip = cano veio para trás, size = multiplica o
+// tamanho do tipo, accessories = bits 1 mira red dot, 2 coronha tática, 4 empunhadura frontal. Vai para a mão do
+// personagem selecionado (ou do jogador); sem personagem fica solta.
+int     engine_create_weapon_ex(Engine*, int kind, const char* file, int flip, float size, int accessories);
 // Construção: 0 casa, 1 sobrado, 2 barraco, 3 prédio, 4 arranha-céu, 5 escola, 6 árvore, 7 pinheiro, 8 palmeira,
 // 9 carro, 10 poste, 11 muro, 12 rua, 13 cruzamento, 14 calçada, 15 escada, 16 rampa, 17 piso, 18 parede,
 // 19 cerca, 20 banco, 21 caixa d'água. Criada no ponto de foco da câmera.

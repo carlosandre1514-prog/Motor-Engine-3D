@@ -127,6 +127,6 @@ void buildStreetLight(Geo& g);
 void buildWaterTank(MeshBuilder& painted, glm::vec3 base);
 
 // Arma (ver WeaponKind em Character.h): origem na empunhadura, cano +Z. Retorna a ponta do cano.
-glm::vec3 buildWeapon(Geo& g, int kind);
+glm::vec3 buildWeapon(Geo& g, int kind, bool stock = true);  // stock = false: sem coronha (vai a tática)
 
 }  // namespace eng

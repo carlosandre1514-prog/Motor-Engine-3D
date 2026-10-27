@@ -496,19 +496,23 @@ int engine_create_random_character(Engine* e, uint32_t seed, int controllable) {
     return createSpec(e, spec);
 }
 
-int engine_create_weapon(Engine* e, int kind) {
+int engine_create_weapon(Engine* e, int kind) { return engine_create_weapon_ex(e, kind, "", 0, 1.f, 0); }
+
+int engine_create_weapon_ex(Engine* e, int kind, const char* file, int flip, float size, int accessories) {
     if (!e) return -1;
     static const char* names[] = {"pistola", "fuzil", "escopeta", "sniper", "faca", "taco"};
+    std::string spec = std::string("{\"tipo\":\"arma\",\"arma\":\"") + names[std::clamp(kind, 0, 5)] + "\"";
+    if (file && file[0]) spec += ",\"arquivo\":" + eng::jsonString(file);
+    if (flip) spec += ",\"virar\":true";
+    if (size != 1.f) spec += ",\"tamanho\":" + std::to_string(size);
+    if (accessories) spec += ",\"acessorios\":" + eng::accessoriesList(uint32_t(accessories));
     int ch = eng::characterOfSelection(e);
     if (ch < 0 && engine_has_player(e)) ch = e->player;
-    char spec[120];
     if (ch >= 0) {
         GameObject* owner = e->scene.get(e->characters[ch].root);
-        std::snprintf(spec, sizeof(spec), R"({"tipo":"arma","arma":"%s","portador":%d})", names[std::clamp(kind, 0, 5)], owner ? owner->id : -1);
-        return createSpec(e, spec, false);
+        return createSpec(e, spec + ",\"portador\":" + std::to_string(owner ? owner->id : -1) + "}", false);
     }
-    std::snprintf(spec, sizeof(spec), R"({"tipo":"arma","arma":"%s"})", names[std::clamp(kind, 0, 5)]);
-    return createSpec(e, spec);
+    return createSpec(e, spec + "}");
 }
 
 int engine_create_building(Engine* e, int kind, uint32_t seed) {

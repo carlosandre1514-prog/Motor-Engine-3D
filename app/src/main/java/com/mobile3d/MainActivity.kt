@@ -514,13 +514,7 @@ class MainActivity : Activity() {
         dialog().setTitle("Criar").setItems(items) { _, which ->
             when (which) {
                 0 -> characterMenu()
-                1 -> list("Arma (vai para a mão do personagem selecionado)",
-                          arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco")) { k ->
-                    gl {
-                        val id = NativeBridge.nativeCreateWeapon(k)
-                        if (id < 0) toast("Não foi possível criar a arma")
-                    }
-                }
+                1 -> weaponMenu()
                 2 -> list("Efeito", effects) { k ->
                     list("Elemento / cor do efeito", elements) { el -> gl { NativeBridge.nativeCreateEffect(k, el) } }
                 }
@@ -541,6 +535,76 @@ class MainActivity : Activity() {
                 }
             }
         }.show()
+    }
+
+    // ---------------- armas ----------------
+    // Arma atual (para "ajustar"): tipo, arquivo ("" = a do motor), virar, tamanho e acessórios (bits)
+    private data class WeaponChoice(val kind: Int, val file: String, val flip: Boolean, val size: Float, val acc: Int)
+    private var lastWeapon = WeaponChoice(1, "", false, 1f, 0)
+    private var pendingWeaponKind = 1
+    private val weaponKinds = arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco")
+    private val accessoryNames = arrayOf("🔴 Mira red dot (com trilho)", "🪖 Coronha tática", "✊ Empunhadura frontal")
+
+    private fun equipWeapon(w: WeaponChoice) {
+        lastWeapon = w
+        gl {
+            val id = NativeBridge.nativeCreateWeaponEx(w.kind, w.file, w.flip, w.size, w.acc)
+            if (id < 0) toast("Não deu: " + NativeBridge.nativeLastError())
+            else saveIfChanged()
+        }
+    }
+
+    // Liga/desliga os acessórios e depois equipa
+    private fun accessoriesDialog(w: WeaponChoice, then: (WeaponChoice) -> Unit) {
+        if (w.kind > 3) { then(w.copy(acc = 0)); return }  // faca e taco: sem acessórios
+        val checked = BooleanArray(3) { w.acc and (1 shl it) != 0 }
+        dialog().setTitle("Acessórios (ligar / desligar)")
+            .setMultiChoiceItems(accessoryNames, checked) { _, i, on -> checked[i] = on }
+            .setPositiveButton("Equipar") { _, _ ->
+                var acc = 0
+                for (i in 0..2) if (checked[i]) acc = acc or (1 shl i)
+                then(w.copy(acc = acc))
+            }.setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun weaponMenu() {
+        val items = arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco", "🔫 M4A1 (modelo realista)",
+                            "📂 Arma de um arquivo 3D (.glb, .fbx, .obj)…", "🔧 Ajustar a arma atual (acessórios, virar, tamanho)…",
+                            "ℹ Créditos dos modelos")
+        dialog().setTitle("Arma (vai para a mão do personagem selecionado)").setItems(items) { _, k ->
+            when {
+                k < 6 -> accessoriesDialog(WeaponChoice(k, "", false, 1f, 0)) { equipWeapon(it) }
+                k == 6 -> accessoriesDialog(WeaponChoice(1, "kit:armas/m4a1", false, 1f, 0)) { equipWeapon(it) }
+                k == 7 -> list("Que tipo de arma é? (define a pose, o tamanho e o dano)", weaponKinds) { t ->
+                    pendingWeaponKind = t
+                    pickFile(REQ_WEAPON)
+                }
+                k == 8 -> adjustWeaponDialog()
+                else -> creditsDialog()
+            }
+        }.show()
+    }
+
+    private fun adjustWeaponDialog() {
+        val w = lastWeapon
+        val items = arrayOf("Acessórios (ligar / desligar)…", "↩ Virar 180° (o cano estava para trás)", "➕ Maior (+15%)", "➖ Menor (-15%)",
+                            "Tamanho original")
+        dialog().setTitle("Ajustar: " + weaponKinds[w.kind] + if (w.file.isNotEmpty()) " (arquivo)" else "").setItems(items) { _, k ->
+            when (k) {
+                0 -> accessoriesDialog(w) { equipWeapon(it) }
+                1 -> equipWeapon(w.copy(flip = !w.flip))
+                2 -> equipWeapon(w.copy(size = w.size * 1.15f))
+                3 -> equipWeapon(w.copy(size = w.size / 1.15f))
+                else -> equipWeapon(w.copy(size = 1f))
+            }
+        }.show()
+    }
+
+    // Créditos de modelos, texturas e código de terceiros (exigidos pelas licenças)
+    private fun creditsDialog() {
+        val text = try { assets.open("CREDITOS.txt").bufferedReader().readText() } catch (e: Exception) { "Créditos não encontrados" }
+        val tv = TextView(this).apply { setText(text); setTextIsSelectable(true); setPadding(dp(18), dp(12), dp(18), dp(12)); textSize = 13f }
+        dialog().setTitle("Créditos").setView(ScrollView(this).apply { addView(tv) }).setPositiveButton("OK", null).show()
     }
 
     // Kit Cidade (Downtown City MegaKit, Quaternius, CC0): peças .gltf que vêm no app, salvas no projeto como "kit:Nome"
@@ -1606,7 +1670,8 @@ class MainActivity : Activity() {
         val name = displayName(uri)
         val lower = name.lowercase(Locale.US)
         val modelExts = listOf(".glb", ".gltf", ".fbx", ".obj")
-        if ((requestCode == REQ_MODEL || requestCode == REQ_CHARACTER || requestCode == REQ_SWAP_MODEL) && modelExts.none { lower.endsWith(it) }) {
+        if ((requestCode == REQ_MODEL || requestCode == REQ_CHARACTER || requestCode == REQ_SWAP_MODEL || requestCode == REQ_WEAPON) &&
+            modelExts.none { lower.endsWith(it) }) {
             toast("Formato não suportado: escolha .fbx, .glb, .gltf ou .obj (outros formatos: abra no Blender e exporte .glb)")
             return
         }
@@ -1625,6 +1690,13 @@ class MainActivity : Activity() {
                         saveIfChanged()
                         val warn = NativeBridge.nativeLastError()
                         toast(if (!ok) "Não deu: $warn" else if (warn.isNotBlank()) "Aplicado, com aviso: $warn" else "Trocado no mapa e salvo no projeto!")
+                    } else if (requestCode == REQ_WEAPON) {
+                        runOnUiThread {
+                            accessoriesDialog(WeaponChoice(pendingWeaponKind, dst.absolutePath, false, 1f, 0)) {
+                                equipWeapon(it)
+                                toast("Arma \"$name\" equipada. Se o cano ficou para trás: Arma → Ajustar → Virar 180°")
+                            }
+                        }
                     } else if (requestCode == REQ_IMAGE) {
                         if (NativeBridge.nativeSetObjectTexture(dst.absolutePath)) toast("Textura aplicada")
                         else toast("Erro: " + NativeBridge.nativeLastError())
@@ -1706,6 +1778,7 @@ class MainActivity : Activity() {
         private const val REQ_EXPORT = 45
         private const val REQ_GLB = 46
         private const val REQ_CHARACTER = 47
+        private const val REQ_WEAPON = 61
         private const val REQ_SWAP_MODEL = 48
         private const val REQ_SWAP_TEX = 49
         private const val AUTOSAVE_MS = 30_000L

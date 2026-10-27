@@ -301,7 +301,16 @@ MaterialId tintedMaterial(Engine* e, MaterialId base, glm::vec3 color);
 
 // ---- personagens e armas (Engine.cpp)
 int createCharacter(Engine* e, const CharacterParams& p, glm::vec3 pos, float yaw, bool controllable);
-int createWeapon(Engine* e, int kind, int character);   // character < 0: solto no chão
+// Aparência da arma: modelo de arquivo (vazio = a do motor) e acessórios encaixados
+enum WeaponAccessory { ACC_RedDot = 1, ACC_Stock = 2, ACC_Foregrip = 4 };
+struct WeaponLook {
+    std::string file;        // .glb/.gltf/.fbx/.obj: deitado com o cano para a frente e no tamanho do tipo da arma
+    bool flip = false;       // o arquivo veio com o cano para trás: vira 180°
+    float size = 1.f;        // multiplica o tamanho padrão do tipo
+    uint32_t accessories = 0;
+};
+int createWeapon(Engine* e, int kind, int character, const WeaponLook& look = {});
+std::string accessoriesList(uint32_t accessories);  // ["mira","coronha",...] em JSON   // character < 0: solto no chão
 int characterOfSelection(Engine* e);
 // Modelo importado (glb/fbx) selecionado vira personagem: física, animações por nome ou retarget humanoide
 int makeCharacterFromModel(Engine* e, bool controllable);
@@ -371,6 +380,10 @@ std::string jsonString(const std::string& s);   // "texto" com escapes JSON
 GameObject* rootOf(Engine* e, GameObject* g);   // raiz editável (com id) acima de g
 // Peça do kit da cidade (shaders/kit/<nome>.gltf) como protótipo: centrada, base no chão, collider na caixa
 bool kitPrototype(Engine* e, const char* name, Prototype& out, float lodFar);
+// Malhas fixas de um arquivo 3D (só os nós cujo nome, ou de um pai, contém `only`; nulo = todos), cada uma com a
+// matriz no espaço do arquivo, e a caixa que envolve todas. O modelo carregado é apagado depois.
+bool modelParts(Engine* e, const std::string& path, const char* only, std::vector<ProtoPart>& parts, AABB& box,
+                std::vector<std::string>* names = nullptr);  // names: nome do nó (e dos pais), normalizado, de cada peça
 void spawnPrototype(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float scale, std::vector<Scene::Handle>* out,
                 std::vector<BoxCollider>* colliders);
 int loadModelFile(Engine* e, const char* path); // .glb/.gltf/.fbx -> id da raiz (-1 = erro em lastError)

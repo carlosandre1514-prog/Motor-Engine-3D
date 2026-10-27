@@ -1,0 +1,26 @@
+CRÉDITOS — modelos, texturas e código de terceiros usados no Motor 3D
+
+M4A1 (arma realista)
+  Autor: Firewarden3D — https://sketchfab.com/Firewarden3D
+  Modelo: "M4A1" no Sketchfab (página do modelo: sketchfab.com/3d-models/m4a1-40d8ef818c7549a896…)
+  Licença: Creative Commons Atribuição 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/
+  Uso comercial permitido, com crédito ao autor.
+  Alterações: só uma das armas da cena, deitada para o jogo, texturas reduzidas para 1024 px.
+
+Acessórios de arma (mira red dot, trilho, coronha tática, empunhadura frontal) — arquivo "Low.fbx"
+  Autor: a confirmar (pacote gratuito enviado pelo dono do projeto).
+
+Downtown City MegaKit (prédios, ruas, peças e texturas da cidade)
+  Autor: Quaternius — https://quaternius.com
+  Licença: CC0 1.0 (domínio público). Crédito não obrigatório, mas agradecemos.
+
+Texturas do chão (grama, campo, floresta, chão batido, areia, terra arada, seixos)
+  Poly Haven — https://polyhaven.com — Licença: CC0 (domínio público).
+
+Água (shader "ocean")
+  Autor: Jérémy Bouny (jbouny) — https://github.com/jbouny/ocean
+  Licença: MIT. Textura de ondas waternormals.jpg do mesmo projeto.
+
+Bibliotecas
+  GLM (MIT), tinygltf (MIT), nlohmann/json (MIT), stb_image / stb_image_write (domínio público / MIT),
+  ufbx (MIT / domínio público), Bullet Physics (zlib).

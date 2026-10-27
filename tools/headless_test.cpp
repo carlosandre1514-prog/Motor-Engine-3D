@@ -336,6 +336,67 @@ int main(int argc, char** argv) {
         engine_player_input(e, 0.f, 0.f, 0);
         engine_set_play(e, 0);
     };
+    // abre um arquivo 3D qualquer e salva vistas (para conferir modelos enviados): SO_MODELO=/caminho/arquivo.fbx
+    if (const char* path = std::getenv("SO_MODELO")) {
+        engine_new_scene(e);
+        int id = engine_load_model(e, path);
+        std::printf("modelo %s -> %d %s\n", path, id, engine_last_error(e));
+        if (id >= 0) {
+            float p[3], r[3], sc[3];
+            engine_get_transform(e, id, p, r, sc);
+            std::printf("  pos %.2f %.2f %.2f escala %.3f\n", p[0], p[1], p[2], sc[0]);
+            engine_select(e, id);
+            engine_focus_selected(e);
+            frames(e, 2);
+            save(out, "modelo_1.png");
+            engine_select(e, -1);
+            frames(e, 2);
+            save(out, "modelo_2.png");
+            stats(e, "modelo");
+        }
+        engine_destroy(e);
+        return id >= 0 ? 0 : 1;
+    }
+    // armas de arquivo e acessórios (mira red dot, coronha, empunhadura) na mão do personagem
+    auto weapons = [&]() {
+        std::printf("[25] armas com acessórios\n");
+        engine_new_scene(e);
+        int ch = engine_create_random_character(e, 5, 1);
+        engine_select(e, ch);
+        int w = engine_create_weapon_ex(e, 1, "", 0, 1.f, 7);
+        if (w < 0) { std::printf("  [ERRO] fuzil com acessórios: %s\n", engine_last_error(e)); ++g_fail; }
+        engine_set_camera(e, 0.f, 1.3f, 0.f, 1.2f, 0.1f, 1.6f);
+        frames(e, 3);
+        save(out, "25_fuzil_acessorios.png");
+        const char* m4 = std::getenv("ARMA_ARQUIVO");
+        std::string kitM4 = "kit:armas/m4a1";
+        engine_select(e, ch);
+        w = engine_create_weapon_ex(e, 1, m4 ? m4 : kitM4.c_str(), 0, 1.f, 0);
+        if (w < 0) { std::printf("  [ERRO] arma de arquivo: %s\n", engine_last_error(e)); ++g_fail; }
+        frames(e, 3);
+        save(out, "25_m4.png");
+        engine_select(e, ch);
+        w = engine_create_weapon_ex(e, 1, m4 ? m4 : kitM4.c_str(), 0, 1.f, 1);
+        frames(e, 3);
+        save(out, "25_m4_mira.png");
+        engine_set_camera(e, 0.f, 1.f, 0.f, 0.6f, 0.15f, 4.f);
+        frames(e, 3);
+        save(out, "25_m4_corpo.png");
+        // de perto, soltas: fuzil do motor e M4, as duas com os 3 acessórios
+        engine_new_scene(e);
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, 0.f, 3.f);
+        frames(e, 1);
+        int a = engine_create_weapon_ex(e, 1, "", 0, 1.f, 7);
+        int b = engine_create_weapon_ex(e, 1, m4 ? m4 : kitM4.c_str(), 0, 1.f, 7);
+        float p[3], rr[3], ss[3];
+        if (a >= 0 && engine_get_transform(e, a, p, rr, ss)) { p[0] = -0.f; p[1] = 0.9f; p[2] = 0.f; rr[0] = rr[1] = rr[2] = 0.f; engine_set_transform(e, a, p, rr, ss); }
+        if (b >= 0 && engine_get_transform(e, b, p, rr, ss)) { p[0] = 0.f; p[1] = 0.5f; p[2] = 0.f; rr[0] = rr[1] = rr[2] = 0.f; engine_set_transform(e, b, p, rr, ss); }
+        engine_select(e, -1);
+        engine_set_camera(e, 0.f, 0.7f, 0.15f, 1.5707963f, 0.05f, 1.6f);
+        frames(e, 3);
+        save(out, "25_lado.png");
+    };
+    if (std::getenv("SO_ARMAS")) { weapons(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_DESEMPENHO")) { perf(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_KIT")) { kit(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_PLANETA")) { planet(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
@@ -995,6 +1056,7 @@ int main(int argc, char** argv) {
     interiors();
     planet();
     kit();
+    weapons();
 
     engine_destroy(e);
     check("destroy");

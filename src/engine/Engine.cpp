@@ -452,15 +452,136 @@ static void destroyObject(Engine* e, Scene::Handle h) {
 
 static bool isGun(int kind) { return kind == WK_Pistol || kind == WK_Rifle || kind == WK_Shotgun || kind == WK_Sniper; }
 
-int createWeapon(Engine* e, int kind, int ch) {
+// Peças (malha + matriz) viram filhos de um objeto novo; `fix` vai na frente de cada matriz
+static Scene::Handle spawnParts(Engine* e, const std::vector<ProtoPart>& parts, const glm::mat4& fix, const char* name, glm::vec3 pos,
+                                GameObject* parent = nullptr, MaterialId material = kInvalidId) {
+    Scene::Handle rootH = e->scene.create(name, parent);
+    GameObject* root = e->scene.get(rootH);
+    if (!root) return rootH;
+    root->transform.setPosition(pos);
+    registerObject(e, rootH);
+    for (const ProtoPart& pp : parts) {
+        glm::vec3 sc, tr, skew; glm::vec4 persp; glm::quat rot;
+        glm::decompose(fix * pp.local, sc, rot, tr, skew, persp);
+        Scene::Handle ch = e->scene.create("Peça", root);
+        GameObject* c = e->scene.get(ch);
+        if (!c) break;
+        c->transform.setPosition(tr); c->transform.setRotation(rot); c->transform.setScale(sc);
+        auto rh = e->meshRenderers.acquire();
+        if (MeshRenderer* mr = e->meshRenderers.get(rh)) {
+            mr->mesh = pp.mesh; mr->material = material != kInvalidId ? material : pp.mat; mr->castShadows = true;
+            c->meshRenderer = mr;
+        }
+        registerObject(e, ch);
+    }
+    return rootH;
+}
+
+// Acessórios táticos (Low.fbx: trilho, mira red dot, coronha e empunhadura frontal), encaixados pela caixa da arma.
+// wb: caixa da arma no espaço dela (mão na origem, cano +Z).
+static void addAccessories(Engine* e, GameObject& weapon, uint32_t acc, const AABB& wb, bool procedural) {
+    if (!acc) return;
+    const std::string file = e->renderer.shaderDir() + "/kit/armas/acessorios.fbx";
+    std::vector<ProtoPart> all;
+    std::vector<std::string> names;
+    AABB fileBox;
+    if (!modelParts(e, file, nullptr, all, fileBox, &names)) return;  // lido uma vez; as peças saem pelo nome
+    auto pick = [&](const char* key, AABB& box) {
+        std::vector<ProtoPart> out;
+        box = AABB{glm::vec3(1e30f), glm::vec3(-1e30f)};
+        for (size_t i = 0; i < all.size(); ++i) {
+            if (names[i].find(key) == std::string::npos) continue;
+            out.push_back(all[i]);
+            if (const Mesh* m = e->renderer.mesh(all[i].mesh)) {
+                AABB b = transformAABB(m->bounds, all[i].local);
+                box.min = glm::min(box.min, b.min); box.max = glm::max(box.max, b.max);
+            }
+        }
+        return out;
+    };
+    // eixo do arquivo: o lado mais comprido; a frente é o lado da mira (a coronha fica atrás)
+    AABB dotBox, stockBox, mountBox;
+    std::vector<ProtoPart> dot = pick("red_dot", dotBox), stock = pick("backstock", stockBox), mount = pick("mount", mountBox);
+    glm::vec3 ext = fileBox.max - fileBox.min;
+    glm::mat4 R(1.f);
+    if (ext.x > ext.z) R = glm::rotate(glm::mat4(1.f), -1.5707963f, glm::vec3(0, 1, 0));
+    glm::vec3 front = glm::vec3(R * glm::vec4((dotBox.min + dotBox.max) * 0.5f - (stockBox.min + stockBox.max) * 0.5f, 0.f));
+    if (!dot.empty() && !stock.empty() && front.z < 0.f) R = glm::rotate(glm::mat4(1.f), 3.14159265f, glm::vec3(0, 1, 0)) * R;
+    // escala: a mira red dot tem uns 12 cm
+    AABB rd = transformAABB(dot.empty() ? fileBox : dotBox, R);
+    const float s = 0.12f / std::max(1e-4f, rd.max.z - rd.min.z);
+    const float len = wb.max.z - wb.min.z;
+    const MaterialId dark = e->mats[int(Mat::GunMetal)], poly = e->mats[int(Mat::Polymer)];
+    auto place = [&](const char* key, const char* name, MaterialId mat, auto&& anchorOf, glm::vec3 at) {
+        AABB box;
+        std::vector<ProtoPart> parts = pick(key, box);
+        if (parts.empty()) return;
+        AABB rb = transformAABB(box, R);
+        glm::vec3 pivot = anchorOf(rb);
+        glm::mat4 fix = glm::translate(glm::mat4(1.f), at) * glm::scale(glm::mat4(1.f), glm::vec3(s)) * glm::translate(glm::mat4(1.f), -pivot) * R;
+        spawnParts(e, parts, fix, name, glm::vec3(0.f), &weapon, mat);
+    };
+    auto midX = [](const AABB& b) { return (b.min.x + b.max.x) * 0.5f; };
+    auto midZ = [](const AABB& b) { return (b.min.z + b.max.z) * 0.5f; };
+    if (acc & ACC_RedDot) {  // trilho + mira em cima, um pouco à frente da mão
+        const float h = wb.max.y - wb.min.y;  // topo do corpo da arma (sem contar a massa de mira): ~80% da altura
+        glm::vec3 at(0.f, wb.min.y + h * 0.8f, wb.min.z + len * 0.5f);
+        place("mount", "Trilho", dark, [&](const AABB& b) { return glm::vec3(midX(b), b.min.y, midZ(b)); }, at);
+        float mountH = mount.empty() ? 0.f : (transformAABB(mountBox, R).max.y - transformAABB(mountBox, R).min.y) * s;
+        place("red_dot", "Mira red dot", poly, [&](const AABB& b) { return glm::vec3(midX(b), b.min.y, midZ(b)); },
+              at + glm::vec3(0.f, mountH * 0.85f, 0.f));
+    }
+    if (acc & ACC_Stock)  // coronha atrás da empunhadura
+        place("backstock", "Coronha tática", poly, [&](const AABB& b) { return glm::vec3(midX(b), b.max.y * 0.5f + b.min.y * 0.5f, b.max.z); },
+              glm::vec3(0.f, 0.045f, -0.06f));
+    if (acc & ACC_Foregrip)  // empunhadura frontal embaixo do guarda-mão
+        place("front", "Empunhadura frontal", poly, [&](const AABB& b) { return glm::vec3(midX(b), b.max.y, midZ(b)); },
+              glm::vec3(0.f, procedural ? 0.024f : wb.min.y + (wb.max.y - wb.min.y) * 0.57f, wb.max.z * 0.55f));  // embaixo do guarda-mão
+}
+
+int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
     kind = std::clamp(kind, 0, WK_Count - 1);
-    Geo g;
-    g.place(glm::vec3(0.f), 0.f);
-    glm::vec3 muzzle = buildWeapon(g, kind);
     glm::vec3 pos = e->editorCam.target + glm::vec3(0, 0.6f, 0);
-    Scene::Handle h = spawnGeo(e, g, weaponName(kind), true, pos, 0.f);
+    glm::vec3 muzzle;
+    Scene::Handle h;
+    AABB wb;
+    if (!look.file.empty()) {
+        // modelo do usuário: deita com o cano em +Z, tamanho do tipo, mão no cabo
+        std::vector<ProtoPart> parts;
+        AABB b;
+        if (!modelParts(e, look.file, nullptr, parts, b)) {
+            if (e->lastError.empty()) e->lastError = "o arquivo não tem malha para virar arma";
+            return -1;
+        }
+        glm::vec3 ext = b.max - b.min;
+        glm::mat4 R(1.f);
+        if (ext.x > ext.z) R = glm::rotate(glm::mat4(1.f), -1.5707963f, glm::vec3(0, 1, 0));
+        if (look.flip) R = glm::rotate(glm::mat4(1.f), 3.14159265f, glm::vec3(0, 1, 0)) * R;
+        AABB rb = transformAABB(b, R);
+        static const float kLen[WK_Count] = {0.21f, 0.95f, 1.f, 1.15f, 0.3f, 0.85f};
+        static const float kGrip[WK_Count] = {0.25f, 0.35f, 0.35f, 0.35f, 0.12f, 0.12f};  // mão a partir de trás
+        float s = kLen[kind] * std::clamp(look.size, 0.2f, 5.f) / std::max(1e-4f, rb.max.z - rb.min.z);
+        rb.min *= s; rb.max *= s;
+        bool gun = kind <= WK_Sniper;
+        glm::vec3 grip((rb.min.x + rb.max.x) * 0.5f, gun ? rb.min.y + (rb.max.y - rb.min.y) * 0.3f : (rb.min.y + rb.max.y) * 0.5f,
+                       rb.min.z + (rb.max.z - rb.min.z) * kGrip[kind]);
+        glm::mat4 fix = glm::translate(glm::mat4(1.f), -grip) * glm::scale(glm::mat4(1.f), glm::vec3(s)) * R;
+        muzzle = glm::vec3(0.f, (rb.min.y + rb.max.y) * 0.5f + (rb.max.y - rb.min.y) * 0.2f - grip.y, rb.max.z - grip.z);
+        wb = AABB{rb.min - grip, rb.max - grip};
+        h = spawnParts(e, parts, fix, weaponName(kind), pos);
+    } else {
+        Geo g;
+        g.place(glm::vec3(0.f), 0.f);
+        muzzle = buildWeapon(g, kind, !(look.accessories & ACC_Stock));
+        h = spawnGeo(e, g, weaponName(kind), true, pos, 0.f);
+        e->scene.updateTransforms();
+        GameObject* w = e->scene.get(h);
+        if (w && subtreeBounds(e, *w, wb)) { wb.min -= pos; wb.max -= pos; }
+        else wb = AABB{glm::vec3(-0.03f, -0.1f, -0.4f), glm::vec3(0.03f, 0.1f, 0.7f)};
+    }
     GameObject* w = e->scene.get(h);
     if (!w) return -1;
+    addAccessories(e, *w, look.accessories, wb, look.file.empty());
     if (ch >= 0 && ch < int(e->characters.size())) {
         CharacterInfo& c = e->characters[ch];
         if (e->scene.get(c.weapon)) {  // troca a arma antiga

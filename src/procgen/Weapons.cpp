@@ -5,7 +5,7 @@
 namespace eng {
 
 // Todas as medidas em metros. Cano para +Z, topo +Y, mão na origem.
-glm::vec3 buildWeapon(Geo& g, int kind) {
+glm::vec3 buildWeapon(Geo& g, int kind, bool stock) {
     MeshBuilder& steel = g[Mat::GunMetal];
     MeshBuilder& bright = g[Mat::Metal];
     MeshBuilder& poly = g[Mat::Polymer];
@@ -34,7 +34,7 @@ glm::vec3 buildWeapon(Geo& g, int kind) {
             wood.boxC({0, 0.05f, 0.37f}, {0.056f, 0.05f, 0.18f});           // guarda-mão
             steel.boxC({0, 0.1f, 0.66f}, {0.008f, 0.04f, 0.01f});           // mira
             tilt(wood, {0, 0.03f, -0.07f}, 0.12f);
-            wood.boxC({0, 0.025f, -0.23f}, {0.042f, 0.085f, 0.32f});        // coronha
+            if (stock) wood.boxC({0, 0.025f, -0.23f}, {0.042f, 0.085f, 0.32f});  // coronha
             reset(wood);
             tilt(poly, {0, 0.f, 0}, -0.25f);
             poly.boxC({0, -0.04f, 0.f}, {0.03f, 0.1f, 0.04f});              // empunhadura
@@ -50,7 +50,7 @@ glm::vec3 buildWeapon(Geo& g, int kind) {
             steel.cylinder({0, 0.035f, 0.19f}, {0, 0.035f, 0.66f}, 0.013f, 0.013f, 8);   // tubo do carregador
             wood.boxC({0, 0.033f, 0.43f}, {0.05f, 0.048f, 0.17f});          // telha (pump)
             tilt(wood, {0, 0.03f, -0.02f}, 0.15f);
-            wood.boxC({0, 0.01f, -0.19f}, {0.045f, 0.1f, 0.34f});           // coronha
+            if (stock) wood.boxC({0, 0.01f, -0.19f}, {0.045f, 0.1f, 0.34f});  // coronha
             reset(wood);
             return {0, 0.065f, 0.79f};
         }
@@ -64,7 +64,7 @@ glm::vec3 buildWeapon(Geo& g, int kind) {
             tilt(poly, {0, 0.f, 0}, -0.2f);
             poly.boxC({0, -0.04f, 0.f}, {0.03f, 0.1f, 0.04f});
             reset(poly);
-            poly.boxC({0, 0.02f, -0.25f}, {0.045f, 0.11f, 0.36f});          // coronha
+            if (stock) poly.boxC({0, 0.02f, -0.25f}, {0.045f, 0.11f, 0.36f});  // coronha
             steel.boxC({0, -0.03f, 0.13f}, {0.03f, 0.06f, 0.07f});          // carregador
             return {0, 0.055f, 0.99f};
         }
