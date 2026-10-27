@@ -54,11 +54,15 @@ jobs:
           base=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models
           curl -sSfL -o models/Fox.glb $base/Fox/glTF-Binary/Fox.glb || true
           curl -sSfL -o models/DamagedHelmet.glb $base/DamagedHelmet/glTF-Binary/DamagedHelmet.glb || true
+          three=https://raw.githubusercontent.com/mrdoob/three.js/r160/examples/models
+          curl -sSfL -o models/Soldier.glb $three/gltf/Soldier.glb || true
+          curl -sSfL -o models/Xbot.glb $three/gltf/Xbot.glb || true
+          curl -sSfL -o models/Samba_Dancing.fbx "$three/fbx/Samba%20Dancing.fbx" || true
 
       - name: Rodar teste headless
         run: |
           mkdir -p screenshots
-          ./build/mobile3d_headless shaders screenshots models/*.glb
+          ./build/mobile3d_headless shaders screenshots models/*.glb models/*.fbx
 
       - uses: actions/upload-artifact@v4
         if: always()

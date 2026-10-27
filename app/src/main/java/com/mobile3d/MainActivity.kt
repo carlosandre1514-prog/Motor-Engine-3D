@@ -66,6 +66,9 @@ class MainActivity : Activity() {
     private lateinit var fireBtn: TextView
     private var shownSelection = -2
     private var running = false
+    private var spellElement = 0
+    private val elements = arrayOf("Fogo", "Gelo", "Trevas", "Luz", "Veneno", "Raio", "Arcano")
+    private val effects = arrayOf("Fogueira", "Tocha", "Fumaça", "Faíscas", "Aura mágica", "Portal", "Explosão (repete)", "Orbe mágico", "Coluna de luz")
     private var stick = floatArrayOf(0f, 0f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -142,7 +145,7 @@ class MainActivity : Activity() {
         bar.addView(separator())
         bar.addView(button("Material") { materialDialog() })
         bar.addView(button("Animação") { cycleAnimation() })
-        bar.addView(button("Abrir .glb") { pickFile(REQ_MODEL) })
+        bar.addView(button("Importar 3D") { pickFile(REQ_MODEL) })
         bar.addView(button("Visual") {
             visualPanel.visibility = if (visualPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         })
@@ -175,7 +178,7 @@ class MainActivity : Activity() {
 
     // ---------------- criar ----------------
     private fun createMenu() {
-        val items = arrayOf("Personagem", "Arma", "Construção", "Natureza e objetos", "Formas básicas (com física)")
+        val items = arrayOf("Personagem", "Arma", "Efeito (fogo, magia, explosão...)", "Construção", "Natureza e objetos", "Formas básicas (com física)")
         dialog().setTitle("Criar").setItems(items) { _, which ->
             when (which) {
                 0 -> characterMenu()
@@ -186,11 +189,14 @@ class MainActivity : Activity() {
                         if (id < 0) toast("Não foi possível criar a arma")
                     }
                 }
-                2 -> list("Construção", arrayOf("Casa", "Sobrado", "Barraco (favela)", "Prédio de apartamentos", "Arranha-céu", "Prédio escolar", "Muro")) { k ->
+                2 -> list("Efeito", effects) { k ->
+                    list("Elemento / cor do efeito", elements) { el -> gl { NativeBridge.nativeCreateEffect(k, el) } }
+                }
+                3 -> list("Construção", arrayOf("Casa", "Sobrado", "Barraco (favela)", "Prédio de apartamentos", "Arranha-céu", "Prédio escolar", "Muro")) { k ->
                     val kind = if (k == 6) 11 else k
                     gl { NativeBridge.nativeCreateBuilding(kind, seed()) }
                 }
-                3 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
+                4 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
                     gl { NativeBridge.nativeCreateBuilding(6 + k, seed()) }
                 }
                 else -> list("Formas básicas", arrayOf("Cubo", "Esfera", "Cápsula", "Pedra (collider convexo)")) { k ->
@@ -201,11 +207,17 @@ class MainActivity : Activity() {
     }
 
     private fun characterMenu() {
-        val items = arrayOf("Aleatório", "Personalizar…", "Controlar o personagem selecionado no Play")
+        val items = arrayOf("Aleatório", "Personalizar…", "Usar modelo importado (.glb/.fbx selecionado) como personagem",
+                            "Controlar o personagem selecionado no Play")
         dialog().setTitle("Personagem").setItems(items) { _, which ->
             when (which) {
                 0 -> gl { NativeBridge.nativeCreateRandomCharacter(seed(), false) }
                 1 -> characterEditor()
+                2 -> gl {
+                    val id = NativeBridge.nativeMakeCharacter(true)
+                    val msg = NativeBridge.nativeLastError()
+                    toast(if (id < 0) "Não deu: $msg" else if (msg.isNotEmpty()) "Personagem pronto ($msg)" else "Personagem pronto! Aperte ▶ Play")
+                }
                 else -> gl { NativeBridge.nativeSetPlayer(); toast("Esse personagem é o jogador no Play") }
             }
         }.show()
@@ -299,12 +311,14 @@ class MainActivity : Activity() {
         gl {
             val names = NativeBridge.nativeMaterialNames().lineSequence().filter { it.isNotBlank() }.toList()
             runOnUiThread {
-                val items = (listOf("🎨 Cor…", "🖼 Imagem do celular…") + names).toTypedArray()
+                val effectItems = elements.map { "✨ Efeito: $it" }
+                val items = (listOf("🎨 Cor…", "🖼 Imagem do celular…") + names + effectItems).toTypedArray()
                 dialog().setTitle("Material de \"${snap.selectedName}\"").setItems(items) { _, which ->
-                    when (which) {
-                        0 -> colorDialog()
-                        1 -> pickFile(REQ_IMAGE)
-                        else -> gl { NativeBridge.nativeSetObjectMaterial(which - 2) }
+                    when {
+                        which == 0 -> colorDialog()
+                        which == 1 -> pickFile(REQ_IMAGE)
+                        which < 2 + names.size -> gl { NativeBridge.nativeSetObjectMaterial(which - 2) }
+                        else -> gl { NativeBridge.nativeSetEffectElement(which - 2 - names.size) }
                     }
                 }.show()
             }
@@ -365,7 +379,14 @@ class MainActivity : Activity() {
                 gl { NativeBridge.nativePlayerInput(s[0], s[1], r) }
             }
         }
-        col.addView(fireBtn); col.addView(jump); col.addView(runBtn)
+        val magic = roundButton("Magia\n" + elements[spellElement], 0xCC8E44AD.toInt())
+        magic.setOnClickListener { gl { NativeBridge.nativePlayerCast(spellElement) } }
+        magic.setOnLongClickListener {  // segurar troca o elemento
+            spellElement = (spellElement + 1) % elements.size
+            magic.text = "Magia\n" + elements[spellElement]
+            true
+        }
+        col.addView(magic); col.addView(fireBtn); col.addView(jump); col.addView(runBtn)
         f.addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(20); bottomMargin = dp(20) })
         return f.apply { isClickable = false }
     }
@@ -377,7 +398,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
-        layoutParams = LinearLayout.LayoutParams(dp(78), dp(78)).apply { topMargin = dp(10) }
+        layoutParams = LinearLayout.LayoutParams(dp(66), dp(66)).apply { topMargin = dp(8) }
     }
 
     // ---------------- painel visual ----------------
@@ -558,8 +579,8 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         val name = displayName(uri)
         val lower = name.lowercase(Locale.US)
-        if (requestCode == REQ_MODEL && !lower.endsWith(".glb") && !lower.endsWith(".gltf")) {
-            toast("Escolha um arquivo .glb (ou .gltf embutido)")
+        if (requestCode == REQ_MODEL && !lower.endsWith(".glb") && !lower.endsWith(".gltf") && !lower.endsWith(".fbx")) {
+            toast("Escolha um arquivo .glb, .gltf ou .fbx")
             return
         }
         toast("Carregando $name…")
@@ -574,7 +595,8 @@ class MainActivity : Activity() {
                         else toast("Erro: " + NativeBridge.nativeLastError())
                     } else {
                         val id = NativeBridge.nativeLoadModel(dst.absolutePath)
-                        if (id < 0) toast("Erro ao carregar: " + NativeBridge.nativeLastError()) else toast("$name carregado")
+                        if (id < 0) toast("Erro ao carregar: " + NativeBridge.nativeLastError())
+                        else toast("$name carregado. Se for personagem: + Criar → Personagem → Usar modelo importado")
                     }
                 }
             } catch (e: Exception) {

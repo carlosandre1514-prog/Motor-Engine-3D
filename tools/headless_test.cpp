@@ -283,6 +283,42 @@ int main(int argc, char** argv) {
     engine_set_sun_intensity(e, 3.2f);
     engine_set_exposure(e, 1.f);
 
+    // modelos humanoides importados (argumentos *.glb / *.fbx cujo nome contém "Soldier", "Xbot" ou "Samba")
+    for (int i = 3; i < argc; ++i) {
+        const char* a = argv[i];
+        if (!std::strstr(a, "Soldier") && !std::strstr(a, "Samba") && !std::strstr(a, "Xbot")) continue;
+        std::printf("[12] personagem importado %s\n", a);
+        engine_new_scene(e);
+        int id = engine_load_model(e, a);
+        if (id < 0) { std::printf("  [ERRO] %s\n", engine_last_error(e)); ++g_fail; continue; }
+        int ch = engine_make_character(e, 1);
+        std::printf("  modelo id=%d, personagem=%d (%s), animação: '%s'\n", id, ch, engine_last_error(e), engine_animation_name(e));
+        if (ch < 0) { ++g_fail; continue; }
+        engine_create_weapon(e, 1);
+        engine_set_camera(e, 0.f, 1.f, 0.f, 3.14159f, 0.15f, 4.5f);
+        frames(e, 3);
+        char name[96];
+        const char* base = std::strrchr(a, '/') ? std::strrchr(a, '/') + 1 : a;
+        std::snprintf(name, sizeof(name), "12_%s_parado.png", base);
+        save(out, name);
+        engine_set_play(e, 1);
+        frames(e, 20);
+        float p0[3], rr[3], ss[3];
+        engine_get_transform(e, ch, p0, rr, ss);
+        engine_player_input(e, 0.f, 1.f, 0);
+        frames(e, 50);
+        std::snprintf(name, sizeof(name), "12_%s_andando.png", base);
+        save(out, name);
+        engine_player_input(e, 0.f, 1.f, 1);
+        frames(e, 40);
+        std::snprintf(name, sizeof(name), "12_%s_correndo.png", base);
+        save(out, name);
+        float p1[3]; engine_get_transform(e, ch, p1, rr, ss);
+        std::printf("  andou %.1f m, animação: '%s'\n", std::sqrt((p1[0] - p0[0]) * (p1[0] - p0[0]) + (p1[2] - p0[2]) * (p1[2] - p0[2])), engine_animation_name(e));
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_set_play(e, 0);
+    }
+
     const char* maps[] = {"infinito", "cidade", "favela", "colegio", "bairro"};
     for (int mk = 0; mk < 5; ++mk) {
         std::printf("[10] mapa %s\n", maps[mk]);

@@ -57,4 +57,10 @@ object NativeBridge {
     @JvmStatic external fun nativePlayerJump()
     @JvmStatic external fun nativePlayerFire()
     @JvmStatic external fun nativePlayerWeapon(): Int
+
+    // Efeitos e personagens importados
+    @JvmStatic external fun nativeCreateEffect(kind: Int, element: Int): Int
+    @JvmStatic external fun nativeSetEffectElement(element: Int)
+    @JvmStatic external fun nativePlayerCast(element: Int)
+    @JvmStatic external fun nativeMakeCharacter(controllable: Boolean): Int
 }

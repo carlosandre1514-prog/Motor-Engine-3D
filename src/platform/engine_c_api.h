@@ -22,7 +22,10 @@ int     engine_is_playing(Engine*);
 void    engine_new_scene(Engine*);                              // só chão + luz
 void    engine_load_demo(Engine*);                              // vitrine de materiais PBR
 void    engine_load_physics_demo(Engine*);                      // pilha de caixas, esferas, cápsulas e pedras
-int     engine_load_model(Engine*, const char* path);           // .glb/.gltf; retorna id do objeto raiz ou -1
+int     engine_load_model(Engine*, const char* path);           // .glb/.gltf/.fbx; retorna id do objeto raiz ou -1
+// Modelo importado selecionado (com esqueleto) vira personagem: física, andar/correr pelas animações dele
+// ou, se for humanoide sem elas, pelas animações do motor (retarget). Retorna o id ou -1 (ver engine_last_error).
+int     engine_make_character(Engine*, int controllable);
 const char* engine_last_error(Engine*);
 int     engine_add_object(Engine*, int kind, int with_physics); // kind: 0 cubo, 1 esfera, 2 cápsula, 3 pedra
 void    engine_delete_selected(Engine*);

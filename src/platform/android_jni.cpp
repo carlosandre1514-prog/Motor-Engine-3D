@@ -139,6 +139,12 @@ JNI_FN(void, nativePlayerJump)(JNIEnv*, jclass) { if (g_engine) engine_player_ju
 JNI_FN(void, nativePlayerFire)(JNIEnv*, jclass) { if (g_engine) engine_player_fire(g_engine); }
 JNI_FN(jint, nativePlayerWeapon)(JNIEnv*, jclass) { return g_engine ? engine_player_weapon(g_engine) : -1; }
 
+// Efeitos e personagens importados
+JNI_FN(jint, nativeCreateEffect)(JNIEnv*, jclass, jint kind, jint element) { return g_engine ? engine_create_effect(g_engine, kind, element) : -1; }
+JNI_FN(void, nativeSetEffectElement)(JNIEnv*, jclass, jint element) { if (g_engine) engine_set_effect_element(g_engine, element); }
+JNI_FN(void, nativePlayerCast)(JNIEnv*, jclass, jint element) { if (g_engine) engine_player_cast(g_engine, element); }
+JNI_FN(jint, nativeMakeCharacter)(JNIEnv*, jclass, jboolean controllable) { return g_engine ? engine_make_character(g_engine, controllable ? 1 : 0) : -1; }
+
 JNI_FN(void, nativeGetStats)(JNIEnv* env, jclass, jfloatArray out6) {
     if (!g_engine || env->GetArrayLength(out6) < 6) return;
     float s[6];

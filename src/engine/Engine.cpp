@@ -5,6 +5,7 @@
 #include <cstring>
 #include "assets/MeshUtils.h"
 #include "assets/TextureManager.h"
+#include "scene/Humanoid.h"
 
 namespace eng {
 
@@ -275,6 +276,7 @@ void clearScene(Engine* e) {
     e->objects.clear();
     e->animators.clear();
     e->characters.clear();
+    e->retargets.clear();
     e->attachments.clear();
     e->models.clear();
     e->snapshot.clear();
@@ -342,6 +344,7 @@ int createCharacter(Engine* e, const CharacterParams& p, glm::vec3 pos, float ya
     info.root = rootH;
     info.anim = anim;
     info.height = p.height;
+    for (int k = 0; k < CC_Count; ++k) info.clipMap[k] = k;
     e->characters.push_back(info);
     if (controllable || e->player < 0) setPlayer(e, int(e->characters.size()) - 1);
     return rootId;
@@ -396,14 +399,11 @@ int createWeapon(Engine* e, int kind, int ch) {
         if (kind == WK_Knife || kind == WK_Bat)
             off = glm::translate(glm::mat4(1.f), glm::vec3(0.f, -0.05f * c.height, 0.f)) *
                   glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(1, 0, 0));
-        e->attachments.push_back({h, c.anim, CJ_RHand, off});
+        e->attachments.push_back({h, c.anim, c.handJoint, c.handFix * off});
         c.weapon = h;
         c.weaponKind = kind;
         c.muzzle = muzzle;
-        if (c.anim) {
-            int base = c.anim->clipIndex % 3;
-            if (c.anim->clipIndex < CC_IdleArmed && isGun(kind)) c.anim->setClip(CC_IdleArmed + base);
-        }
+        if (c.anim && isGun(kind) && c.clipMap[CC_IdleArmed] >= 0) c.anim->setClip(c.clipMap[CC_IdleArmed]);
         updateAttachments(e);
     }
     return w->id;
@@ -524,8 +524,9 @@ void updatePlayer(Engine* e, float dt) {
         float hs = std::sqrt(nv.x() * nv.x() + nv.z() * nv.z());
         int clip = hs < 0.4f ? CC_Idle : hs < 4.f ? CC_Walk : CC_Run;
         if (isGun(c.weaponKind)) clip += CC_IdleArmed;
-        if (grounded && c.anim->clipIndex != clip) c.anim->setClip(clip);
-        c.anim->speed = clip % 3 == CC_Walk ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : clip % 3 == CC_Run ? std::clamp(hs / 6.5f, 0.7f, 1.4f) : 1.f;
+        clip = c.clipMap[clip];
+        if (grounded && clip >= 0 && c.anim->clipIndex != clip) c.anim->setClip(clip);
+        c.anim->speed = hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
     }
 
     if (e->fireRequest && e->fireCooldown <= 0.f) fire(e, c, *go, b);
@@ -745,6 +746,123 @@ bool pickEmitter(Engine* e, glm::vec3 o, glm::vec3 d, float& best, GameObject*& 
         if (t > 0.f && t < best) { best = t; hit = em.owner; any = true; }
     });
     return any;
+}
+
+// ---------------- modelo importado -> personagem ----------------
+static int findClip(const Animator* a, std::initializer_list<const char*> keys) {
+    for (int i = 0; i < a->clipCount; ++i) {
+        std::string n = a->clips[i].name;
+        for (auto& ch : n) ch = char(std::tolower((unsigned char)ch));
+        for (const char* k : keys) if (n.find(k) != std::string::npos) return i;
+    }
+    return -1;
+}
+
+int makeCharacterFromModel(Engine* e, bool controllable) {
+    GameObject* root = e->scene.get(e->selected);
+    while (root && root->transform.parent && root->transform.parent->owner && root->transform.parent->owner->id >= 0)
+        root = root->transform.parent->owner;
+    if (!root) { e->lastError = "selecione o modelo"; return -1; }
+    for (size_t i = 0; i < e->characters.size(); ++i)
+        if (e->scene.get(e->characters[i].root) == root) { if (controllable) setPlayer(e, int(i)); return root->id; }
+    Animator* anim = nullptr;
+    Scene::forEachInSubtree(*root, [&](GameObject& g) { if (!anim && g.animator && g.animator->skeleton) anim = g.animator; });
+    if (!anim) { e->lastError = "o modelo não tem esqueleto (rig)"; return -1; }
+    if (root->rigidBody) { e->lastError = "o modelo já tem física"; return -1; }
+
+    e->scene.updateTransforms();
+    AABB b;
+    if (!subtreeBounds(e, *root, b)) { e->lastError = "modelo sem malha"; return -1; }
+    float height = std::max(0.3f, b.max.y - b.min.y);
+    float width = std::max(b.max.x - b.min.x, b.max.z - b.min.z);
+
+    CharacterInfo info;
+    info.root = Scene::handleOf(*root);
+    info.anim = anim;
+    info.height = height;
+    for (int k = 0; k < CC_Count; ++k) info.clipMap[k] = -1;
+
+    // retarget humanoide (sempre calculado: dá o referencial da mão para armas)
+    if (!e->humanoidRef) {
+        e->humanoidRef = std::make_unique<LoadedModel>();
+        MeshBuilder unused;
+        buildCharacter(defaultCharacter(), *e->humanoidRef, unused);
+    }
+    auto rt = std::make_unique<Retarget>();
+    glm::mat4 spaceW = anim->space ? anim->space->world() : glm::mat4(1.f);
+    char missing[160];
+    bool humanoid = buildRetarget(*anim->skeleton, e->humanoidRef->skeletons[0], spaceW, *rt, missing, sizeof(missing));
+    if (humanoid) {
+        // O motor usa personagem olhando para +Z (ombro esquerdo em +X). Modelo virado para -Z: gira 180°.
+        auto bindPos = [&](int j) { return glm::vec3((spaceW * anim->skeleton->bindToSkel * glm::inverse(anim->skeleton->inverseBind[j]))[3]); };
+        glm::vec3 left = bindPos(rt->targetOf[CJ_LUpper]) - bindPos(rt->targetOf[CJ_RUpper]);
+        glm::vec3 rootPos = root->transform.worldPosition();
+        glm::vec3 lx = glm::inverse(glm::mat3(root->transform.world())) * left;
+        if (lx.x < 0.f) {
+            glm::quat flip = glm::angleAxis(3.14159265f, glm::vec3(0, 1, 0));
+            for (Transform3D* c = root->transform.firstChild; c; c = c->nextSibling) {
+                c->setPosition(flip * c->position);
+                c->setRotation(flip * c->rotation);
+            }
+            e->scene.updateTransforms();
+            spaceW = anim->space ? anim->space->world() : glm::mat4(1.f);
+            humanoid = buildRetarget(*anim->skeleton, e->humanoidRef->skeletons[0], spaceW, *rt, missing, sizeof(missing));
+            subtreeBounds(e, *root, b);
+        }
+        (void)rootPos;
+    }
+
+    int ownIdle = findClip(anim, {"idle", "survey", "stand", "breath"});
+    int ownWalk = findClip(anim, {"walk"});
+    int ownRun = findClip(anim, {"run", "sprint", "jog", "gallop"});
+    if (ownWalk >= 0 || !humanoid) {
+        // usa as animações do próprio modelo, casadas pelo nome
+        int fallback = ownIdle >= 0 ? ownIdle : (anim->clipCount ? 0 : -1);
+        info.clipMap[CC_Idle] = info.clipMap[CC_IdleArmed] = fallback;
+        info.clipMap[CC_Walk] = info.clipMap[CC_WalkArmed] = ownWalk >= 0 ? ownWalk : fallback;
+        info.clipMap[CC_Run] = info.clipMap[CC_RunArmed] = ownRun >= 0 ? ownRun : info.clipMap[CC_Walk];
+        info.clipMap[CC_Dance] = findClip(anim, {"dance", "samba"});
+        info.clipMap[CC_Wave] = findClip(anim, {"wave", "greet"});
+        if (fallback >= 0) anim->setClip(fallback);
+    } else {
+        // humanoide sem andar/correr: toca as animações do motor via retarget (as do modelo ficam no fim da lista)
+        anim->ownClips = anim->clips;
+        anim->ownCount = anim->clipCount;
+        anim->clips = e->humanoidRef->clips.data();
+        anim->refCount = int(e->humanoidRef->clips.size());
+        anim->clipCount = anim->refCount + anim->ownCount;
+        anim->retarget = rt.get();
+        for (int k = 0; k < CC_Count; ++k) info.clipMap[k] = k;
+        anim->setClip(CC_Idle);
+    }
+    if (humanoid) {
+        int hand = rt->targetOf[CJ_RHand];
+        info.handJoint = hand;
+        anim->update(0.f, false);
+        float ws = glm::length(glm::vec3((spaceW * anim->global[hand])[0]));
+        // Com o retarget, a rotação da mão no mundo = anim * alinhamento * bind; desfazendo alinhamento * bind
+        // sobra o mesmo referencial da mão do personagem do motor (onde a arma foi desenhada)
+        glm::quat rotFix = glm::inverse(rt->align[hand] * rt->bindRot[hand]);
+        info.handFix = glm::mat4_cast(rotFix) * glm::scale(glm::mat4(1.f), glm::vec3(1.f / std::max(ws, 1e-6f)));
+        e->retargets.push_back(std::move(rt));
+    } else {
+        info.handJoint = 0;
+        e->lastError = std::string("ossos humanoides não encontrados (") + missing + "): usando as animações do modelo";
+    }
+
+    // cápsula de física com a origem do personagem nos pés
+    float diam = std::clamp(width * 0.45f, 0.25f, height * 0.6f);
+    btCollisionShape* shape = Physics::makeShape(ColliderType::Capsule, {diam, height, diam});
+    glm::vec3 offset(0.f, (b.min.y - root->transform.position.y) + height * 0.5f, 0.f);
+    if (RigidBody* rb = attachShape(e, *root, ColliderType::Capsule, shape, 60.f, offset)) {
+        rb->lockRotX = rb->lockRotY = rb->lockRotZ = true;
+        rb->applyAxisConstraints();
+        rb->body->setFriction(0.4f);
+        rb->body->setActivationState(DISABLE_DEACTIVATION);
+    }
+    e->characters.push_back(info);
+    if (controllable || e->player < 0) setPlayer(e, int(e->characters.size()) - 1);
+    return root->id;
 }
 
 }  // namespace eng

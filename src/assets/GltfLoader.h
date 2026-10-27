@@ -34,5 +34,7 @@ struct LoadContext {
 
 // Carrega .gltf/.glb, cria meshes/materiais no Renderer e instancia a hierarquia de nós na Scene.
 bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out);
+// Carrega .fbx (Mixamo, Unity, Blender) com ufbx: mesmas estruturas do glTF (src/assets/FbxLoader.cpp)
+bool loadFbx(const char* path, LoadContext& ctx, LoadedModel& out);
 
 }  // namespace eng

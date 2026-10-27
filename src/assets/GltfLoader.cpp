@@ -209,12 +209,68 @@ bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out) {
     def.albedoFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.f); def.roughness = 0.6f; def.metallic = 0.f;
     MaterialId defaultMat = renderer.createMaterial(def);
 
-    // Meshes: uma primitiva = um Mesh do renderer
+    // Pai de cada nó (para esqueletos)
+    std::vector<int> nodeParent(model.nodes.size(), -1);
+    for (size_t ni = 0; ni < model.nodes.size(); ++ni)
+        for (int c : model.nodes[ni].children)
+            if (c >= 0 && c < int(model.nodes.size())) nodeParent[c] = int(ni);
+
+    // Esqueleto único: a união dos ossos de todas as skins. Personagens com várias malhas (corpo, roupa,
+    // capacete) compartilham os ossos e são animados juntos por um único Animator.
+    std::vector<int> nodeToJoint(model.nodes.size(), -1);
+    std::vector<int> jointNode;
+    std::vector<glm::mat4> jointIbm;
+    std::vector<std::vector<int>> skinRemap(model.skins.size());  // índice na skin -> osso da união
+    for (size_t si = 0; si < model.skins.size(); ++si) {
+        const auto& skin = model.skins[si];
+        std::vector<float> ib;
+        if (skin.inverseBindMatrices >= 0) ib = readFloats(model, model.accessors[skin.inverseBindMatrices], 16);
+        for (size_t j = 0; j < skin.joints.size(); ++j) {
+            int node = skin.joints[j];
+            if (node < 0 || node >= int(model.nodes.size())) { skinRemap[si].push_back(0); continue; }
+            if (nodeToJoint[node] < 0 && jointNode.size() < size_t(kMaxJoints)) {
+                nodeToJoint[node] = int(jointNode.size());
+                jointNode.push_back(node);
+                jointIbm.push_back(j * 16 + 15 < ib.size() ? glm::make_mat4(&ib[j * 16]) : glm::mat4(1.f));
+            }
+            skinRemap[si].push_back(std::max(0, nodeToJoint[node]));
+        }
+    }
+    int spaceNode = -1;  // nó acima da raiz do esqueleto
+    if (!jointNode.empty()) {
+        Skeleton sk{};
+        sk.jointCount = int(jointNode.size());
+        int depth[kMaxJoints];
+        for (int j = 0; j < sk.jointCount; ++j) {
+            int node = jointNode[j];
+            nodeTRS(model.nodes[node], sk.bindT[j], sk.bindR[j], sk.bindS[j]);
+            std::snprintf(sk.name[j], sizeof(sk.name[j]), "%s", model.nodes[node].name.c_str());
+            sk.inverseBind[j] = jointIbm[j];
+            int p = nodeParent[node];
+            sk.parent[j] = p >= 0 ? nodeToJoint[p] : -1;
+            if (sk.parent[j] < 0 && spaceNode < 0) spaceNode = p;
+            depth[j] = 0;
+            for (int q = p; q >= 0; q = nodeParent[q]) ++depth[j];
+            sk.order[j] = j;
+        }
+        std::stable_sort(sk.order, sk.order + sk.jointCount, [&](int a, int b) { return depth[a] < depth[b]; });
+        out.skeletons.push_back(sk);
+    }
+
+    // Meshes: uma primitiva = um Mesh do renderer. Índices de osso convertidos para a união.
+    std::vector<int> meshSkin(model.meshes.size(), -1);
+    for (const auto& n : model.nodes)
+        if (n.mesh >= 0 && n.mesh < int(model.meshes.size()) && n.skin >= 0 && n.skin < int(model.skins.size())) meshSkin[n.mesh] = n.skin;
     std::vector<std::vector<std::pair<MeshId, MaterialId>>> meshPrims(model.meshes.size());
     for (size_t mi = 0; mi < model.meshes.size(); ++mi)
         for (const auto& prim : model.meshes[mi].primitives) {
             std::vector<Vertex> v; std::vector<uint32_t> idx; bool skinned = false;
             if (!readPrimitive(model, prim, v, idx, skinned)) continue;
+            if (skinned && meshSkin[mi] >= 0) {
+                const auto& remap = skinRemap[meshSkin[mi]];
+                for (auto& vx : v)
+                    for (int k = 0; k < 4; ++k) vx.joints[k] = uint16_t(vx.joints[k] < remap.size() ? remap[vx.joints[k]] : 0);
+            }
             MeshId id = renderer.createMesh(v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()), skinned);
             if (id == kInvalidId) continue;
             out.meshes.push_back(id);
@@ -222,45 +278,8 @@ bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out) {
             meshPrims[mi].push_back({id, mat});
         }
 
-    // Pai de cada nó (para esqueletos)
-    std::vector<int> nodeParent(model.nodes.size(), -1);
-    for (size_t ni = 0; ni < model.nodes.size(); ++ni)
-        for (int c : model.nodes[ni].children)
-            if (c >= 0 && c < int(model.nodes.size())) nodeParent[c] = int(ni);
-
-    // Esqueletos (com ordem de avaliação pais-antes-dos-filhos)
-    std::vector<std::vector<int>> skinNodeToJoint(model.skins.size());
-    std::vector<int> skinSpaceNode(model.skins.size(), -1);
-    for (size_t si = 0; si < model.skins.size(); ++si) {
-        const auto& skin = model.skins[si];
-        Skeleton sk{};
-        sk.jointCount = std::min<int>(int(skin.joints.size()), kMaxJoints);
-        auto& nodeToJoint = skinNodeToJoint[si];
-        nodeToJoint.assign(model.nodes.size(), -1);
-        for (int j = 0; j < sk.jointCount; ++j) nodeToJoint[skin.joints[j]] = j;
-        int depth[kMaxJoints];
-        for (int j = 0; j < sk.jointCount; ++j) {
-            int node = skin.joints[j];
-            nodeTRS(model.nodes[node], sk.bindT[j], sk.bindR[j], sk.bindS[j]);
-            sk.inverseBind[j] = glm::mat4(1.f);
-            int p = nodeParent[node];
-            sk.parent[j] = p >= 0 ? nodeToJoint[p] : -1;
-            if (sk.parent[j] < 0 && skinSpaceNode[si] < 0) skinSpaceNode[si] = p;  // nó acima da raiz do esqueleto
-            depth[j] = 0;
-            for (int q = p; q >= 0; q = nodeParent[q]) ++depth[j];
-            sk.order[j] = j;
-        }
-        std::stable_sort(sk.order, sk.order + sk.jointCount, [&](int a, int b) { return depth[a] < depth[b]; });
-        if (skin.inverseBindMatrices >= 0) {
-            auto ib = readFloats(model, model.accessors[skin.inverseBindMatrices], 16);
-            for (int j = 0; j < sk.jointCount && size_t(j * 16 + 15) < ib.size(); ++j) sk.inverseBind[j] = glm::make_mat4(&ib[j * 16]);
-        }
-        out.skeletons.push_back(sk);
-    }
-
-    // Animações dos joints do primeiro skin (o caso comum: um personagem por arquivo)
-    if (!model.skins.empty()) {
-        const auto& nodeToJoint = skinNodeToJoint[0];
+    // Animações dos ossos (todas as skins)
+    if (!jointNode.empty()) {
         size_t totalChannels = 0;
         for (const auto& anim : model.animations) totalChannels += anim.channels.size();
         out.channelStorage.reserve(totalChannels);  // exato: ponteiros dos clips não podem ser invalidados
@@ -338,23 +357,26 @@ bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out) {
         else go->transform.setParent(&root->transform);
     }
 
+    Animator* modelAnim = nullptr;
+    if (!out.skeletons.empty()) {
+        // glTF: as matrizes de bind estão no espaço do arquivo; guarda a conversão para o espaço do esqueleto
+        root->transform.updateWorld(glm::mat4(1.f), true);
+        if (spaceNode >= 0) out.skeletons[0].bindToSkel = glm::inverse(scene.get(nodeObj[spaceNode])->transform.world());
+        auto ah = ctx.animators.acquire();
+        modelAnim = ctx.animators.get(ah);
+        if (modelAnim) {
+            modelAnim->skeleton = &out.skeletons[0];
+            if (!out.clips.empty()) { modelAnim->clips = out.clips.data(); modelAnim->clipCount = int(out.clips.size()); }
+            modelAnim->space = spaceNode >= 0 ? &scene.get(nodeObj[spaceNode])->transform : &root->transform;
+            modelAnim->update(0.f, false);  // pose inicial válida antes do 1º frame
+            out.animators.push_back(modelAnim);
+        }
+    }
     for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
         const auto& n = model.nodes[ni];
         if (n.mesh < 0) continue;
         GameObject* go = scene.get(nodeObj[ni]);
-        Animator* anim = nullptr;
-        if (n.skin >= 0 && n.skin < int(out.skeletons.size())) {
-            auto ah = ctx.animators.acquire();
-            anim = ctx.animators.get(ah);
-            if (anim) {
-                anim->skeleton = &out.skeletons[n.skin];
-                if (n.skin == 0 && !out.clips.empty()) { anim->clips = out.clips.data(); anim->clipCount = int(out.clips.size()); }
-                int sp = skinSpaceNode[n.skin];
-                anim->space = sp >= 0 ? &scene.get(nodeObj[sp])->transform : &root->transform;
-                anim->update(0.f, false);  // pose inicial válida antes do 1º frame
-                out.animators.push_back(anim);
-            }
-        }
+        Animator* anim = n.skin >= 0 ? modelAnim : nullptr;
         bool first = true;
         for (auto [mesh, mat] : meshPrims[n.mesh]) {
             GameObject* target = go;

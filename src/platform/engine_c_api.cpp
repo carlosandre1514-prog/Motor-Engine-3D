@@ -261,7 +261,9 @@ int engine_load_model(Engine* e, const char* path) {
     if (!e || !path) return -1;
     auto model = std::make_unique<eng::LoadedModel>();
     eng::LoadContext ctx{e->renderer, e->scene, e->meshRenderers, e->animatorPool};
-    if (!eng::loadGltf(path, ctx, *model)) {
+    size_t len = std::strlen(path);
+    bool fbx = len > 4 && (std::strcmp(path + len - 4, ".fbx") == 0 || std::strcmp(path + len - 4, ".FBX") == 0);
+    if (!(fbx ? eng::loadFbx(path, ctx, *model) : eng::loadGltf(path, ctx, *model))) {
         e->lastError = model->error;
         for (auto h : model->allNodes) if (GameObject* g = e->scene.get(h)) eng::releaseComponents(e, *g);
         for (auto h : model->roots) e->scene.destroy(h);
@@ -641,4 +643,10 @@ void engine_set_camera(Engine* e, float tx, float ty, float tz, float yaw, float
     e->editorCam.yaw = yaw;
     e->editorCam.pitch = std::clamp(pitch, -1.5f, 1.5f);
     e->editorCam.distance = std::clamp(distance, 0.3f, 5000.f);
+}
+
+int engine_make_character(Engine* e, int controllable) {
+    if (!e) return -1;
+    e->lastError.clear();
+    return eng::makeCharacterFromModel(e, controllable != 0);
 }

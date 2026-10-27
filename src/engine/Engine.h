@@ -37,6 +37,9 @@ struct CharacterInfo {
     Scene::Handle root;        // GameObject raiz (origem nos pés)
     Animator* anim = nullptr;
     float height = 1.75f;
+    int clipMap[CC_Count];     // animação do motor (CharClip) -> índice no Animator
+    int handJoint = CJ_RHand;  // osso da mão direita (arma)
+    glm::mat4 handFix{1.f};    // corrige o referencial da mão de modelos importados
     Scene::Handle weapon;      // arma equipada (opcional)
     int weaponKind = -1;
     glm::vec3 muzzle{0.f};     // ponta do cano no espaço da arma
@@ -109,6 +112,8 @@ struct Engine {
     std::vector<Scene::Handle> objects;                // id público -> handle
     std::vector<Animator*> animators;
     std::vector<CharacterInfo> characters;
+    std::unique_ptr<LoadedModel> humanoidRef;            // esqueleto + animações de referência (retarget)
+    std::vector<std::unique_ptr<Retarget>> retargets;
     std::vector<Attachment> attachments;
 
     // Malhas e materiais básicos (recriados a cada cena nova)
@@ -189,6 +194,8 @@ MaterialId tintedMaterial(Engine* e, MaterialId base, glm::vec3 color);
 int createCharacter(Engine* e, const CharacterParams& p, glm::vec3 pos, float yaw, bool controllable);
 int createWeapon(Engine* e, int kind, int character);   // character < 0: solto no chão
 int characterOfSelection(Engine* e);
+// Modelo importado (glb/fbx) selecionado vira personagem: física, animações por nome ou retarget humanoide
+int makeCharacterFromModel(Engine* e, bool controllable);
 void setPlayer(Engine* e, int character);
 void updatePlayer(Engine* e, float dt);
 void updateAttachments(Engine* e);

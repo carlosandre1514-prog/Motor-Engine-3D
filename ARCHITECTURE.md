@@ -75,6 +75,28 @@ Engine ─ Scene ─ Renderer ─ Physics ─ Assets ─ Editor
 - Jogador: cápsula dinâmica com rotação travada, velocidade definida pelo joystick relativo à câmera, pulo com
   raycast de chão, animação pela velocidade, tiro por raycast que empurra corpos.
 
+## LOD (desempenho dos mapas)
+- `Geo` separa base (volumes, telhados, ruas: sempre visível, juntada em grupos grandes) e detalhe (carros, postes,
+  caixas d'água, platibandas, portas: some além de 160 m). Árvores: completa até 70 m, simplificada até 420 m.
+- `MeshRenderer.lodNear/lodFar` (distância ao centro do mesh) testado no submit; objetos com LOD só fazem
+  sombra nas 2 cascatas próximas.
+
+## Efeitos (src/render/Particles.*, Effects.*)
+- 6000 partículas em pool fixo, 1 draw call instanciado (quad por instância), alfa pré-multiplicado: aditivo
+  (fogo, magia) e opaco (fumaça das trevas) no mesmo passe; `occlusion` mantém a cor saturada de dia.
+- Formatos no shader: brilho, fumaça (ruído), faísca esticada pela velocidade, anel, estrela, cristal, chama.
+- Emissor como componente (`Emitter`) num GameObject: escala pelo gizmo, elemento/cor editáveis.
+- Luzes dinâmicas: até 8 por frame, as mais relevantes entre fogo, magia, explosões e clarões de tiro.
+
+## Importação e retarget humanoide
+- `FbxLoader` (ufbx): malhas trianguladas, materiais com textura embutida ou na pasta, skin, take -> clip.
+- glTF e FBX unem todas as skins num esqueleto único (corpo + roupa + acessórios animam juntos).
+- `Humanoid`: reconhece ossos pelo nome (Mixamo, Unity, Blender, Biped) e monta um `Retarget`: rotação global
+  desejada = anim de referência * alinhamento (T-pose -> pose do motor) * repouso do modelo, em referencial alinhado
+  ao mundo (Armature em Z-up e escala 0,01 tratados). Quadril escalado pela altura das pernas.
+- Personagem importado: cápsula de física, animações próprias casadas por nome (idle/walk/run) ou as 8 do motor,
+  arma na mão (referencial corrigido) e virada automática para +Z.
+
 ## Estado
 Feito: Pool/Scene, PBR, glTF (meshes, materiais, AO, alpha mask, double-sided, skins, animações), CSM com culling
 por cascata, instancing, Animator, Bullet (Box/Sphere/Capsule/ConvexMesh), editor por toque (gizmo mover/girar/escalar,
