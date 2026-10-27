@@ -43,7 +43,7 @@ struct Material {
     float alphaCutoff = 0.f;   // > 0: alpha test (glTF alphaMode MASK)
     float occlusionStrength = 1.f;
     bool doubleSided = false;
-    int mode = 0;              // 0 = padrão, 1 = terreno (mistura grama/rocha/areia/neve por altura e inclinação)
+    int mode = 0;              // 0 padrão, 1 terreno simples, 2 água, 3 terreno com as camadas de textura reais
 };
 
 struct DrawItem {
@@ -130,7 +130,12 @@ private:
     std::string shaderDir_;
 public:
     const std::string& shaderDir() const { return shaderDir_; }
+    // Camadas do terreno (texture arrays): <shaderDir>/terrain/<nome>_alb.jpg (cor) e _nh.jpg (normal XY + altura).
+    // Carregadas uma vez por contexto GL; retorna false se faltar algum arquivo.
+    bool loadTerrainLayers(const char* const* names, int count);
+    bool terrainLayersReady() const { return terrainAlb_ != 0; }
 private:
+    GLuint terrainAlb_ = 0, terrainNh_ = 0;
 
     // Estado do frame
     CascadeSet cascades_{};

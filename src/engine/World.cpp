@@ -126,8 +126,9 @@ float favelaHeight(float x, float z, uint32_t seed) {
     return glm::mix(flat + hill, flat, smooth01(108.f, 122.f, r));
 }
 
+// hint (opcional): tipo de chão para o shader de terreno, gravado como 1 - cor do vértice (branco = sem dica)
 void terrainMesh(std::vector<Vertex>& v, std::vector<uint32_t>& idx, float x0, float z0, float size, int res, const HeightFn& H,
-                 std::vector<float>* heights) {
+                 std::vector<float>* heights, const std::function<glm::vec3(float, float)>* hint = nullptr) {
     v.clear(); idx.clear();
     const float cell = size / res;
     v.reserve((res + 1) * (res + 1));
@@ -141,6 +142,7 @@ void terrainMesh(std::vector<Vertex>& v, std::vector<uint32_t>& idx, float x0, f
             glm::vec3 n = glm::normalize(glm::vec3(-hx, 2.f * cell, -hz));
             Vertex vx = makeVertex({x, h, z}, n, {x / 5.f, z / 5.f});
             vx.tangent = glm::vec4(glm::normalize(glm::cross(glm::vec3(0, 0, 1), n)), 1.f);
+            if (hint) vx.color = glm::vec4(1.f - glm::clamp((*hint)(x, z), 0.f, 1.f), 1.f);
             v.push_back(vx);
         }
     for (int j = 0; j < res; ++j)
@@ -363,7 +365,8 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
     HeightFn H = planet ? HeightFn([e](float x, float z) { return planetHeight(e, x, z); })
                         : HeightFn([seed](float x, float z) { return infiniteHeight(x, z, seed); });
     std::vector<Vertex> v; std::vector<uint32_t> idx;
-    terrainMesh(v, idx, x0, z0, kChunk, kRes, H, &c.heights);
+    std::function<glm::vec3(float, float)> hint = [e](float x, float z) { return planetGroundHint(e, x, z); };
+    terrainMesh(v, idx, x0, z0, kChunk, kRes, H, &c.heights, planet ? &hint : nullptr);
     if (c.mesh == kInvalidId) c.mesh = e->renderer.createMesh(v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()), false);
     else e->renderer.updateMesh(c.mesh, v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()));
     c.ground = addMeshObject(e, "Terreno", c.mesh, e->mats[int(Mat::Terrain)], glm::vec3(0.f), glm::vec3(1.f), glm::vec3(0.f), false);
@@ -377,10 +380,16 @@ void generateChunk(Engine* e, TerrainChunk& c, int cx, int cz) {
     for (int k = 0; k < 26; ++k) {
         float x = x0 + r.f() * kChunk, z = z0 + r.f() * kChunk, h = H(x, z);
         if (h < 1.2f || h > (planet ? 80.f : 56.f) || slopeAt(x, z) > 1.1f) continue;
-        if (planet && planetNoTrees(e, x, z)) continue;
+        if (planet && (planetNoTrees(e, x, z) || planetGroundHint(e, x, z).z > 0.3f)) continue;
         int kind = h > 30.f ? 1 : (h < 5.f && r.chance(0.6f)) ? 2 : (r.chance(0.3f) ? 1 : 0);
         spawnProto(e, e->treeProto[kind], {x, h - 0.15f, z}, r.range(0.f, 6.28f), r.range(0.8f, 1.35f), &c.objects, &boxes);
     }
+    if (planet)  // mata fechada: mais árvores onde o chão é de floresta
+        for (int k = 0; k < 40; ++k) {
+            float x = x0 + r.f() * kChunk, z = z0 + r.f() * kChunk, h = H(x, z);
+            if (h < 2.f || h > 85.f || slopeAt(x, z) > 1.1f || planetForest(e, x, z) < 0.5f || planetNoTrees(e, x, z)) continue;
+            spawnProto(e, e->treeProto[r.chance(0.35f) ? 1 : 0], {x, h - 0.15f, z}, r.range(0.f, 6.28f), r.range(0.9f, 1.5f), &c.objects, &boxes);
+        }
     for (int k = 0; k < 5; ++k) {
         float x = x0 + r.f() * kChunk, z = z0 + r.f() * kChunk, h = H(x, z);
         if (h < 0.3f || (planet && planetNoTrees(e, x, z))) continue;

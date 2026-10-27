@@ -149,6 +149,35 @@ bool planetNoTrees(const Engine* e, float x, float z) {
     return false;
 }
 
+float planetForest(const Engine* e, float x, float z) {
+    return smooth01(0.52f, 0.66f, fbm(x * 0.0021f + 11.3f, z * 0.0021f - 4.1f, 3, e->mapSeed + 21));
+}
+
+glm::vec3 planetGroundHint(const Engine* e, float x, float z) {
+    const PlanetData& P = e->planet;
+    glm::vec2 p(x, z);
+    float road = 0.f, farm = 0.f, forest = planetForest(e, x, z);
+    for (const PlanetRoad& rd : P.roads) {
+        float t, d = segDist(p, rd.a, rd.b, t);
+        road = std::max(road, 1.f - smooth01(6.f, 12.f, d));
+    }
+    for (const PlanetCity& c : P.cities) {
+        float d = glm::length(p - c.pos);
+        road = std::max(road, (1.f - smooth01(c.radius * 0.95f, c.radius * 1.15f, d)) * 0.8f);
+        // roças em volta da cidade: lotes retangulares de 48 x 32 m, metade cultivada
+        if (d > c.radius * 1.15f && d < c.radius * 2.6f) {
+            int i = int(std::floor(x / 48.f)), j = int(std::floor(z / 32.f));
+            if (hash2(i, j, e->mapSeed + 909) % 100 < 55) {
+                float fx = x / 48.f - i, fz = z / 32.f - j;
+                float inLot = smooth01(0.f, 0.06f, std::min({fx, 1.f - fx, fz, 1.f - fz}));
+                farm = std::max(farm, inLot * (1.f - smooth01(c.radius * 2.1f, c.radius * 2.6f, d)));
+            }
+        }
+    }
+    farm *= 1.f - road;
+    return {road, forest * (1.f - farm) * (1.f - road), farm};
+}
+
 void planetDecorateChunk(Engine* e, TerrainChunk& chunk, float x0, float z0, float size, std::vector<BoxCollider>& boxes) {
     const PlanetData& P = e->planet;
     Geo g;

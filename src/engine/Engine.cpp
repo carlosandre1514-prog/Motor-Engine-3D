@@ -136,6 +136,11 @@ void ensureBasics(Engine* e) {
             m.albedoFactor = glm::vec4(0.01f, 0.07f, 0.12f, 1.f);  // cor da água funda (azul-esverdeado escuro)
             m.doubleSided = true;
         }
+        if (Mat(k) == Mat::Terrain) {
+            // terreno padrão: camadas de textura reais (shaders/terrain); a ordem é a mesma do pbr.frag
+            static const char* kLayers[] = {"grama", "campo", "floresta", "chao", "areia", "terra", "seixos"};
+            if (e->renderer.loadTerrainLayers(kLayers, 7)) { m.mode = 3; m.roughness = 0.95f; }
+        }
         e->mats[k] = e->renderer.createMaterial(m);
     }
     e->tintCache.clear();

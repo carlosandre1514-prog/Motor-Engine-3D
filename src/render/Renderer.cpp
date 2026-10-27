@@ -1,5 +1,7 @@
 #include "render/Renderer.h"
 #include "render/Particles.h"
+#include <stb_image.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -137,6 +139,8 @@ bool Renderer::init(const char* shaderDir) {
         glUniform1i(glGetUniformLocation(p->id, "uShadowMap"), 4);
         glUniform1i(glGetUniformLocation(p->id, "uEnvMap"), 5);
         glUniform1i(glGetUniformLocation(p->id, "uOcclusionMap"), 6);
+        glUniform1i(glGetUniformLocation(p->id, "uTerrainAlb"), 7);
+        glUniform1i(glGetUniformLocation(p->id, "uTerrainNh"), 8);
     }
 
     glGenBuffers(1, &sceneUbo_);
@@ -207,8 +211,9 @@ void Renderer::shutdown() {
     glDeleteBuffers(4, bufs);
     GLuint vaos[] = {lineVao_, emptyVao_};
     glDeleteVertexArrays(2, vaos);
-    GLuint tex[] = {shadowTex_, envCube_};
-    glDeleteTextures(2, tex);
+    GLuint tex[] = {shadowTex_, envCube_, terrainAlb_, terrainNh_};
+    glDeleteTextures(4, tex);
+    terrainAlb_ = terrainNh_ = 0;
     GLuint fbos[] = {shadowFbo_, envFbo_};
     glDeleteFramebuffers(2, fbos);
 }
@@ -370,7 +375,51 @@ void Renderer::bindMaterial(const Program& p, const Material& m) {
     glActiveTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D_ARRAY, shadowTex_);
     glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_CUBE_MAP, envCube_);
     glActiveTexture(GL_TEXTURE6); glBindTexture(GL_TEXTURE_2D, m.occlusion ? m.occlusion : m.emissive);
+    if (m.mode == 3) {
+        glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D_ARRAY, terrainAlb_);
+        glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D_ARRAY, terrainNh_);
+    }
     if (m.doubleSided) glDisable(GL_CULL_FACE); else glEnable(GL_CULL_FACE);
+}
+
+bool Renderer::loadTerrainLayers(const char* const* names, int count) {
+    if (terrainAlb_) return true;
+    GLuint ids[2] = {0, 0};
+    for (int kind = 0; kind < 2; ++kind) {
+        const char* suffix = kind == 0 ? "_alb.jpg" : "_nh.jpg";
+        int W = 0, H = 0;
+        for (int l = 0; l < count; ++l) {
+            int w, h, comp;
+            std::string path = shaderDir_ + "/terrain/" + names[l] + suffix;
+            unsigned char* px = stbi_load(path.c_str(), &w, &h, &comp, 4);
+            if (!px || (l > 0 && (w != W || h != H))) {
+                if (px) stbi_image_free(px);
+                glDeleteTextures(2, ids);
+                return false;
+            }
+            if (l == 0) {
+                W = w; H = h;
+                glGenTextures(1, &ids[kind]);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, ids[kind]);
+                int levels = 1;
+                while ((std::max(W, H) >> levels) > 0) ++levels;
+                glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, kind == 0 ? GL_SRGB8_ALPHA8 : GL_RGBA8, W, H, count);
+            }
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, l, W, H, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            stbi_image_free(px);
+        }
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        while (glGetError() != GL_NO_ERROR) {}
+        GLfloat aniso = 0.f;
+        glGetFloatv(0x84FF /*GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT*/, &aniso);
+        if (glGetError() == GL_NO_ERROR && aniso > 1.f) glTexParameterf(GL_TEXTURE_2D_ARRAY, 0x84FE, std::min(aniso, 4.f));
+    }
+    terrainAlb_ = ids[0]; terrainNh_ = ids[1];
+    return true;
 }
 
 void Renderer::render(const Camera& cam, const DirectionalLight& sun, const Environment& env,

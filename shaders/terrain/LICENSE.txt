@@ -1,0 +1,4 @@
+Texturas do terreno: Poly Haven (https://polyhaven.com), licença CC0 (domínio público).
+grama = rocky_terrain_02, campo = grass_ground, floresta = forest_ground_04, chao = sandy_gravel_02,
+areia = gravel_floor, terra = farm_soil, seixos = dry_river_pebbles.
+Convertidas com tools/convert_terrain_textures.py (cor 1024 px; normal XY + altura 512 px).

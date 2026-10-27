@@ -388,6 +388,8 @@ void mapOverview(Engine* e);           // câmera do alto enquadrando o mapa
 void planetGenerate(Engine* e);
 float planetHeight(const Engine* e, float x, float z);
 bool planetNoTrees(const Engine* e, float x, float z);
+float planetForest(const Engine* e, float x, float z);              // 0..1: mata fechada
+glm::vec3 planetGroundHint(const Engine* e, float x, float z);     // chão: (estrada/cidade, floresta, roça)
 void planetDecorateChunk(Engine* e, TerrainChunk& c, float x0, float z0, float size, std::vector<BoxCollider>& boxes);
 glm::vec3 planetSpawn(Engine* e, int city, float* yaw);
 std::string planetRegion(Engine* e, glm::vec3 p);

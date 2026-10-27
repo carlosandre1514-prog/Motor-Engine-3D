@@ -23,7 +23,9 @@ uniform float uMetallicFactor;
 uniform vec3 uEmissiveFactor;
 uniform float uAlphaCutoff;       // 0 = opaco
 uniform float uOcclusionStrength; // 0 = sem textura de AO
-uniform int uMode;                // 0 padrão, 1 terreno, 2 água (oceano)
+uniform int uMode;                // 0 padrão, 1 terreno simples, 2 água (oceano), 3 terreno com camadas
+uniform mediump sampler2DArray uTerrainAlb;  // camadas do terreno: cor
+uniform mediump sampler2DArray uTerrainNh;   // camadas do terreno: normal XY + altura
 uniform float uTime;              // segundos (ondas da água)
 
 out vec4 oColor;
@@ -133,6 +135,58 @@ vec3 waterColor() {
     return c;
 }
 
+// ---- terreno em camadas: 0 grama, 1 campo seco, 2 chão de floresta, 3 chão batido, 4 areia, 5 terra arada, 6 seixos
+float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash12(i), hash12(i + vec2(1, 0)), u.x), mix(hash12(i + vec2(0, 1)), hash12(i + vec2(1, 1)), u.x), u.y);
+}
+void terrainLayers(out vec3 albedo, out vec3 nt, out float cavity) {
+    vec2 p = vWorldPos.xz;
+    float y = vWorldPos.y, slope = 1.0 - normalize(vNormal).y;
+    vec3 hint = 1.0 - vColor.rgb;  // vindo da malha: R chão batido (estradas/cidades), G floresta, B roça
+    float n1 = vnoise(p * 0.004) * 0.65 + vnoise(p * 0.031) * 0.35, n2 = vnoise(p * 0.013 + 17.0);
+    float w[7];
+    float dry = clamp(smoothstep(0.5, 0.78, n1) + smoothstep(28.0, 55.0, y) * 0.7, 0.0, 1.0);
+    float beach = 1.0 - smoothstep(1.4, 2.8, y + (n2 - 0.5) * 1.5);
+    float rocky = clamp(smoothstep(0.32, 0.55, slope) + smoothstep(70.0, 90.0, y) + (1.0 - smoothstep(-2.0, 0.3, y)), 0.0, 1.0);
+    float land = (1.0 - beach) * (1.0 - rocky);
+    w[0] = (1.0 - dry) * land;
+    w[1] = dry * land;
+    w[2] = clamp(hint.g * 1.3 + smoothstep(0.7, 0.85, n2) * 0.5, 0.0, 1.0) * land * 1.25;
+    w[3] = clamp(hint.r * 1.4 + smoothstep(0.22, 0.4, slope) * 0.5, 0.0, 1.0) * (1.0 - beach) * 1.2;
+    w[4] = beach * (1.0 - rocky * 0.5);
+    w[5] = hint.b * land * 1.4;
+    w[6] = rocky * 1.3;
+    const float depth = 0.3;
+    float wm = 0.0;
+    for (int i = 0; i < 7; ++i) wm = max(wm, w[i]);
+    vec2 uv = p / 3.0;
+    vec3 a = vec3(0.0), n = vec3(0.0);
+    float sum = 0.0, hsum = 0.0;
+    for (int i = 0; i < 7; ++i) {
+        if (w[i] < wm - depth || w[i] < 0.01) continue;   // camadas que não podem aparecer: nem amostra
+        vec3 uvl = vec3(uv * (i == 6 ? 1.4 : 1.0), float(i));
+        vec4 nh = texture(uTerrainNh, uvl);
+        float k = max(w[i] + nh.b * depth - wm, 0.0);    // mistura pela altura: pedrinhas aparecem antes
+        k *= k;
+        a += texture(uTerrainAlb, uvl).rgb * k;
+        n += vec3(nh.xy * 2.0 - 1.0, 0.0) * k;
+        hsum += nh.b * k;
+        sum += k;
+    }
+    sum = max(sum, 1e-4);
+    albedo = a / sum;
+    vec2 nxy = n.xy / sum;
+    nt = vec3(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
+    cavity = mix(0.55, 1.0, smoothstep(0.0, 0.55, hsum / sum));
+    // variação grande (quebra a repetição) e chão molhado perto da água
+    albedo *= 0.82 + 0.36 * vnoise(p * 0.045) * (0.6 + 0.4 * vnoise(p * 0.21));
+    albedo *= mix(0.62, 1.0, smoothstep(-0.2, 0.9, y));
+    vec3 snow = vec3(0.90, 0.92, 0.96);
+    albedo = mix(albedo, snow, smoothstep(95.0, 115.0, y + n2 * 10.0) * (1.0 - smoothstep(0.35, 0.6, slope)));
+}
+
 void main() {
     if (uMode == 2) { oColor = vec4(toDisplay(waterColor()), 1.0); return; }
     vec4 albedoS = texture(uAlbedoMap, vUV) * uAlbedoFactor * vColor;  // textura em sRGB: o GL já linearizou
@@ -149,15 +203,18 @@ void main() {
         c = mix(c, snow, smoothstep(52.0, 64.0, vWorldPos.y + detail * 8.0) * (1.0 - smoothstep(0.35, 0.6, slope)));
         albedoS.rgb = c;
     }
+    vec3 tnt = vec3(0.0, 0.0, 1.0);
+    float cavity = 1.0;
+    if (uMode == 3) terrainLayers(albedoS.rgb, tnt, cavity);
     vec3 orm = texture(uOrmMap, vUV).rgb;
-    float ao = mix(1.0, texture(uOcclusionMap, vUV).r, uOcclusionStrength);
+    float ao = mix(1.0, texture(uOcclusionMap, vUV).r, uOcclusionStrength) * cavity;
     float rough = clamp(orm.g * uRoughnessFactor, 0.045, 1.0), metal = clamp(orm.b * uMetallicFactor, 0.0, 1.0);
 
     vec3 Nv = normalize(vNormal);
     if (!gl_FrontFacing) Nv = -Nv;                                // materiais double-sided
     vec3 T = normalize(vTangent.xyz - Nv * dot(Nv, vTangent.xyz));
     vec3 B = cross(Nv, T) * vTangent.w;
-    vec3 nt = texture(uNormalMap, vUV).xyz * 2.0 - 1.0;
+    vec3 nt = uMode == 3 ? tnt : texture(uNormalMap, vUV).xyz * 2.0 - 1.0;
     vec3 N = normalize(mat3(T, B, Nv) * nt);
     vec3 V = normalize(uCamPos.xyz - vWorldPos);
     vec3 F0 = mix(vec3(0.04), albedoS.rgb, metal);

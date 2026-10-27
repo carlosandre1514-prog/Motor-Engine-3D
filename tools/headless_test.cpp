@@ -218,6 +218,34 @@ int main(int argc, char** argv) {
             std::printf("  região: %s\n", engine_region_name(e));
             save(out, "21_cidade2.png");
         }
+        // chão do campo: roças em volta da capital, mata e serra (camadas de textura do terreno)
+        auto heightAt = [&](float x, float z) {
+            char in[96];
+            std::snprintf(in, sizeof(in), "{\"pontos\":[[%.1f,%.1f]]}", x, z);
+            std::string r = engine_tool_call(e, "altura_terreno", in);
+            return float(std::atof(r.c_str() + r.find('[') + 1));
+        };
+        // procura terra firme: baixada (6-25 m), morro (25-60 m) e serra (> 60 m), em volta da capital
+        float spots[4][4] = {{-1822.f + 560.f, 274.f, 0.3f, 0.f}};
+        spots[0][3] = heightAt(spots[0][0], spots[0][1]);
+        const float lo[3] = {6.f, 25.f, 60.f}, hi[3] = {25.f, 60.f, 400.f};
+        for (int t = 0; t < 3; ++t) {
+            spots[t + 1][3] = -1e9f;
+            for (float rad = 1000.f; rad < 2600.f && spots[t + 1][3] < -1e8f; rad += 120.f)
+                for (int k = 0; k < 24; ++k) {
+                    float a = k * 0.2618f + t, x = -1822.f + std::cos(a) * rad, z = 274.f + std::sin(a) * rad, h = heightAt(x, z);
+                    if (h > lo[t] && h < hi[t]) { spots[t + 1][0] = x; spots[t + 1][1] = z; spots[t + 1][2] = a + 1.f; spots[t + 1][3] = h; break; }
+                }
+        }
+        for (int k = 0; k < 4; ++k) {
+            if (spots[k][3] < -1e8f) continue;
+            engine_set_camera(e, spots[k][0], std::max(spots[k][3], 0.f) + 1.f, spots[k][1], spots[k][2], 0.22f, 26.f);
+            for (int f = 0; f < 50; ++f) frames(e, 1);
+            char name[64];
+            std::snprintf(name, sizeof(name), "21_chao_%d.png", k);
+            std::printf("  chão %d: altura %.0f m\n", k, spots[k][3]);
+            save(out, name);
+        }
         if (nCities < 3) { std::printf("  [ERRO] poucas cidades\n"); ++g_fail; }
     };
     auto water = [&]() {
