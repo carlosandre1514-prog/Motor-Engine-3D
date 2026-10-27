@@ -306,8 +306,14 @@ std::string jsonString(const std::string& s) { return json(s).dump(-1, ' ', fals
 int loadModelFile(Engine* e, const char* path) {
     auto model = std::make_unique<LoadedModel>();
     LoadContext ctx{e->renderer, e->scene, e->meshRenderers, e->animatorPool};
-    size_t len = std::strlen(path);
-    bool fbx = len > 4 && (std::strcmp(path + len - 4, ".fbx") == 0 || std::strcmp(path + len - 4, ".FBX") == 0);
+    std::string ext = path;
+    ext = ext.substr(ext.find_last_of('.') == std::string::npos ? ext.size() : ext.find_last_of('.'));
+    for (auto& ch : ext) ch = char(std::tolower((unsigned char)ch));
+    bool fbx = ext == ".fbx" || ext == ".obj";  // ufbx lê FBX (binário e texto, 6.x a 7.x) e OBJ
+    if (!fbx && ext != ".glb" && ext != ".gltf") {
+        e->lastError = "formato " + ext + " não suportado: use .glb, .gltf, .fbx ou .obj (para .dae/.blend/.3ds, exporte do Blender como .glb)";
+        return -1;
+    }
     if (!(fbx ? loadFbx(path, ctx, *model) : loadGltf(path, ctx, *model))) {
         e->lastError = model->error.empty() ? std::string("não consegui abrir ") + path : model->error;
         for (auto h : model->allNodes) if (GameObject* g = e->scene.get(h)) releaseComponents(e, *g);

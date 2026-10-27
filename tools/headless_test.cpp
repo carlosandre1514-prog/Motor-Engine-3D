@@ -578,6 +578,38 @@ int main(int argc, char** argv) {
         if (id < 0) { std::printf("  [ERRO] cidade.glb não abriu: %s\n", engine_last_error(e)); ++g_fail; }
     }
 
+    // ---- [17] .obj (sem esqueleto) vira personagem que anda
+    std::printf("[17] .obj como personagem\n");
+    {
+        std::string objPath = out + "/17_estatua.obj";
+        FILE* f = std::fopen(objPath.c_str(), "w");
+        std::fprintf(f, "o Estatua\n");
+        const float V[8][3] = {{-0.3f,0,-0.2f},{0.3f,0,-0.2f},{0.3f,1.8f,-0.2f},{-0.3f,1.8f,-0.2f},{-0.3f,0,0.2f},{0.3f,0,0.2f},{0.3f,1.8f,0.2f},{-0.3f,1.8f,0.2f}};
+        for (auto& v : V) std::fprintf(f, "v %f %f %f\n", v[0], v[1], v[2]);
+        std::fprintf(f, "f 1 2 3 4\nf 5 8 7 6\nf 1 5 6 2\nf 2 6 7 3\nf 3 7 8 4\nf 5 1 4 8\n");
+        std::fclose(f);
+        engine_new_scene(e);
+        int id = engine_load_model(e, objPath.c_str());
+        if (id < 0) { std::printf("  [ERRO] .obj não abriu: %s\n", engine_last_error(e)); ++g_fail; }
+        else {
+            engine_select(e, id);
+            int ch = engine_make_character(e, 1);
+            std::printf("  personagem %d (%s)\n", ch, engine_last_error(e));
+            float p0[3], rr[3], ss[3], p1[3];
+            engine_get_transform(e, ch, p0, rr, ss);
+            engine_set_play(e, 1);
+            frames(e, 20);
+            engine_player_input(e, 0.f, 1.f, 1);
+            frames(e, 60);
+            engine_player_input(e, 0.f, 0.f, 0);
+            engine_get_transform(e, ch, p1, rr, ss);
+            engine_set_play(e, 0);
+            float moved = std::hypot(p1[0] - p0[0], p1[2] - p0[2]);
+            std::printf("  andou %.1f m\n", moved);
+            if (ch < 0 || moved < 2.f) { std::printf("  [ERRO] .obj não virou personagem jogável\n"); ++g_fail; }
+        }
+    }
+
     engine_destroy(e);
     check("destroy");
     eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);

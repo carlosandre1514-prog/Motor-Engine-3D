@@ -478,15 +478,16 @@ class MainActivity : Activity() {
 
     private fun characterMenu() {
         val items = arrayOf("Aleatório", "Personalizar…", "✏ Editar o personagem selecionado…",
-                            "Usar modelo importado (.glb/.fbx selecionado) como personagem", "Controlar o personagem selecionado no Play",
-                            "Ver / trocar animações…")
+                            "📂 Personagem de um arquivo 3D (.fbx, .glb, .gltf, .obj)…", "Controlar o personagem selecionado no Play",
+                            "Ver / trocar animações…", "Transformar o modelo selecionado em personagem")
         dialog().setTitle("Personagem").setItems(items) { _, which ->
             when (which) {
                 0 -> gl { NativeBridge.nativeCreateRandomCharacter(seed(), false) }
                 1 -> characterEditor()
                 2 -> if (snap.selected < 0) toast("Toque num personagem primeiro") else characterEditor(edit = true)
                 5 -> animationDialog()
-                3 -> gl {
+                3 -> pickFile(REQ_CHARACTER)
+                6 -> gl {
                     val id = NativeBridge.nativeMakeCharacter(true)
                     val msg = NativeBridge.nativeLastError()
                     toast(if (id < 0) "Não deu: $msg" else if (msg.isNotEmpty()) "Personagem pronto ($msg)" else "Personagem pronto! Aperte ▶ Play")
@@ -1214,14 +1215,16 @@ class MainActivity : Activity() {
         }
         val name = displayName(uri)
         val lower = name.lowercase(Locale.US)
-        if (requestCode == REQ_MODEL && !lower.endsWith(".glb") && !lower.endsWith(".gltf") && !lower.endsWith(".fbx")) {
-            toast("Escolha um arquivo .glb, .gltf ou .fbx")
+        val modelExts = listOf(".glb", ".gltf", ".fbx", ".obj")
+        if ((requestCode == REQ_MODEL || requestCode == REQ_CHARACTER) && modelExts.none { lower.endsWith(it) }) {
+            toast("Formato não suportado: escolha .fbx, .glb, .gltf ou .obj (outros formatos: abra no Blender e exporte .glb)")
             return
         }
         toast("Carregando $name…")
         Thread {
             try {
                 val dir = File(filesDir, if (requestCode == REQ_IMAGE) "textures" else "models").apply { mkdirs() }
+                if (lower.endsWith(".gltf")) toast("Dica: .gltf com arquivos .bin/texturas separados pode abrir sem textura; prefira .glb")
                 val dst = File(dir, name.replace('/', '_'))
                 contentResolver.openInputStream(uri)!!.use { input -> dst.outputStream().use { input.copyTo(it) } }
                 gl {
@@ -1231,7 +1234,14 @@ class MainActivity : Activity() {
                     } else {
                         val id = NativeBridge.nativeLoadModel(dst.absolutePath)
                         if (id < 0) toast("Erro ao carregar: " + NativeBridge.nativeLastError())
-                        else toast("$name carregado. Se for personagem: + Criar → Personagem → Usar modelo importado")
+                        else if (requestCode == REQ_CHARACTER) {
+                            NativeBridge.nativeSelect(id)
+                            val cid = NativeBridge.nativeMakeCharacter(true)
+                            val msg = NativeBridge.nativeLastError()
+                            toast(if (cid < 0) "Carregou, mas não virou personagem: $msg"
+                                  else "Personagem \"$name\" pronto! Aperte ▶ Play" + if (msg.isNotEmpty()) " ($msg)" else "")
+                        }
+                        else toast("$name carregado. Para virar personagem: + Criar → Personagem → Transformar o modelo selecionado")
                     }
                 }
             } catch (e: Exception) {
@@ -1298,6 +1308,7 @@ class MainActivity : Activity() {
         private const val REQ_PROJECT = 44
         private const val REQ_EXPORT = 45
         private const val REQ_GLB = 46
+        private const val REQ_CHARACTER = 47
         private const val AUTOSAVE_MS = 30_000L
     }
 }

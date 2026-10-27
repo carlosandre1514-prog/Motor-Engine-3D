@@ -816,16 +816,17 @@ static int findClip(const Animator* a, std::initializer_list<const char*> keys) 
     return -1;
 }
 
+static int finishModelCharacter(Engine* e, GameObject& root, CharacterInfo& info, const AABB& b, float height, float width, bool controllable);
+
 int makeCharacterFromModel(Engine* e, bool controllable) {
     GameObject* root = e->scene.get(e->selected);
     while (root && root->transform.parent && root->transform.parent->owner && root->transform.parent->owner->id >= 0)
         root = root->transform.parent->owner;
-    if (!root) { e->lastError = "selecione o modelo"; return -1; }
+    if (!root) { e->lastError = "toque primeiro no modelo importado (ou use + Criar → Personagem → 📂 Personagem de um arquivo 3D)"; return -1; }
     for (size_t i = 0; i < e->characters.size(); ++i)
         if (e->scene.get(e->characters[i].root) == root) { if (controllable) setPlayer(e, int(i)); return root->id; }
     Animator* anim = nullptr;
     Scene::forEachInSubtree(*root, [&](GameObject& g) { if (!anim && g.animator && g.animator->skeleton) anim = g.animator; });
-    if (!anim) { e->lastError = "o modelo não tem esqueleto (rig)"; return -1; }
     if (root->rigidBody) { e->lastError = "o modelo já tem física"; return -1; }
 
     e->scene.updateTransforms();
@@ -839,6 +840,11 @@ int makeCharacterFromModel(Engine* e, bool controllable) {
     info.anim = anim;
     info.height = height;
     for (int k = 0; k < CC_Count; ++k) info.clipMap[k] = -1;
+    if (!anim) {  // modelo sem esqueleto (ex.: .obj, estátua, robô rígido): anda e pula, mas sem animação
+        info.handJoint = 0;
+        e->lastError = "modelo sem esqueleto: o personagem anda, mas sem animação";
+        return finishModelCharacter(e, *root, info, b, height, width, controllable);
+    }
 
     // retarget humanoide (sempre calculado: dá o referencial da mão para armas)
     if (!e->humanoidRef) {
@@ -908,7 +914,12 @@ int makeCharacterFromModel(Engine* e, bool controllable) {
         e->lastError = std::string("ossos humanoides não encontrados (") + missing + "): usando as animações do modelo";
     }
 
-    // cápsula de física com a origem do personagem nos pés
+    return finishModelCharacter(e, *root, info, b, height, width, controllable);
+}
+
+// cápsula de física com a origem do personagem nos pés
+static int finishModelCharacter(Engine* e, GameObject& rootRef, CharacterInfo& info, const AABB& b, float height, float width, bool controllable) {
+    GameObject* root = &rootRef;
     float diam = std::clamp(width * 0.45f, 0.25f, height * 0.6f);
     btCollisionShape* shape = Physics::makeShape(ColliderType::Capsule, {diam, height, diam});
     glm::vec3 offset(0.f, (b.min.y - root->transform.position.y) + height * 0.5f, 0.f);

@@ -19,8 +19,8 @@ Motor 3D para celular (Android) em C++20 + OpenGL ES 3.2, com editor por toque.
 | Material | **Material**: troca o material do objeto selecionado (tijolo, concreto, vidro, madeira...), cor ou uma imagem do celular |
 | Jogar | **▶ Play** com um personagem jogador: joystick (esquerda), Pular / Correr / Atirar (direita), arraste a tela para girar a câmera |
 | Hierarquia | **Objetos**: lista todos os objetos; tocar seleciona e enquadra |
-| Importar 3D | **Importar 3D**: `.glb`, `.gltf` ou `.fbx` do aparelho (Mixamo, Unity Asset Store, Sketchfab, Blender) |
-| Personagem importado | Selecione o modelo → **+ Criar → Personagem → Usar modelo importado**: ganha física e anda/corre/pula. Humanoides (ossos tipo Mixamo/Unity) usam as animações do motor se não tiverem as próprias |
+| Importar 3D | **Importar 3D**: `.fbx`, `.glb`, `.gltf` ou `.obj` do aparelho (Mixamo, Unity Asset Store, Sketchfab, Blender). Pode misturar formatos no mesmo jogo. Outros formatos (.dae, .blend, .3ds): abra no Blender e exporte `.glb` |
+| Personagem de arquivo | **+ Criar → Personagem → 📂 Personagem de um arquivo 3D**: escolha o `.fbx`/`.glb`/`.gltf`/`.obj` e ele já vira personagem jogável (física, anda/corre/pula). Humanoides (ossos tipo Mixamo/Unity) usam as animações do motor se não tiverem as próprias; modelos sem esqueleto andam sem animação |
 | Efeitos | **+ Criar → Efeito**: fogueira, tocha, fumaça, faíscas, aura, portal, explosão, orbe, coluna de luz; elementos fogo, gelo, trevas, luz, veneno, raio, arcano ou cor livre (Material → Cor) |
 | Magia | No Play: botão **Magia** lança o elemento escolhido (segure para trocar); **Atirar** mostra clarão, bala e impacto |
 | Animação | **Animação**: lista as animações do personagem/modelo selecionado e toca a escolhida (também no editor). No Play, parado/andar/correr trocam sozinhos |
