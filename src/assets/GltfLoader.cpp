@@ -115,6 +115,11 @@ static bool readPrimitive(const tinygltf::Model& m, const tinygltf::Primitive& p
     if (!hasNormals) generateNormals(verts, idx);
     if (!hasTangents) generateTangents(verts, idx);
 
+    if ((a = attr("COLOR_0")) && a->count == n) {
+        int comps = tinygltf::GetNumComponentsInType(a->type);
+        auto d = readFloats(m, *a, 4);
+        for (size_t i = 0; i < n; ++i) verts[i].color = glm::vec4(d[i * 4], d[i * 4 + 1], d[i * 4 + 2], comps == 4 ? d[i * 4 + 3] : 1.f);
+    }
     if ((a = attr("JOINTS_0")) && a->count == n) {
         skinned = true;
         auto d = readFloats(m, *a, 4);

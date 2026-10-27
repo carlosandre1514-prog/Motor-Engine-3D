@@ -26,6 +26,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -41,6 +42,8 @@ class EngineSnapshot {
     @Volatile var selectedName = ""
     @Volatile var transform = FloatArray(9)
     @Volatile var playing = false
+    @Volatile var hasPlayer = false
+    @Volatile var playerWeapon = -1
     @Volatile var ready = false
 }
 
@@ -57,7 +60,13 @@ class MainActivity : Activity() {
     private lateinit var inspTitle: TextView
     private lateinit var fields: List<EditText>
     private lateinit var visualPanel: LinearLayout
+    private lateinit var hud: FrameLayout
+    private lateinit var joystick: JoystickView
+    private lateinit var runBtn: TextView
+    private lateinit var fireBtn: TextView
     private var shownSelection = -2
+    private var running = false
+    private var stick = floatArrayOf(0f, 0f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,6 +95,9 @@ class MainActivity : Activity() {
         inspector = buildInspector().apply { visibility = View.GONE }
         root.addView(inspector, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
 
+        hud = buildHud().apply { visibility = View.GONE }
+        root.addView(hud, FrameLayout.LayoutParams(-1, -1))
+
         setContentView(root)
         ui.post(refresh)
     }
@@ -106,6 +118,7 @@ class MainActivity : Activity() {
 
     private fun gl(block: () -> Unit) = view.queueEvent(block)
     private fun toast(msg: String) = runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
+    private fun seed() = (System.nanoTime() and 0x7fffffff).toInt()
 
     // ---------------- barra de ferramentas ----------------
     private fun buildToolbar(): View {
@@ -121,14 +134,15 @@ class MainActivity : Activity() {
         modeBtns = labels.mapIndexed { i, l -> button(l) { setMode(i) } }
         modeBtns.forEach { bar.addView(it) }
         bar.addView(separator())
-        bar.addView(button("+ Objeto") { addObjectDialog() })
+        bar.addView(button("+ Criar") { createMenu() })
+        bar.addView(button("Mapas") { mapsDialog() })
         bar.addView(button("Objetos") { hierarchyDialog() })
         bar.addView(button("Focar") { gl { NativeBridge.nativeFocus() } })
         bar.addView(button("Excluir") { gl { NativeBridge.nativeDeleteSelected() } })
         bar.addView(separator())
-        bar.addView(button("Abrir .glb") { pickModel() })
-        bar.addView(button("Cenas") { scenesDialog() })
+        bar.addView(button("Material") { materialDialog() })
         bar.addView(button("Animação") { cycleAnimation() })
+        bar.addView(button("Abrir .glb") { pickFile(REQ_MODEL) })
         bar.addView(button("Visual") {
             visualPanel.visibility = if (visualPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         })
@@ -143,10 +157,13 @@ class MainActivity : Activity() {
     private fun togglePlay() {
         val play = !snap.playing
         snap.playing = play
-        gl { NativeBridge.nativeSetPlay(play) }
+        stick = floatArrayOf(0f, 0f)
+        joystick.reset()
+        gl { NativeBridge.nativePlayerInput(0f, 0f, false); NativeBridge.nativeSetPlay(play) }
         playBtn.text = if (play) "■ Stop" else "▶ Play"
         (playBtn.background as GradientDrawable).setColor(if (play) 0xFFC0392B.toInt() else 0xFF2E86DE.toInt())
-        updateInspectorVisibility()
+        updateOverlays()
+        if (play && !snap.hasPlayer) toast("Sem jogador: crie um personagem (+ Criar → Personagem) para jogar")
     }
 
     private fun setMode(m: Int) {
@@ -156,28 +173,103 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun addObjectDialog() {
-        val items = arrayOf("Cubo", "Esfera", "Cápsula", "Pedra (collider convexo)")
-        dialog().setTitle("Adicionar objeto (com física)")
-            .setItems(items) { _, which -> gl { NativeBridge.nativeAddObject(which, true) } }
+    // ---------------- criar ----------------
+    private fun createMenu() {
+        val items = arrayOf("Personagem", "Arma", "Construção", "Natureza e objetos", "Formas básicas (com física)")
+        dialog().setTitle("Criar").setItems(items) { _, which ->
+            when (which) {
+                0 -> characterMenu()
+                1 -> list("Arma (vai para a mão do personagem selecionado)",
+                          arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco")) { k ->
+                    gl {
+                        val id = NativeBridge.nativeCreateWeapon(k)
+                        if (id < 0) toast("Não foi possível criar a arma")
+                    }
+                }
+                2 -> list("Construção", arrayOf("Casa", "Sobrado", "Barraco (favela)", "Prédio de apartamentos", "Arranha-céu", "Prédio escolar", "Muro")) { k ->
+                    val kind = if (k == 6) 11 else k
+                    gl { NativeBridge.nativeCreateBuilding(kind, seed()) }
+                }
+                3 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
+                    gl { NativeBridge.nativeCreateBuilding(6 + k, seed()) }
+                }
+                else -> list("Formas básicas", arrayOf("Cubo", "Esfera", "Cápsula", "Pedra (collider convexo)")) { k ->
+                    gl { NativeBridge.nativeAddObject(k, true) }
+                }
+            }
+        }.show()
+    }
+
+    private fun characterMenu() {
+        val items = arrayOf("Aleatório", "Personalizar…", "Controlar o personagem selecionado no Play")
+        dialog().setTitle("Personagem").setItems(items) { _, which ->
+            when (which) {
+                0 -> gl { NativeBridge.nativeCreateRandomCharacter(seed(), false) }
+                1 -> characterEditor()
+                else -> gl { NativeBridge.nativeSetPlayer(); toast("Esse personagem é o jogador no Play") }
+            }
+        }.show()
+    }
+
+    // Editor de personagem: altura, corpo, cores, cabelo
+    private fun characterEditor() {
+        val skins = intArrayOf(0xFFFAD6B9.toInt(), 0xFFE8B48C.toInt(), 0xFFC68C69.toInt(), 0xFF966242.toInt(), 0xFF64402A.toInt(), 0xFF462E20.toInt())
+        val clothes = intArrayOf(0xFFC82828.toInt(), 0xFF286EBE.toInt(), 0xFFF0F0F0.toInt(), 0xFF1E1E23.toInt(), 0xFFFAC828.toInt(),
+                                 0xFF289650.toInt(), 0xFFF0781E.toInt(), 0xFF7846A0.toInt(), 0xFF5AA0DC.toInt(), 0xFFE678A0.toInt())
+        val pants = intArrayOf(0xFF323746.toInt(), 0xFF283C6E.toInt(), 0xFF1E1E20.toInt(), 0xFF786450.toInt(), 0xFF5A5A5F.toInt(), 0xFF465A3C.toInt())
+        val hairs = intArrayOf(0xFF14100E.toInt(), 0xFF3C2819.toInt(), 0xFF785028.toInt(), 0xFFC8AA6E.toInt(), 0xFF963C1E.toInt(), 0xFF6E6E6E.toInt())
+        val sel = intArrayOf(skins[2], clothes[1], pants[0], clothes[2], hairs[0])
+        var build = 1
+        var hairStyle = 1
+        var height = 1.75f
+
+        val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        p.addView(slider("Altura (m)", 1.4f, 2.1f, height) { v -> height = v })
+        p.addView(choice("Corpo", arrayOf("Magro", "Normal", "Forte"), build) { build = it })
+        val names = arrayOf("Pele", "Camisa", "Calça", "Tênis", "Cabelo")
+        val palettes = arrayOf(skins, clothes, pants, clothes, hairs)
+        for (i in names.indices) p.addView(colorRow(names[i], palettes[i], sel[i]) { sel[i] = it })
+        p.addView(choice("Cabelo", arrayOf("Careca", "Curto", "Comprido", "Boné"), hairStyle) { hairStyle = it })
+        val sleeves = CheckBox(this).apply { text = "Manga comprida"; setTextColor(Color.WHITE) }
+        val control = CheckBox(this).apply { text = "Controlar no Play (jogador)"; setTextColor(Color.WHITE); isChecked = !snap.hasPlayer }
+        p.addView(sleeves); p.addView(control)
+
+        dialog().setTitle("Criar personagem")
+            .setView(ScrollView(this).apply { addView(p) })
+            .setPositiveButton("Criar") { _, _ ->
+                val params = FloatArray(20)
+                params[0] = height; params[1] = build.toFloat()
+                for (i in 0 until 5) {
+                    val c = sel[i]
+                    params[2 + i * 3] = Color.red(c) / 255f; params[3 + i * 3] = Color.green(c) / 255f; params[4 + i * 3] = Color.blue(c) / 255f
+                }
+                params[17] = hairStyle.toFloat()
+                params[18] = if (sleeves.isChecked) 1f else 0f
+                params[19] = if (control.isChecked) 1f else 0f
+                gl { NativeBridge.nativeCreateCharacter(params) }
+            }
+            .setNegativeButton("Cancelar", null)
             .show()
     }
 
-    private fun scenesDialog() {
-        val items = arrayOf("Vitrine de materiais (PBR)", "Física: pilha e chuva de objetos", "Cena vazia")
-        dialog().setTitle("Carregar cena")
-            .setItems(items) { _, which ->
-                if (snap.playing) togglePlay()
-                gl {
-                    when (which) {
-                        0 -> NativeBridge.nativeLoadDemo()
-                        1 -> NativeBridge.nativeLoadPhysicsDemo()
-                        else -> NativeBridge.nativeNewScene()
-                    }
+    private fun mapsDialog() {
+        val items = arrayOf("Mundo infinito (procedural, sem fim)", "Cidade (com limite)", "Favela no morro (com limite)",
+                            "Colégio (com limite)", "Bairro residencial (com limite)", "Vitrine de materiais", "Física: pilha de objetos",
+                            "Cena vazia", "Visão geral do mapa atual")
+        dialog().setTitle("Mapas e cenas").setItems(items) { _, which ->
+            if (which < 8 && snap.playing) togglePlay()
+            if (which < 5) toast("Gerando mapa…")
+            gl {
+                when (which) {
+                    in 0..4 -> NativeBridge.nativeLoadMap(which, seed())
+                    5 -> NativeBridge.nativeLoadDemo()
+                    6 -> NativeBridge.nativeLoadPhysicsDemo()
+                    7 -> NativeBridge.nativeNewScene()
+                    else -> NativeBridge.nativeMapOverview()
                 }
-                if (which == 1) toast("Aperte ▶ Play para soltar. No Play, toque nos objetos para empurrar.")
+                if (which in 0..4) toast("Pronto! Aperte ▶ Play para jogar com o personagem. A borda vermelha é a barreira invisível.")
             }
-            .show()
+        }.show()
     }
 
     private fun hierarchyDialog() {
@@ -186,7 +278,7 @@ class MainActivity : Activity() {
             val selected = NativeBridge.nativeSelected()
             runOnUiThread {
                 val rows = list.lineSequence().filter { it.isNotBlank() }.map { it.split('\t') }.toList()
-                if (rows.isEmpty()) { toast("Cena vazia"); return@runOnUiThread }
+                if (rows.isEmpty()) { toast("Nenhum objeto editável nesta cena"); return@runOnUiThread }
                 val ids = rows.map { it[0].toInt() }
                 val names = rows.map { r ->
                     val depth = r[1].toInt().coerceAtMost(8)
@@ -201,11 +293,91 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------- material / textura ----------------
+    private fun materialDialog() {
+        if (snap.selected < 0) { toast("Selecione um objeto primeiro (toque nele)"); return }
+        gl {
+            val names = NativeBridge.nativeMaterialNames().lineSequence().filter { it.isNotBlank() }.toList()
+            runOnUiThread {
+                val items = (listOf("🎨 Cor…", "🖼 Imagem do celular…") + names).toTypedArray()
+                dialog().setTitle("Material de \"${snap.selectedName}\"").setItems(items) { _, which ->
+                    when (which) {
+                        0 -> colorDialog()
+                        1 -> pickFile(REQ_IMAGE)
+                        else -> gl { NativeBridge.nativeSetObjectMaterial(which - 2) }
+                    }
+                }.show()
+            }
+        }
+    }
+
+    private fun colorDialog() {
+        val colors = intArrayOf(0xFFFFFFFF.toInt(), 0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(), 0xFF00ACC1.toInt(),
+                                0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFFD81B60.toInt(), 0xFF6D4C41.toInt(), 0xFF757575.toInt(), 0xFF212121.toInt())
+        var chosen = colors[0]
+        val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        p.addView(colorRow("Cor", colors, chosen) { chosen = it })
+        dialog().setTitle("Cor do objeto").setView(p)
+            .setPositiveButton("Aplicar") { _, _ ->
+                gl { NativeBridge.nativeSetObjectColor(Color.red(chosen) / 255f, Color.green(chosen) / 255f, Color.blue(chosen) / 255f) }
+            }
+            .setNegativeButton("Cancelar", null).show()
+    }
+
     private fun cycleAnimation() {
         gl {
             val name = NativeBridge.nativeCycleAnimation()
-            toast(if (name.isEmpty()) "Nenhuma animação (carregue um .glb com esqueleto, ex.: Fox)" else "Animação: $name (aperte ▶ Play)")
+            toast(if (name.isEmpty()) "Nenhuma animação (crie um personagem ou carregue um .glb com esqueleto)" else "Animação: $name")
         }
+    }
+
+    // ---------------- HUD de jogo ----------------
+    private fun buildHud(): FrameLayout {
+        val f = FrameLayout(this)
+        joystick = JoystickView(this) { x, y ->
+            stick = floatArrayOf(x, y)
+            val r = running
+            gl { NativeBridge.nativePlayerInput(x, y, r) }
+        }
+        f.addView(joystick, FrameLayout.LayoutParams(dp(150), dp(150), Gravity.BOTTOM or Gravity.START).apply {
+            leftMargin = dp(24); bottomMargin = dp(24)
+        })
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
+        fireBtn = roundButton("Atirar", 0xCCC0392B.toInt())
+        // segurar = disparo contínuo (o motor respeita a cadência de cada arma)
+        val repeat = object : Runnable {
+            override fun run() { gl { NativeBridge.nativePlayerFire() }; ui.postDelayed(this, 90) }
+        }
+        fireBtn.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { ui.post(repeat); v.alpha = 0.6f }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { ui.removeCallbacks(repeat); v.alpha = 1f }
+            }
+            true
+        }
+        val jump = roundButton("Pular", 0xCC2E86DE.toInt()).apply { setOnClickListener { gl { NativeBridge.nativePlayerJump() } } }
+        runBtn = roundButton("Correr", 0xCC555555.toInt()).apply {
+            setOnClickListener {
+                running = !running
+                (background as GradientDrawable).setColor(if (running) 0xCC27AE60.toInt() else 0xCC555555.toInt())
+                val s = stick
+                val r = running
+                gl { NativeBridge.nativePlayerInput(s[0], s[1], r) }
+            }
+        }
+        col.addView(fireBtn); col.addView(jump); col.addView(runBtn)
+        f.addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(20); bottomMargin = dp(20) })
+        return f.apply { isClickable = false }
+    }
+
+    private fun roundButton(text: String, color: Int) = TextView(this).apply {
+        this.text = text
+        setTextColor(Color.WHITE)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+        layoutParams = LinearLayout.LayoutParams(dp(78), dp(78)).apply { topMargin = dp(10) }
     }
 
     // ---------------- painel visual ----------------
@@ -244,6 +416,48 @@ class MainActivity : Activity() {
         return col
     }
 
+    private fun choice(name: String, options: Array<String>, initial: Int, onPick: (Int) -> Unit): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
+        col.addView(label(name))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val btns = ArrayList<TextView>()
+        options.forEachIndexed { i, o ->
+            val b = button(o) {
+                onPick(i)
+                btns.forEachIndexed { j, bb -> (bb.background as GradientDrawable).setColor(if (j == i) 0xFF3D7EAA.toInt() else 0xFF2A2F37.toInt()) }
+            }
+            (b.background as GradientDrawable).setColor(if (i == initial) 0xFF3D7EAA.toInt() else 0xFF2A2F37.toInt())
+            btns.add(b); row.addView(b)
+        }
+        col.addView(HorizontalScrollView(this).apply { addView(row) })
+        return col
+    }
+
+    private fun colorRow(name: String, colors: IntArray, initial: Int, onPick: (Int) -> Unit): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
+        col.addView(label(name))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val chips = ArrayList<View>()
+        fun paint(v: View, c: Int, on: Boolean) {
+            v.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL; setColor(c)
+                setStroke(dp(if (on) 3 else 1), if (on) Color.WHITE else 0x66FFFFFF)
+            }
+        }
+        for (c in colors) {
+            val v = View(this)
+            paint(v, c, c == initial)
+            v.setOnClickListener {
+                onPick(c)
+                chips.forEachIndexed { j, ch -> paint(ch, colors[j], colors[j] == c) }
+            }
+            chips.add(v)
+            row.addView(v, LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        }
+        col.addView(HorizontalScrollView(this).apply { addView(row) })
+        return col
+    }
+
     // ---------------- inspetor ----------------
     private fun buildInspector(): LinearLayout {
         val p = panel()
@@ -275,7 +489,7 @@ class MainActivity : Activity() {
                 line.addView(et)
             }
             p.addView(line)
-            if (row == 2) p.addView(label("Arraste as setas na tela ou digite os valores. Toque num objeto para selecionar.").apply {
+            if (row == 2) p.addView(label("Toque num objeto para selecionar. Arraste as setas ou digite os valores.").apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f); alpha = 0.7f
             })
         }
@@ -292,8 +506,10 @@ class MainActivity : Activity() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(inspector.windowToken, 0)
     }
 
-    private fun updateInspectorVisibility() {
+    private fun updateOverlays() {
         inspector.visibility = if (snap.selected >= 0 && !snap.playing) View.VISIBLE else View.GONE
+        hud.visibility = if (snap.playing && snap.hasPlayer) View.VISIBLE else View.GONE
+        if (::fireBtn.isInitialized) fireBtn.text = if (snap.playerWeapon in 0..3) "Atirar" else "Bater"
     }
 
     // Atualiza estatísticas e inspetor a partir do snapshot da thread GL
@@ -304,7 +520,7 @@ class MainActivity : Activity() {
                 statsText.text = String.format(Locale.US, "%.0f FPS  %.1f ms (CPU %.1f)\n%d draws  %s tris  %d objetos",
                     s[0], s[1], s[2], s[3].toInt(), compact(s[4]), s[5].toInt())
             }
-            updateInspectorVisibility()
+            updateOverlays()
             if (inspector.visibility == View.VISIBLE) {
                 if (shownSelection != snap.selected) { inspTitle.text = snap.selectedName; shownSelection = snap.selected }
                 val editing = fields.any { it.hasFocus() }
@@ -326,35 +542,40 @@ class MainActivity : Activity() {
         else -> v.toInt().toString()
     }
 
-    // ---------------- abrir .glb (Storage Access Framework) ----------------
-    private fun pickModel() {
+    // ---------------- arquivos do aparelho (Storage Access Framework) ----------------
+    private fun pickFile(req: Int) {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"  // .glb não tem MIME confiável em todos os aparelhos
+            type = if (req == REQ_IMAGE) "image/*" else "*/*"  // .glb não tem MIME confiável em todos os aparelhos
         }
-        startActivityForResult(i, REQ_PICK)
+        startActivityForResult(i, req)
     }
 
     @Deprecated("Activity API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_PICK || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         val name = displayName(uri)
-        if (!name.lowercase(Locale.US).endsWith(".glb") && !name.lowercase(Locale.US).endsWith(".gltf")) {
+        val lower = name.lowercase(Locale.US)
+        if (requestCode == REQ_MODEL && !lower.endsWith(".glb") && !lower.endsWith(".gltf")) {
             toast("Escolha um arquivo .glb (ou .gltf embutido)")
             return
         }
         toast("Carregando $name…")
         Thread {
             try {
-                val dir = File(filesDir, "models").apply { mkdirs() }
+                val dir = File(filesDir, if (requestCode == REQ_IMAGE) "textures" else "models").apply { mkdirs() }
                 val dst = File(dir, name.replace('/', '_'))
                 contentResolver.openInputStream(uri)!!.use { input -> dst.outputStream().use { input.copyTo(it) } }
                 gl {
-                    val id = NativeBridge.nativeLoadModel(dst.absolutePath)
-                    if (id < 0) toast("Erro ao carregar: " + NativeBridge.nativeLastError())
-                    else toast("$name carregado")
+                    if (requestCode == REQ_IMAGE) {
+                        if (NativeBridge.nativeSetObjectTexture(dst.absolutePath)) toast("Textura aplicada")
+                        else toast("Erro: " + NativeBridge.nativeLastError())
+                    } else {
+                        val id = NativeBridge.nativeLoadModel(dst.absolutePath)
+                        if (id < 0) toast("Erro ao carregar: " + NativeBridge.nativeLastError()) else toast("$name carregado")
+                    }
                 }
             } catch (e: Exception) {
                 toast("Erro ao copiar arquivo: ${e.message}")
@@ -366,13 +587,17 @@ class MainActivity : Activity() {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst()) c.getString(0)?.let { return it }
         }
-        return uri.lastPathSegment?.substringAfterLast('/') ?: "modelo.glb"
+        return uri.lastPathSegment?.substringAfterLast('/') ?: "arquivo"
     }
 
     // ---------------- helpers de UI ----------------
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private fun dialog() = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+
+    private fun list(title: String, items: Array<String>, onPick: (Int) -> Unit) {
+        dialog().setTitle(title).setItems(items) { _, which -> onPick(which) }.show()
+    }
 
     private fun button(text: String, accent: Boolean = false, onClick: () -> Unit) = TextView(this).apply {
         this.text = text
@@ -410,7 +635,10 @@ class MainActivity : Activity() {
         layoutParams = ViewGroup.LayoutParams(-1, -2)
     }
 
-    companion object { private const val REQ_PICK = 42 }
+    companion object {
+        private const val REQ_MODEL = 42
+        private const val REQ_IMAGE = 43
+    }
 }
 
 class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceView(activity) {
@@ -455,6 +683,8 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
                 if (sel != lastSel) { snapshot.selectedName = if (sel >= 0) NativeBridge.nativeObjectName(sel) else ""; lastSel = sel }
                 if (sel >= 0 && NativeBridge.nativeGetTransform(sel, tr)) snapshot.transform = tr.copyOf()
                 snapshot.selected = sel
+                snapshot.hasPlayer = NativeBridge.nativeHasPlayer()
+                snapshot.playerWeapon = NativeBridge.nativePlayerWeapon()
             }
         })
         renderMode = RENDERMODE_CONTINUOUSLY

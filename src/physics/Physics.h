@@ -10,24 +10,28 @@ namespace eng {
 
 // Escreve o transform simulado de volta no Transform3D do GameObject.
 // (Assume objetos de física na raiz da hierarquia; para filhos, converter world->local.)
+// offset: centro do collider em relação à origem do objeto (ex.: personagem com origem nos pés)
 class TransformMotionState : public btMotionState {
 public:
-    TransformMotionState(Transform3D* t) : t_(t) {}
+    TransformMotionState(Transform3D* t, glm::vec3 offset = glm::vec3(0.f)) : t_(t), offset_(offset) {}
     void getWorldTransform(btTransform& out) const override {
-        out.setOrigin(btVector3(t_->position.x, t_->position.y, t_->position.z));
+        glm::vec3 c = t_->position + t_->rotation * offset_;
+        out.setOrigin(btVector3(c.x, c.y, c.z));
         out.setRotation(btQuaternion(t_->rotation.x, t_->rotation.y, t_->rotation.z, t_->rotation.w));
     }
     void setWorldTransform(const btTransform& in) override {
         btVector3 o = in.getOrigin();
         btQuaternion q = in.getRotation();
-        t_->setPosition({o.x(), o.y(), o.z()});
-        t_->setRotation(glm::quat(q.w(), q.x(), q.y(), q.z()));
+        glm::quat r(q.w(), q.x(), q.y(), q.z());
+        t_->setPosition(glm::vec3(o.x(), o.y(), o.z()) - r * offset_);
+        t_->setRotation(r);
     }
 private:
     Transform3D* t_;
+    glm::vec3 offset_;
 };
 
-enum class ColliderType { Box, Sphere, Capsule, ConvexMesh };
+enum class ColliderType { Box, Sphere, Capsule, ConvexMesh, Compound };
 
 struct RigidBody {
     btRigidBody* body = nullptr;
@@ -35,7 +39,8 @@ struct RigidBody {
     TransformMotionState* motion = nullptr;
     GameObject* owner = nullptr;
     ColliderType type = ColliderType::Box;
-    glm::vec3 baseScale{1.f};  // collider criado em unidades locais; a escala do Transform multiplica por cima
+    glm::vec3 baseScale{1.f};
+    glm::vec3 centerOffset{0.f};  // centro do collider em relação à origem do objeto  // collider criado em unidades locais; a escala do Transform multiplica por cima
     float mass = 1.f;  // 0 = estático
     bool lockRotX = false, lockRotY = false, lockRotZ = false;
     bool lockPosX = false, lockPosY = false, lockPosZ = false;
@@ -92,7 +97,7 @@ public:
         rb.type = type;
         rb.owner = &go;
         shape->setMargin(type == ColliderType::Box || type == ColliderType::ConvexMesh ? 0.02f : shape->getMargin());
-        rb.motion = new TransformMotionState(&go.transform);
+        rb.motion = new TransformMotionState(&go.transform, rb.centerOffset);
         btVector3 inertia(0, 0, 0);
         if (mass > 0.f) shape->calculateLocalInertia(mass, inertia);
         btRigidBody::btRigidBodyConstructionInfo info(mass, rb.motion, shape, inertia);
@@ -129,7 +134,8 @@ public:
         rb.body->setMassProps(rb.mass, inertia);
         rb.body->updateInertiaTensor();
         btTransform tr;
-        tr.setOrigin({t.position.x, t.position.y, t.position.z});
+        glm::vec3 c = t.position + t.rotation * rb.centerOffset;
+        tr.setOrigin({c.x, c.y, c.z});
         tr.setRotation({t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w});
         rb.body->setWorldTransform(tr);
         rb.body->setInterpolationWorldTransform(tr);
@@ -142,6 +148,39 @@ public:
         world_->updateSingleAabb(rb.body);
     }
     void resetAccumulator() { accum_ = 0.f; }
+
+    // Corpos estáticos de cenário (prédios, terreno, barreiras). A forma pertence ao chamador.
+    btRigidBody* addStatic(btCollisionShape* shape, glm::vec3 pos, glm::quat rot = glm::quat(1, 0, 0, 0), float friction = 0.8f) {
+        btRigidBody::btRigidBodyConstructionInfo info(0.f, nullptr, shape, btVector3(0, 0, 0));
+        info.m_friction = friction;
+        info.m_startWorldTransform.setOrigin({pos.x, pos.y, pos.z});
+        info.m_startWorldTransform.setRotation({rot.x, rot.y, rot.z, rot.w});
+        btRigidBody* b = new btRigidBody(info);
+        world_->addRigidBody(b);
+        return b;
+    }
+    void removeStatic(btRigidBody* b) {
+        if (!b) return;
+        world_->removeRigidBody(b);
+        delete b;
+    }
+    // Raio que ignora um corpo (ex.: o próprio jogador)
+    bool raycastIgnoring(glm::vec3 from, glm::vec3 to, const btCollisionObject* ignore, glm::vec3& hit, GameObject*& obj, float& fraction) {
+        struct Cb : btCollisionWorld::ClosestRayResultCallback {
+            const btCollisionObject* ign;
+            Cb(const btVector3& a, const btVector3& b, const btCollisionObject* i) : ClosestRayResultCallback(a, b), ign(i) {}
+            btScalar addSingleResult(btCollisionWorld::LocalRayResult& r, bool normalInWorld) override {
+                if (r.m_collisionObject == ign) return 1.f;
+                return ClosestRayResultCallback::addSingleResult(r, normalInWorld);
+            }
+        } cb({from.x, from.y, from.z}, {to.x, to.y, to.z}, ignore);
+        world_->rayTest(cb.m_rayFromWorld, cb.m_rayToWorld, cb);
+        if (!cb.hasHit()) return false;
+        hit = {cb.m_hitPointWorld.x(), cb.m_hitPointWorld.y(), cb.m_hitPointWorld.z()};
+        obj = static_cast<GameObject*>(cb.m_collisionObject->getUserPointer());
+        fraction = cb.m_closestHitFraction;
+        return true;
+    }
 
     // Passo fixo com acumulador: determinístico e independente do FPS
     void step(float dt) {

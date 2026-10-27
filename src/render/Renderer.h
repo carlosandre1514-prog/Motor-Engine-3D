@@ -21,6 +21,7 @@ struct Vertex {
     glm::vec4 tangent;
     glm::u16vec4 joints;
     glm::vec4 weights;
+    glm::vec4 color{1.f};  // cor por vértice (multiplica o albedo): permite juntar objetos de cores diferentes num draw
 };
 
 struct Mesh {
@@ -39,6 +40,7 @@ struct Material {
     float alphaCutoff = 0.f;   // > 0: alpha test (glTF alphaMode MASK)
     float occlusionStrength = 1.f;
     bool doubleSided = false;
+    int mode = 0;              // 0 = padrão, 1 = terreno (mistura grama/rocha/areia/neve por altura e inclinação)
 };
 
 struct DrawItem {
@@ -70,6 +72,10 @@ public:
 
     MeshId createMesh(const Vertex* v, uint32_t vcount, const uint32_t* idx, uint32_t icount, bool skinned);
     MaterialId createMaterial(const Material& m);
+    // Reenvia os vértices/índices de um mesh existente (ex.: chunk de terreno reciclado)
+    void updateMesh(MeshId id, const Vertex* v, uint32_t vcount, const uint32_t* idx, uint32_t icount);
+    const Material* material(MaterialId id) const { return id < materialCount_ ? &materials_[id] : nullptr; }
+    uint32_t materialCount() const { return materialCount_; }
     const Mesh* mesh(MeshId id) const { return id < meshCount_ ? &meshes_[id] : nullptr; }
     // Libera todos os meshes/materiais (nova cena). Texturas ficam a cargo do TextureManager.
     void clearAssets();
@@ -84,6 +90,7 @@ public:
     void line(const glm::mat4& viewProj, glm::vec3 a, glm::vec3 b, glm::vec4 color, float thicknessPx, bool depthTest);
 
     const FrameStats& stats() const { return stats_; }
+    float fogDensity = 0.f;       // neblina exponencial (cor = horizonte do céu); 0 = desligada
     GLuint targetFbo = 0;         // 0 = tela. Outro valor: renderiza em FBO (ex.: textura do Flutter)
     float shadowDistance = 40.f;
 
@@ -91,7 +98,7 @@ private:
     struct Program {
         GLuint id = 0;
         GLint uModel = -1, uLightVP = -1;
-        GLint uAlbedoF = -1, uRough = -1, uMetal = -1, uEmis = -1, uAlphaCut = -1, uOccStrength = -1;
+        GLint uAlbedoF = -1, uRough = -1, uMetal = -1, uEmis = -1, uAlphaCut = -1, uOccStrength = -1, uMode = -1;
     };
 
     void updateEnvironment(const Environment& env);

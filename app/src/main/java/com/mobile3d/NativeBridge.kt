@@ -35,4 +35,26 @@ object NativeBridge {
     @JvmStatic external fun nativeSetGrid(visible: Boolean)
     @JvmStatic external fun nativeCycleAnimation(): String
     @JvmStatic external fun nativeGetStats(out6: FloatArray)
+
+    // Criação procedural
+    @JvmStatic external fun nativeCreateCharacter(params20: FloatArray): Int
+    @JvmStatic external fun nativeCreateRandomCharacter(seed: Int, controllable: Boolean): Int
+    @JvmStatic external fun nativeCreateWeapon(kind: Int): Int
+    @JvmStatic external fun nativeCreateBuilding(kind: Int, seed: Int): Int
+    @JvmStatic external fun nativeLoadMap(kind: Int, seed: Int)
+    @JvmStatic external fun nativeMapOverview()
+
+    // Materiais
+    @JvmStatic external fun nativeMaterialNames(): String
+    @JvmStatic external fun nativeSetObjectMaterial(index: Int)
+    @JvmStatic external fun nativeSetObjectColor(r: Float, g: Float, b: Float)
+    @JvmStatic external fun nativeSetObjectTexture(path: String): Boolean
+
+    // Jogador
+    @JvmStatic external fun nativeHasPlayer(): Boolean
+    @JvmStatic external fun nativeSetPlayer()
+    @JvmStatic external fun nativePlayerInput(x: Float, y: Float, run: Boolean)
+    @JvmStatic external fun nativePlayerJump()
+    @JvmStatic external fun nativePlayerFire()
+    @JvmStatic external fun nativePlayerWeapon(): Int
 }

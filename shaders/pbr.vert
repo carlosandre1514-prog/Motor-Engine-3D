@@ -7,6 +7,7 @@ layout(location = 3) in vec4 aTangent;
 layout(location = 4) in uvec4 aJoints;
 layout(location = 5) in vec4 aWeights;
 layout(location = 6) in mat4 aInstance;  // ocupa locations 6..9
+layout(location = 10) in vec4 aColor;
 
 layout(std140, binding = 1) uniform JointBlock { mat4 uJoints[128]; };
 
@@ -17,6 +18,7 @@ out vec3 vNormal;
 out vec2 vUV;
 out vec4 vTangent;    // xyz tangente, w sinal da bitangente
 out float vViewDepth;
+out vec4 vColor;
 
 void main() {
 #if defined(SKINNED)
@@ -36,6 +38,7 @@ void main() {
     vNormal = normalize(nm * aNormal);
     vTangent = vec4(normalize(m3 * aTangent.xyz), aTangent.w);
     vUV = aUV;
+    vColor = aColor;
     gl_Position = uViewProj * wp;
     vViewDepth = gl_Position.w;  // profundidade de view para escolher a cascata
 }

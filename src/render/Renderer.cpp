@@ -97,6 +97,7 @@ bool Renderer::init(const char* shaderDir) {
         p->uEmis = glGetUniformLocation(p->id, "uEmissiveFactor");
         p->uAlphaCut = glGetUniformLocation(p->id, "uAlphaCutoff");
         p->uOccStrength = glGetUniformLocation(p->id, "uOcclusionStrength");
+        p->uMode = glGetUniformLocation(p->id, "uMode");
         GLuint bi = glGetUniformBlockIndex(p->id, "SceneBlock");
         if (bi != GL_INVALID_INDEX) glUniformBlockBinding(p->id, bi, 0);
         bi = glGetUniformBlockIndex(p->id, "JointBlock");
@@ -235,6 +236,7 @@ MeshId Renderer::createMesh(const Vertex* v, uint32_t vc, const uint32_t* idx, u
     glEnableVertexAttribArray(3); glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, S, (void*)offsetof(Vertex, tangent));
     glEnableVertexAttribArray(4); glVertexAttribIPointer(4, 4, GL_UNSIGNED_SHORT, S, (void*)offsetof(Vertex, joints));
     glEnableVertexAttribArray(5); glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, S, (void*)offsetof(Vertex, weights));
+    glEnableVertexAttribArray(10); glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, S, (void*)offsetof(Vertex, color));
     // Matriz por instância (locations 6..9, divisor 1) lendo do buffer compartilhado de instâncias
     glBindBuffer(GL_ARRAY_BUFFER, instanceVbo_);
     for (int k = 0; k < 4; ++k) {
@@ -244,6 +246,20 @@ MeshId Renderer::createMesh(const Vertex* v, uint32_t vc, const uint32_t* idx, u
     }
     glBindVertexArray(0);
     return meshCount_++;
+}
+
+void Renderer::updateMesh(MeshId id, const Vertex* v, uint32_t vc, const uint32_t* idx, uint32_t ic) {
+    if (id >= meshCount_ || vc == 0 || ic == 0) return;
+    Mesh& m = meshes_[id];
+    m.indexCount = ic;
+    m.bounds = {glm::vec3(1e9f), glm::vec3(-1e9f)};
+    for (uint32_t i = 0; i < vc; ++i) { m.bounds.min = glm::min(m.bounds.min, v[i].pos); m.bounds.max = glm::max(m.bounds.max, v[i].pos); }
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex) * vc, v, GL_STATIC_DRAW);
+    glBindVertexArray(m.vao);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(uint32_t) * ic, idx, GL_STATIC_DRAW);
+    glBindVertexArray(0);
 }
 
 MaterialId Renderer::createMaterial(const Material& m) {
@@ -327,6 +343,7 @@ void Renderer::bindMaterial(const Program& p, const Material& m) {
     glUniform1f(p.uMetal, m.metallic);
     glUniform3fv(p.uEmis, 1, &m.emissive_factor[0]);
     glUniform1f(p.uAlphaCut, m.alphaCutoff);
+    glUniform1i(p.uMode, m.mode);
     glUniform1f(p.uOccStrength, m.occlusion ? m.occlusionStrength : 0.f);
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, m.albedo);
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, m.normal);
@@ -354,6 +371,7 @@ void Renderer::render(const Camera& cam, const DirectionalLight& sun, const Envi
     u.cascadeTexel = glm::vec4(cs.texelWorld[0], cs.texelWorld[1], cs.texelWorld[2], 0.f);
     u.envParams = glm::vec4(env.exposure, float(envMips_ - 2), 1.f, 0.f);
     for (int i = 0; i < 9; ++i) u.sh[i] = sh_[i];
+    u.fog = glm::vec4(env.horizon * env.skyIntensity, fogDensity);
     u.counts.x = std::min(pointCount, kMaxPointLights);
     for (int i = 0; i < u.counts.x; ++i) {
         u.points[i].posRadius = glm::vec4(points[i].position, points[i].radius);

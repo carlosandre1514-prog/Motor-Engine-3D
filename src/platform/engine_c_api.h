@@ -56,6 +56,36 @@ const char* engine_animation_name(Engine*);
 // Estatísticas: out[0] fps, [1] ms por frame, [2] ms de CPU do motor, [3] draw calls, [4] triângulos, [5] objetos
 void    engine_get_stats(Engine*, float* out6);
 
+// ---- Criação procedural
+// Personagem: params[20] = altura, corpo(0 magro,1 normal,2 forte), pele rgb, camisa rgb, calça rgb, tênis rgb,
+// cabelo rgb, estilo de cabelo (0 careca,1 curto,2 comprido,3 boné), manga comprida(0/1), controlável(0/1). Cores sRGB 0..1.
+int     engine_create_character(Engine*, const float* params20);
+int     engine_create_random_character(Engine*, uint32_t seed, int controllable);
+// Arma: 0 pistola, 1 fuzil, 2 escopeta, 3 sniper, 4 faca, 5 taco. Equipa no personagem selecionado (ou no jogador).
+int     engine_create_weapon(Engine*, int kind);
+// Construção: 0 casa, 1 sobrado, 2 barraco, 3 prédio, 4 arranha-céu, 5 escola, 6 árvore, 7 pinheiro, 8 palmeira,
+// 9 carro, 10 poste, 11 muro. Criada no ponto de foco da câmera.
+int     engine_create_building(Engine*, int kind, uint32_t seed);
+// Mapas: 0 mundo infinito, 1 cidade, 2 favela, 3 colégio, 4 bairro (os de 1 a 4 têm limite com barreira invisível)
+void    engine_load_map(Engine*, int kind, uint32_t seed);
+int     engine_map_kind(Engine*);                               // -1 = nenhum
+void    engine_map_overview(Engine*);                           // câmera do alto mostrando o mapa todo
+
+// ---- Materiais / texturas do objeto selecionado
+int     engine_material_count(Engine*);
+const char* engine_material_name(Engine*, int index);
+void    engine_set_object_material(Engine*, int index);
+void    engine_set_object_color(Engine*, float r, float g, float b);   // sRGB 0..1
+int     engine_set_object_texture(Engine*, const char* image_path);   // PNG/JPG; 0 se falhar
+
+// ---- Jogador (Play)
+int     engine_has_player(Engine*);
+void    engine_set_player(Engine*);                             // personagem selecionado vira o jogador
+void    engine_player_input(Engine*, float x, float y, int run); // joystick -1..1 (y para frente)
+void    engine_player_jump(Engine*);
+void    engine_player_fire(Engine*);
+int     engine_player_weapon(Engine*);                          // tipo da arma ou -1
+
 // Touch: action 0=down 1=move 2=up; ids/xy em arrays de n dedos (pixels)
 void    engine_touch(Engine*, int action, int n, const int* ids, const float* xy);
 

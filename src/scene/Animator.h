@@ -50,6 +50,7 @@ struct Animator {
     float time = 0.f, speed = 1.f;
     bool loop = true;
     glm::mat4 palette[kMaxJoints];  // enviado ao UBO de skinning
+    glm::mat4 global[kMaxJoints];   // pose de cada joint no espaço do esqueleto (para encaixar armas/acessórios)
 
     const AnimationClip* clip() const { return clipIndex < clipCount ? &clips[clipIndex] : nullptr; }
 
@@ -71,7 +72,6 @@ struct Animator {
 
         if (c) for (int k = 0; k < c->channelCount; ++k) sample(c->channels[k], t, r, s);
 
-        glm::mat4 global[kMaxJoints];
         for (int k = 0; k < n; ++k) {
             int i = skeleton->order[k];
             glm::mat4 local = glm::translate(glm::mat4(1.f), t[i]) * glm::mat4_cast(r[i]) * glm::scale(glm::mat4(1.f), s[i]);

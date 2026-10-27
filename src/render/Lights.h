@@ -89,6 +89,7 @@ struct SceneUBO {
     glm::vec4 cascadeTexel;                 // tamanho de 1 texel da sombra em unidades de mundo, por cascata
     glm::vec4 envParams;                    // x exposição, y nº de mips do cubemap, z intensidade do IBL
     glm::vec4 sh[9];                        // irradiância do céu (SH9)
+    glm::vec4 fog;                          // rgb cor da neblina, w densidade
     glm::ivec4 counts;                      // x = nº de point lights
     PointLightGPU points[kMaxPointLights];
 };

@@ -102,6 +102,43 @@ JNI_FN(jstring, nativeCycleAnimation)(JNIEnv* env, jclass) {
     return env->NewStringUTF(engine_animation_name(g_engine));
 }
 
+// Criação procedural
+JNI_FN(jint, nativeCreateCharacter)(JNIEnv* env, jclass, jfloatArray p20) {
+    if (!g_engine || env->GetArrayLength(p20) < 20) return -1;
+    float p[20];
+    env->GetFloatArrayRegion(p20, 0, 20, p);
+    return engine_create_character(g_engine, p);
+}
+JNI_FN(jint, nativeCreateRandomCharacter)(JNIEnv*, jclass, jint seed, jboolean controllable) {
+    return g_engine ? engine_create_random_character(g_engine, uint32_t(seed), controllable ? 1 : 0) : -1;
+}
+JNI_FN(jint, nativeCreateWeapon)(JNIEnv*, jclass, jint kind) { return g_engine ? engine_create_weapon(g_engine, kind) : -1; }
+JNI_FN(jint, nativeCreateBuilding)(JNIEnv*, jclass, jint kind, jint seed) {
+    return g_engine ? engine_create_building(g_engine, kind, uint32_t(seed)) : -1;
+}
+JNI_FN(void, nativeLoadMap)(JNIEnv*, jclass, jint kind, jint seed) { if (g_engine) engine_load_map(g_engine, kind, uint32_t(seed)); }
+JNI_FN(void, nativeMapOverview)(JNIEnv*, jclass) { if (g_engine) engine_map_overview(g_engine); }
+
+// Materiais
+JNI_FN(jstring, nativeMaterialNames)(JNIEnv* env, jclass) {
+    std::string out;
+    if (g_engine) for (int i = 0; i < engine_material_count(g_engine); ++i) { out += engine_material_name(g_engine, i); out += '\n'; }
+    return env->NewStringUTF(out.c_str());
+}
+JNI_FN(void, nativeSetObjectMaterial)(JNIEnv*, jclass, jint i) { if (g_engine) engine_set_object_material(g_engine, i); }
+JNI_FN(void, nativeSetObjectColor)(JNIEnv*, jclass, jfloat r, jfloat g, jfloat b) { if (g_engine) engine_set_object_color(g_engine, r, g, b); }
+JNI_FN(jboolean, nativeSetObjectTexture)(JNIEnv* env, jclass, jstring path) {
+    return g_engine && engine_set_object_texture(g_engine, str(env, path).c_str());
+}
+
+// Jogador
+JNI_FN(jboolean, nativeHasPlayer)(JNIEnv*, jclass) { return g_engine && engine_has_player(g_engine); }
+JNI_FN(void, nativeSetPlayer)(JNIEnv*, jclass) { if (g_engine) engine_set_player(g_engine); }
+JNI_FN(void, nativePlayerInput)(JNIEnv*, jclass, jfloat x, jfloat y, jboolean run) { if (g_engine) engine_player_input(g_engine, x, y, run ? 1 : 0); }
+JNI_FN(void, nativePlayerJump)(JNIEnv*, jclass) { if (g_engine) engine_player_jump(g_engine); }
+JNI_FN(void, nativePlayerFire)(JNIEnv*, jclass) { if (g_engine) engine_player_fire(g_engine); }
+JNI_FN(jint, nativePlayerWeapon)(JNIEnv*, jclass) { return g_engine ? engine_player_weapon(g_engine) : -1; }
+
 JNI_FN(void, nativeGetStats)(JNIEnv* env, jclass, jfloatArray out6) {
     if (!g_engine || env->GetArrayLength(out6) < 6) return;
     float s[6];

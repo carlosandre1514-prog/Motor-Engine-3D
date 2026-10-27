@@ -60,6 +60,21 @@ Engine ─ Scene ─ Renderer ─ Physics ─ Assets ─ Editor
 - Texturas ASTC 6x6 (albedo/normal) e 8x8 (ORM), sempre com mipmaps
 - `glInvalidateFramebuffer` no depth após os passes (economiza banda em GPUs tiled)
 
+## Geração procedural (src/procgen)
+- `TextureGen`: 21 materiais gerados na CPU (fachadas com janelas, tijolo baiano, telha, asfalto com faixa, quadra...),
+  com albedo + ORM + normal map; cache em memória, reenviados à GPU a cada cena.
+- `MeshBuilder`: caixas com UV em metros (janelas alinhadas por andar), telhado de duas águas, cilindros, esferas;
+  cor por vértice (atributo 10) para juntar objetos de cores diferentes no mesmo draw call.
+- `Buildings`: casa, sobrado, barraco (puxadinho, laje, caixa d'água), prédio, arranha-céu em degraus, ala de escola,
+  árvores (3 tipos), carro, poste. Cada construção gera também colliders em caixa.
+- `Character`: humanoide de 16 ossos com skinning rígido, rosto e cabelo; 8 animações procedurais
+  (parado, andar, correr, com arma, dançar, acenar). `Weapons`: 6 armas, presas ao osso da mão.
+- Mapas (`src/engine/World.cpp`): construções agrupadas por célula e material (poucos draw calls), colisão estática
+  em `btCompoundShape`. Mundo infinito: chunks de 96 m (heightfield do Bullet + vegetação/vilas determinísticas por
+  semente) carregados em volta da câmera, 1 por frame. Mapas com limite: 4 paredes estáticas invisíveis.
+- Jogador: cápsula dinâmica com rotação travada, velocidade definida pelo joystick relativo à câmera, pulo com
+  raycast de chão, animação pela velocidade, tiro por raycast que empurra corpos.
+
 ## Estado
 Feito: Pool/Scene, PBR, glTF (meshes, materiais, AO, alpha mask, double-sided, skins, animações), CSM com culling
 por cascata, instancing, Animator, Bullet (Box/Sphere/Capsule/ConvexMesh), editor por toque (gizmo mover/girar/escalar,
@@ -78,6 +93,8 @@ src/render/ Camera.h Lights.h Renderer.h Renderer.cpp
 src/assets/ GltfLoader.* TextureManager.h MeshUtils.h (primitivas, normais, tangentes)
 src/physics/ Physics.h
 src/editor/ EditorCamera.h Gizmo.h
+src/procgen/ Noise.h MeshBuilder.h TextureGen.* Buildings.* Character.* Weapons.cpp
+src/engine/ Engine.h Engine.cpp (cena, personagens, jogador) World.cpp (mapas, mundo infinito)
 src/platform/ engine_c_api.h engine_c_api.cpp android_jni.cpp
 app/       Android (Kotlin): GLSurfaceView + UI do editor
 tools/     headless_test.cpp (renderiza as cenas em PNG no Linux/CI)

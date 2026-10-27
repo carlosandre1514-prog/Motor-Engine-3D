@@ -10,13 +10,15 @@ Motor 3D para celular (Android) em C++20 + OpenGL ES 3.2, com editor por toque.
 | Selecionar objeto | Toque no objeto (toque de novo para pegar a peça interna de um modelo) |
 | Mover / girar / escalar | Botões **Mover / Girar / Escala** e arraste as setas/círculos/quadrados coloridos |
 | Valores exatos | Painel inferior (Inspetor): digite e toque em **Aplicar** |
-| Adicionar | **+ Objeto**: cubo, esfera, cápsula, pedra (com física) |
+| Criar | **+ Criar**: personagem (aleatório ou personalizado), arma, construção (casa, sobrado, barraco, prédio, arranha-céu, escola, muro), natureza/objetos (árvores, carro, poste), formas com física |
+| Mapas | **Mapas**: mundo infinito procedural, cidade, favela, colégio, bairro (com limite e barreira invisível — borda vermelha no editor) |
+| Material | **Material**: troca o material do objeto selecionado (tijolo, concreto, vidro, madeira...), cor ou uma imagem do celular |
+| Jogar | **▶ Play** com um personagem jogador: joystick (esquerda), Pular / Correr / Atirar (direita), arraste a tela para girar a câmera |
 | Hierarquia | **Objetos**: lista todos os objetos; tocar seleciona e enquadra |
 | Carregar modelo | **Abrir .glb**: escolhe um arquivo do aparelho (ex.: `Fox.glb` dos Khronos Sample Assets) |
 | Animação | **Animação**: alterna entre as animações do modelo (rodam no Play) |
 | Simular | **▶ Play**: física e animação. **■ Stop** volta tudo ao estado anterior. No Play, toque num objeto para empurrar |
 | Visual | **Visual**: exposição, intensidade do sol e grade |
-| Cenas prontas | **Cenas**: vitrine de materiais, física, cena vazia |
 
 ## Build
 - **APK**: GitHub Actions (`.github/workflows/android.yml`) → artefato `mobile3d-debug-apk`.

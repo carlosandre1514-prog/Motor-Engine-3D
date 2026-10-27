@@ -7,6 +7,7 @@ in vec3 vNormal;
 in vec2 vUV;
 in vec4 vTangent;
 in float vViewDepth;
+in vec4 vColor;
 
 uniform sampler2D uAlbedoMap;
 uniform sampler2D uNormalMap;
@@ -22,6 +23,7 @@ uniform float uMetallicFactor;
 uniform vec3 uEmissiveFactor;
 uniform float uAlphaCutoff;       // 0 = opaco
 uniform float uOcclusionStrength; // 0 = sem textura de AO
+uniform int uMode;                // 0 padrão, 1 terreno
 
 out vec4 oColor;
 
@@ -94,8 +96,20 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float rough, float
 }
 
 void main() {
-    vec4 albedoS = texture(uAlbedoMap, vUV) * uAlbedoFactor;     // textura em sRGB: o GL já linearizou
+    vec4 albedoS = texture(uAlbedoMap, vUV) * uAlbedoFactor * vColor;  // textura em sRGB: o GL já linearizou
     if (albedoS.a < uAlphaCutoff) discard;
+    if (uMode == 1) {
+        // Terreno: grama (textura) / rocha nas encostas / areia perto da água / neve no alto
+        float slope = 1.0 - normalize(vNormal).y;
+        float detail = texture(uAlbedoMap, vUV * 0.21).g;
+        vec3 rock = vec3(0.36, 0.34, 0.32) * (0.7 + 0.6 * detail);
+        vec3 sand = vec3(0.70, 0.63, 0.45) * (0.85 + 0.3 * detail);
+        vec3 snow = vec3(0.90, 0.92, 0.96);
+        vec3 c = mix(albedoS.rgb, rock, smoothstep(0.22, 0.42, slope));
+        c = mix(sand, c, smoothstep(0.8, 2.2, vWorldPos.y + detail));
+        c = mix(c, snow, smoothstep(52.0, 64.0, vWorldPos.y + detail * 8.0) * (1.0 - smoothstep(0.35, 0.6, slope)));
+        albedoS.rgb = c;
+    }
     vec3 orm = texture(uOrmMap, vUV).rgb;
     float ao = mix(1.0, texture(uOcclusionMap, vUV).r, uOcclusionStrength);
     float rough = clamp(orm.g * uRoughnessFactor, 0.045, 1.0), metal = clamp(orm.b * uMetallicFactor, 0.0, 1.0);
@@ -131,5 +145,9 @@ void main() {
     vec3 ambient = (diffuseIBL + specIBL) * ao * uEnvParams.z;
 
     vec3 color = Lo + ambient + texture(uEmissiveMap, vUV).rgb * uEmissiveFactor;
+    if (uFog.w > 0.0) {
+        float fog = 1.0 - exp(-uFog.w * length(uCamPos.xyz - vWorldPos));
+        color = mix(color, uFog.rgb, fog);
+    }
     oColor = vec4(toDisplay(color), albedoS.a);
 }

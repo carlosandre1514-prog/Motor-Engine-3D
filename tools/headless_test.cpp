@@ -5,6 +5,7 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -173,6 +174,84 @@ int main(int argc, char** argv) {
         engine_delete_selected(e);
         frames(e, 1);
         std::printf("  apagou o modelo: %d objetos válidos restantes\n", [&] { int c = 0; for (int k = 0; k < engine_object_count(e); ++k) c += engine_object_valid(e, k); return c; }());
+    }
+
+    std::printf("[8] personagens e armas\n");
+    engine_new_scene(e);
+    for (int i = 0; i < 5; ++i) {
+        engine_create_random_character(e, 100 + i, 0);
+        float p[3], rr[3], ss[3];
+        int id = engine_selected(e);
+        engine_get_transform(e, id, p, rr, ss);
+        p[0] = (i - 2) * 1.1f;
+        engine_set_transform(e, id, p, rr, ss);
+        if (i < 4) engine_create_weapon(e, i);       // pistola, fuzil, escopeta, sniper
+        else for (int k = 0; k < 6; ++k) engine_cycle_animation(e);  // último: dançando
+    }
+    engine_select(e, -1);
+    frames(e, 30);
+    {
+        float p[3] = {0, 0, 0}, rr[3], ss[3];
+        (void)p; (void)rr; (void)ss;
+    }
+    engine_focus_selected(e);
+    frames(e, 2);
+    save(out, "7_personagens.png");
+    stats(e, "personagens");
+
+    std::printf("[9] construções\n");
+    engine_new_scene(e);
+    const char* bnames[] = {"casa", "sobrado", "barraco", "predio", "arranha-ceu", "escola", "arvore", "pinheiro", "palmeira", "carro", "poste", "muro"};
+    float x = -60.f;
+    for (int k = 0; k < 12; ++k) {
+        int id = engine_create_building(e, k, 7 + k);
+        float p[3], rr[3], ss[3];
+        if (id < 0 || !engine_get_transform(e, id, p, rr, ss)) { std::printf("  [ERRO] %s\n", bnames[k]); ++g_fail; continue; }
+        float wdt = k == 4 ? 34.f : k == 3 || k == 5 ? 24.f : 12.f;
+        x += wdt * 0.5f;
+        p[0] = x; p[2] = k == 5 ? -10.f : 0.f;
+        x += wdt * 0.5f + 2.f;
+        engine_set_transform(e, id, p, rr, ss);
+    }
+    engine_select(e, -1);
+    engine_focus_selected(e);
+    frames(e, 2);
+    save(out, "8_construcoes.png");
+    stats(e, "construcoes");
+
+    const char* maps[] = {"infinito", "cidade", "favela", "colegio", "bairro"};
+    for (int mk = 0; mk < 5; ++mk) {
+        std::printf("[10] mapa %s\n", maps[mk]);
+        engine_load_map(e, mk, 42);
+        int player = engine_selected(e);
+        frames(e, 3);
+        stats(e, maps[mk]);
+        char name[64];
+        std::snprintf(name, sizeof(name), "9_mapa_%d_%s.png", mk, maps[mk]);
+        save(out, name);
+        if (!engine_has_player(e)) { std::printf("  [ERRO] sem jogador\n"); ++g_fail; continue; }
+        float p0[3], rr[3], ss[3];
+        engine_get_transform(e, player, p0, rr, ss);
+        engine_create_weapon(e, 1);
+        engine_set_play(e, 1);
+        frames(e, 30);  // assenta no chão
+        float p1[3]; engine_get_transform(e, player, p1, rr, ss);
+        engine_player_input(e, 0.f, 1.f, 1);
+        frames(e, 90);
+        engine_player_jump(e);
+        frames(e, 10);
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_player_fire(e);
+        frames(e, 2);
+        std::snprintf(name, sizeof(name), "9_mapa_%d_%s_play.png", mk, maps[mk]);
+        save(out, name);
+        float p2[3]; engine_get_transform(e, player, p2, rr, ss);
+        stats(e, "play");
+        float moved = std::sqrt((p2[0] - p1[0]) * (p2[0] - p1[0]) + (p2[2] - p1[2]) * (p2[2] - p1[2]));
+        std::printf("  jogador: inicio y=%.2f, assentou y=%.2f, andou %.1f m, y final %.2f\n", p0[1], p1[1], moved, p2[1]);
+        if (moved < 3.f) { std::printf("  [ERRO] jogador não andou\n"); ++g_fail; }
+        if (p2[1] < p0[1] - 5.f) { std::printf("  [ERRO] jogador caiu do mapa\n"); ++g_fail; }
+        engine_set_play(e, 0);
     }
 
     engine_destroy(e);

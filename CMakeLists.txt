@@ -26,6 +26,12 @@ FetchContent_MakeAvailable(glm tinygltf bullet)
 add_library(mobile3d SHARED
   src/render/Renderer.cpp
   src/assets/GltfLoader.cpp
+  src/procgen/TextureGen.cpp
+  src/procgen/Buildings.cpp
+  src/procgen/Weapons.cpp
+  src/procgen/Character.cpp
+  src/engine/Engine.cpp
+  src/engine/World.cpp
   src/platform/engine_c_api.cpp)
 
 target_compile_definitions(mobile3d PUBLIC GLM_ENABLE_EXPERIMENTAL)

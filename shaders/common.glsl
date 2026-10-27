@@ -14,6 +14,7 @@ layout(std140, binding = 0) uniform SceneBlock {
     vec4 uCascadeTexel;      // tamanho do texel em mundo por cascata
     vec4 uEnvParams;         // x exposição, y mip máximo do cubemap, z intensidade do IBL
     vec4 uSH[9];             // irradiância do céu (SH9, já / PI)
+    vec4 uFog;               // rgb cor da neblina, w densidade
     ivec4 uCounts;           // x = nº de point lights
     PointLightData uPoints[8];
 };
