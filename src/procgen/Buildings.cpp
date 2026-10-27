@@ -36,15 +36,18 @@ void buildHouse(Geo& g, Rng& r, float w, float d, int floors, glm::vec4 color, b
     MeshBuilder& wall = g[Mat::FacadeHouse];
     wall.color = color; wall.uvTile = {3.f, 3.f};
     wall.box({-w / 2, 0, -d / 2}, {w, H, d});
-    // embasamento (rodapé) mais escuro
-    MeshBuilder& conc = g[Mat::Concrete];
-    conc.uvTile = {2.f, 2.f};
-    conc.box({-w / 2 - 0.05f, 0, -d / 2 - 0.05f}, {w + 0.1f, 0.35f, d + 0.1f});
-    // porta
-    MeshBuilder& wood = g[Mat::Wood];
-    wood.color = glm::vec4(1.f);
     float dx = r.range(-w * 0.25f, w * 0.25f);
-    wood.box({dx - 0.5f, 0, d / 2}, {1.f, 2.15f, 0.07f});
+    {
+        DetailScope ds(g);
+        // embasamento (rodapé) mais escuro
+        MeshBuilder& conc = g[Mat::Concrete];
+        conc.uvTile = {2.f, 2.f};
+        conc.box({-w / 2 - 0.05f, 0, -d / 2 - 0.05f}, {w + 0.1f, 0.35f, d + 0.1f});
+        // porta
+        MeshBuilder& wood = g[Mat::Wood];
+        wood.color = glm::vec4(1.f);
+        wood.box({dx - 0.5f, 0, d / 2}, {1.f, 2.15f, 0.07f});
+    }
     // telhado de duas águas (cumeeira ao longo do lado maior)
     float roofH = std::min(w, d) * 0.28f;
     g.offset({-w / 2, 0, -d / 2});
@@ -57,6 +60,7 @@ void buildHouse(Geo& g, Rng& r, float w, float d, int floors, glm::vec4 color, b
     g.collider({-w / 2, 0, -d / 2}, {w, H + roofH * 0.6f, d});
     // muro e portão na frente
     if (frontWall) {
+        DetailScope ds(g);
         MeshBuilder& m = g[Mat::Plaster];
         m.color = color * 0.9f; m.color.a = 1.f;
         float z = d / 2 + 3.f, mw = w + 2.f, h = 1.8f;
@@ -98,6 +102,7 @@ void buildBarraco(Geo& g, Rng& r, float w, float d, int floors, bool brick, glm:
         }
     }
     // laje de cima: caixa d'água, esperas de ferro/pilares, mureta
+    DetailScope ds(g);
     MeshBuilder& p = g[Mat::Painted];
     if (r.chance(0.75f)) buildWaterTank(p, {ox + r.range(-cw * 0.25f, cw * 0.25f), y, oz + r.range(-cd * 0.25f, cd * 0.25f)});
     if (r.chance(0.6f)) {
@@ -120,19 +125,26 @@ void buildApartment(Geo& g, Rng& r, float w, float d, int floors, glm::vec4 colo
     MeshBuilder& c = g[Mat::Concrete];
     c.uvTile = {2.f, 2.f};
     c.box({-w / 2, 0, -d / 2}, {w, lobby, d});
-    // entrada com vidro
-    g[Mat::Glass].box({-2.f, 0.1f, d / 2}, {4.f, 2.8f, 0.05f});
-    c.box({-2.6f, 2.9f, d / 2}, {5.2f, 0.25f, 1.6f});  // marquise
+    {
+        DetailScope ds(g);
+        g[Mat::Glass].box({-2.f, 0.1f, d / 2}, {4.f, 2.8f, 0.05f});  // entrada com vidro
+        g[Mat::Concrete].box({-2.6f, 2.9f, d / 2}, {5.2f, 0.25f, 1.6f});  // marquise
+    }
     MeshBuilder& f = g[Mat::FacadeApt];
     f.color = color; f.uvTile = {3.2f, 3.f};
     f.box({-w / 2, lobby, -d / 2}, {w, fh * floors, d});
-    // platibanda, laje e casa de máquinas / caixa d'água
-    c.box({-w / 2 - 0.1f, H, -d / 2 - 0.1f}, {w + 0.2f, 0.9f, 0.2f});
-    c.box({-w / 2 - 0.1f, H, d / 2 - 0.1f}, {w + 0.2f, 0.9f, 0.2f});
-    c.box({-w / 2 - 0.1f, H, -d / 2 + 0.1f}, {0.2f, 0.9f, d - 0.2f});
-    c.box({w / 2 - 0.1f, H, -d / 2 + 0.1f}, {0.2f, 0.9f, d - 0.2f});
-    float tw = std::min(6.f, w * 0.35f);
-    c.box({-tw / 2 + r.range(-w * 0.2f, w * 0.2f), H, -2.f}, {tw, 3.f, 4.f});
+    // platibanda e casa de máquinas / caixa d'água (detalhe)
+    float tw = std::min(6.f, w * 0.35f), tx = r.range(-w * 0.2f, w * 0.2f);
+    {
+        DetailScope ds(g);
+        MeshBuilder& cd = g[Mat::Concrete];
+        cd.uvTile = {2.f, 2.f};
+        cd.box({-w / 2 - 0.1f, H, -d / 2 - 0.1f}, {w + 0.2f, 0.9f, 0.2f});
+        cd.box({-w / 2 - 0.1f, H, d / 2 - 0.1f}, {w + 0.2f, 0.9f, 0.2f});
+        cd.box({-w / 2 - 0.1f, H, -d / 2 + 0.1f}, {0.2f, 0.9f, d - 0.2f});
+        cd.box({w / 2 - 0.1f, H, -d / 2 + 0.1f}, {0.2f, 0.9f, d - 0.2f});
+    }
+    c.box({-tw / 2 + tx, H, -2.f}, {tw, 3.f, 4.f});
     g.collider({-w / 2, 0, -d / 2}, {w, H + 0.9f, d});
 }
 
@@ -142,8 +154,11 @@ void buildSkyscraper(Geo& g, Rng& r, float w, float d, int floors) {
     glass.uvTile = {1.6f, fh};
     MeshBuilder& c = g[Mat::Concrete];
     c.uvTile = {2.f, 2.f};
-    // embasamento
-    c.box({-w / 2 - 1.f, 0, -d / 2 - 1.f}, {w + 2.f, 0.4f, d + 2.f});
+    {
+        DetailScope ds(g);  // embasamento
+        g[Mat::Concrete].uvTile = {2.f, 2.f};
+        g[Mat::Concrete].box({-w / 2 - 1.f, 0, -d / 2 - 1.f}, {w + 2.f, 0.4f, d + 2.f});
+    }
     int tiers = r.irange(1, 3);
     float y = 0.f, tw = w, td = d;
     int remaining = floors;
@@ -160,7 +175,11 @@ void buildSkyscraper(Geo& g, Rng& r, float w, float d, int floors) {
     }
     // coroamento e antena
     c.box({-tw * 0.3f, y, -td * 0.3f}, {tw * 0.6f, 4.f, td * 0.6f});
-    if (r.chance(0.7f)) g[Mat::Metal].cylinder({0, y + 4.f, 0}, {0, y + 4.f + r.range(8.f, 20.f), 0}, 0.25f, 0.08f, 8);
+    if (r.chance(0.7f)) {
+        float ah = r.range(8.f, 20.f);
+        DetailScope ds(g);
+        g[Mat::Metal].cylinder({0, y + 4.f, 0}, {0, y + 4.f + ah, 0}, 0.25f, 0.08f, 8);
+    }
 }
 
 void buildSchoolWing(Geo& g, float len, float depth, int floors, glm::vec4 wallColor, glm::vec4 band) {
@@ -178,49 +197,57 @@ void buildSchoolWing(Geo& g, float len, float depth, int floors, glm::vec4 wallC
     c.box({-len / 2 - 0.2f, H, -depth / 2 - 0.2f}, {len + 0.4f, 0.5f, depth + 0.4f});
     // varanda/corredor coberto na frente
     c.box({-len / 2, fh - 0.2f, depth / 2}, {len, 0.2f, 2.2f});
-    for (float x = -len / 2 + 0.2f; x < len / 2; x += 4.f) c.box({x, 0, depth / 2 + 1.9f}, {0.25f, fh - 0.2f, 0.25f});
+    {
+        DetailScope ds(g);
+        MeshBuilder& cd = g[Mat::Concrete];
+        cd.uvTile = {2.f, 2.f};
+        for (float x = -len / 2 + 0.2f; x < len / 2; x += 4.f) cd.box({x, 0, depth / 2 + 1.9f}, {0.25f, fh - 0.2f, 0.25f});
+    }
     g.collider({-len / 2, 0, -depth / 2}, {len, H + 0.5f, depth});
 }
 
-void buildTree(MeshBuilder& p, Rng& r, int kind) {
+void buildTree(MeshBuilder& p, Rng& r, int kind, bool low) {
     glm::vec4 trunk = srgb(100, 72, 48);
+    const int ts = low ? 4 : 7;  // segmentos do tronco
     if (kind == 1) {  // pinheiro
         float h = r.range(6.f, 10.f);
         p.color = trunk;
-        p.cylinder({0, 0, 0}, {0, h * 0.35f, 0}, 0.22f, 0.16f, 7, false);
+        p.cylinder({0, 0, 0}, {0, h * 0.35f, 0}, 0.22f, 0.16f, ts, false);
         glm::vec4 leaf = glm::mix(srgb(40, 80, 45), srgb(60, 100, 55), r.f());
         for (int k = 0; k < 3; ++k) {
             float y0 = h * (0.25f + k * 0.22f), rad = h * (0.26f - k * 0.06f);
             p.color = leaf * (0.9f + 0.1f * k); p.color.a = 1.f;
-            p.cylinder({0, y0, 0}, {0, y0 + h * 0.38f, 0}, rad, 0.f, 7, false);
+            if (!low || k == 0) p.cylinder({0, y0, 0}, {0, y0 + h * (low ? 0.75f : 0.38f), 0}, rad, 0.f, low ? 5 : 7, false);
         }
     } else if (kind == 2) {  // palmeira
         float h = r.range(6.f, 9.f);
         p.color = srgb(130, 105, 75);
-        p.cylinder({0, 0, 0}, {0.4f, h, 0}, 0.2f, 0.14f, 7, false);
+        p.cylinder({0, 0, 0}, {0.4f, h, 0}, 0.2f, 0.14f, ts, false);
         p.color = srgb(70, 120, 50);
         for (int k = 0; k < 7; ++k) {
             float a = k * 0.8975979f;
             glm::vec3 dir(std::cos(a), -0.35f, std::sin(a));
-            p.cylinder({0.4f, h, 0}, glm::vec3(0.4f, h, 0) + dir * 2.6f, 0.35f, 0.02f, 4, false);
+            if (!low || k % 2 == 0) p.cylinder({0.4f, h, 0}, glm::vec3(0.4f, h, 0) + dir * 2.6f, 0.35f, 0.02f, low ? 3 : 4, false);
         }
     } else {  // copa redonda (mangueira, ipê...)
         float h = r.range(3.f, 5.f);
         p.color = trunk;
-        p.cylinder({0, 0, 0}, {0, h, 0}, 0.25f, 0.18f, 7, false);
+        p.cylinder({0, 0, 0}, {0, h, 0}, 0.25f, 0.18f, ts, false);
         glm::vec4 leaf = r.chance(0.15f) ? srgb(230, 200, 60) : glm::mix(srgb(50, 95, 40), srgb(85, 125, 50), r.f());
         int blobs = r.irange(2, 4);
         for (int k = 0; k < blobs; ++k) {
             glm::vec3 c(r.range(-1.f, 1.f), h + r.range(0.f, 1.5f), r.range(-1.f, 1.f));
             float rad = r.range(1.3f, 2.f);
             p.color = leaf * r.range(0.85f, 1.1f); p.color.a = 1.f;
-            p.sphere(c, glm::vec3(rad, rad * 0.85f, rad), 7, 5);
+            if (low) p.sphere(c, glm::vec3(rad, rad * 0.85f, rad), 5, 3);
+            else p.sphere(c, glm::vec3(rad, rad * 0.85f, rad), 7, 5);
         }
     }
     p.color = glm::vec4(1.f);
 }
 
 void buildCar(Geo& g, Rng& r) {
+    DetailScope ds(g);
     static const int cols[][3] = {{200, 30, 30}, {240, 240, 240}, {30, 30, 35}, {150, 150, 155}, {30, 70, 160}, {230, 190, 40}, {60, 110, 70}};
     const int* c = cols[r.irange(0, 6)];
     MeshBuilder& body = g[Mat::Painted];
@@ -244,6 +271,7 @@ void buildCar(Geo& g, Rng& r) {
 }
 
 void buildStreetLight(Geo& g) {
+    DetailScope ds(g);
     MeshBuilder& m = g[Mat::Metal];
     m.cylinder({0, 0, 0}, {0, 7.f, 0}, 0.1f, 0.07f, 8, false);
     m.cylinder({0, 7.f, 0}, {0, 7.2f, 1.4f}, 0.06f, 0.05f, 6, false);

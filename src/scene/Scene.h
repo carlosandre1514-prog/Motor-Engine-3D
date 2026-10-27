@@ -80,11 +80,14 @@ struct MeshRenderer {
     MeshId mesh = 0;
     MaterialId material = 0;
     bool castShadows = true;
+    // LOD por distância: só desenha com a câmera entre lodNear e lodFar (metros) do centro do mesh
+    float lodNear = 0.f, lodFar = 1e30f;
     glm::vec3 localAabbMin{-0.5f}, localAabbMax{0.5f};
 };
 
 struct Animator;   // scene/Animator.h
 struct RigidBody;  // physics/Physics.h
+struct Emitter;    // render/Particles.h
 
 struct GameObject {
     char name[32] = {};
@@ -95,6 +98,7 @@ struct GameObject {
     MeshRenderer* meshRenderer = nullptr;
     Animator* animator = nullptr;
     RigidBody* rigidBody = nullptr;
+    Emitter* emitter = nullptr;
 
     // Copia o nome sem cortar caracteres UTF-8 ao meio (o JNI aborta com UTF-8 inválido).
     // Sequências de 4 bytes (emoji) viram '?', pois o JNI usa UTF-8 "modificado".

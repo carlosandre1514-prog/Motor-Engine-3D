@@ -201,16 +201,18 @@ void addStaticBoxes(Engine* e, const std::vector<BoxCollider>& boxes, StaticColl
     else e->statics.push_back(s);
 }
 
-Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec3 pos, float yaw) {
+Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec3 pos, float yaw, float detailFar) {
     Scene::Handle rootH = e->scene.create(name);
     GameObject* root = e->scene.get(rootH);
     if (!root) return rootH;
     root->transform.setPosition(pos);
     root->transform.setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
     if (local) registerObject(e, rootH);  // raiz antes dos filhos na hierarquia
+    for (int layer = 0; layer < 2; ++layer)
     for (int k = 0; k < int(Mat::Count); ++k) {
-        if (g.mats[k].empty()) continue;
-        MeshId id = g.mats[k].build(e->renderer);
+        MeshBuilder& mb = layer ? g.detailMats[k] : g.mats[k];
+        if (mb.empty()) continue;
+        MeshId id = mb.build(e->renderer);
         if (id == kInvalidId) continue;
         Scene::Handle ch = e->scene.create(matName(Mat(k)), root);
         GameObject* c = e->scene.get(ch);
@@ -221,6 +223,7 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
             // pisos planos só recebem sombra (economiza draw calls no shadow pass)
             Mat m = Mat(k);
             mr->castShadows = !(m == Mat::Asphalt || m == Mat::Road || m == Mat::Sidewalk || m == Mat::Grass || m == Mat::Court || m == Mat::Terrain);
+            if (layer) mr->lodFar = detailFar;  // LOD: detalhe só perto da câmera
         }
         if (local) registerObject(e, ch);
     }

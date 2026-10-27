@@ -18,21 +18,27 @@ struct BoxCollider { glm::vec3 center, half; float yaw; };
 
 // Geometria agrupada por material + colliders. Construções escrevem aqui; o motor transforma
 // cada material não vazio em um GameObject (poucos draw calls) e os colliders em um corpo estático.
+// LOD: peças marcadas como "detalhe" (carros, postes, caixas d'água, platibandas...) vão para uma camada
+// separada que só é desenhada perto da câmera; a base (volumes, telhados, ruas) é desenhada sempre.
 struct Geo {
     MeshBuilder mats[int(Mat::Count)];
+    MeshBuilder detailMats[int(Mat::Count)];
     std::vector<BoxCollider> colliders;
     glm::vec3 origin{0.f};
     float yaw = 0.f;
+    bool detail = false;  // true: as próximas peças vão para a camada de detalhe
 
-    MeshBuilder& operator[](Mat m) { return mats[int(m)]; }
+    MeshBuilder& operator[](Mat m) { return detail ? detailMats[int(m)] : mats[int(m)]; }
     // Posiciona as próximas peças (origem da construção no chão + rotação em Y)
     void place(glm::vec3 pos, float yawRad) {
         origin = pos; yaw = yawRad;
         glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1.f), pos), yawRad, glm::vec3(0, 1, 0));
-        for (auto& b : mats) { b.xf = m; b.color = glm::vec4(1.f); b.uvTile = glm::vec2(0.f); }
+        for (auto* arr : {mats, detailMats})
+            for (int k = 0; k < int(Mat::Count); ++k) { arr[k].xf = m; arr[k].color = glm::vec4(1.f); arr[k].uvTile = glm::vec2(0.f); }
     }
     void offset(glm::vec3 local) {  // desloca o sistema local atual
-        for (auto& b : mats) b.xf = b.xf * glm::translate(glm::mat4(1.f), local);
+        for (auto* arr : {mats, detailMats})
+            for (int k = 0; k < int(Mat::Count); ++k) arr[k].xf = arr[k].xf * glm::translate(glm::mat4(1.f), local);
     }
     // Collider em coordenadas locais da construção atual (min + size, como MeshBuilder::box)
     void collider(glm::vec3 mn, glm::vec3 size) {
@@ -42,8 +48,16 @@ struct Geo {
     }
     bool empty() const {
         for (auto& b : mats) if (!b.empty()) return false;
+        for (auto& b : detailMats) if (!b.empty()) return false;
         return true;
     }
+};
+
+// Liga a camada de detalhe enquanto existir (RAII)
+struct DetailScope {
+    Geo& g; bool prev;
+    explicit DetailScope(Geo& geo) : g(geo), prev(geo.detail) { g.detail = true; }
+    ~DetailScope() { g.detail = prev; }
 };
 
 // Paletas de cores típicas
@@ -60,7 +74,7 @@ void buildSkyscraper(Geo& g, Rng& r, float w, float d, int floors);
 void buildSchoolWing(Geo& g, float len, float depth, int floors, glm::vec4 wall, glm::vec4 band);
 
 // Objetos de cenário
-void buildTree(MeshBuilder& painted, Rng& r, int kind);   // 0 copa redonda, 1 pinheiro, 2 palmeira
+void buildTree(MeshBuilder& painted, Rng& r, int kind, bool lowPoly = false);   // 0 copa redonda, 1 pinheiro, 2 palmeira
 void buildCar(Geo& g, Rng& r);
 void buildStreetLight(Geo& g);
 void buildWaterTank(MeshBuilder& painted, glm::vec3 base);

@@ -328,8 +328,10 @@ void Renderer::submit(const GameObject& go, const glm::mat4& model, const glm::m
     } else {
         AABB world = transformAABB(mesh.bounds, model);
         if (camFrustum_.intersects(world)) mask |= 1u;            // culling da câmera
+        // objetos com LOD (detalhes, árvores) só fazem sombra nas 2 cascatas perto da câmera
+        const int shadowCascades = mr.lodFar < 1e29f ? 2 : kNumCascades;
         if (mr.castShadows)
-            for (int c = 0; c < kNumCascades; ++c)                // culling por cascata
+            for (int c = 0; c < shadowCascades; ++c)              // culling por cascata
                 if (cascadeFrustum_[c].planes[0] != glm::vec4(0.f) && cascadeFrustum_[c].intersects(world)) mask |= 2u << c;
     }
     if (!mask) return;

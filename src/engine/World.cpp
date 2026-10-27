@@ -83,6 +83,8 @@ Prototype protoFromGeo(Engine* e, Geo& g) {
     for (int k = 0; k < int(Mat::Count); ++k) {
         MeshId id = g.mats[k].build(e->renderer);
         if (id != kInvalidId) p.parts.push_back({id, e->mats[k]});
+        MeshId d = g.detailMats[k].build(e->renderer);
+        if (d != kInvalidId) p.parts.push_back({d, e->mats[k], 0.f, kDetailFar * 0.6f});
     }
     if (!g.colliders.empty()) { p.colliderHalf = g.colliders[0].half; p.colliderY = g.colliders[0].center.y; }
     return p;
@@ -90,8 +92,9 @@ Prototype protoFromGeo(Engine* e, Geo& g) {
 
 void spawnProto(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float scale, std::vector<Scene::Handle>* out,
                 std::vector<BoxCollider>* colliders) {
-    for (auto [mesh, mat] : p.parts) {
-        Scene::Handle h = addMeshObject(e, "", mesh, mat, pos, glm::vec3(scale), {0.f, glm::degrees(yaw), 0.f}, false);
+    for (const ProtoPart& pp : p.parts) {
+        Scene::Handle h = addMeshObject(e, "", pp.mesh, pp.mat, pos, glm::vec3(scale), {0.f, glm::degrees(yaw), 0.f}, false);
+        if (GameObject* g = e->scene.get(h); g && g->meshRenderer) { g->meshRenderer->lodNear = pp.lodNear; g->meshRenderer->lodFar = pp.lodFar; }
         if (out) out->push_back(h);
     }
     if (colliders && p.colliderHalf.x > 0.f)
@@ -101,14 +104,21 @@ void spawnProto(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float s
 void makeProtos(Engine* e, uint32_t seed) {
     Rng r(seed + 999);
     for (int k = 0; k < 3; ++k) {
+        // LOD: versão completa perto, simplificada (mesma forma, menos polígonos) longe, some na neblina
+        Rng r2 = r;
         Geo g;
         g.place(glm::vec3(0.f), 0.f);
         buildTree(g[Mat::Painted], r, k);
         g.collider({-0.25f, 0.f, -0.25f}, {0.5f, 4.f, 0.5f});
-        e->treeProto[k] = protoFromGeo(e, g);
+        Prototype p = protoFromGeo(e, g);
+        p.parts[0].lodFar = kTreeLod;
+        MeshBuilder low;
+        buildTree(low, r2, k, true);
+        p.parts.push_back({low.build(e->renderer), e->mats[int(Mat::Painted)], kTreeLod, kTreeFar});
+        e->treeProto[k] = p;
     }
     e->rockProto = Prototype{};
-    e->rockProto.parts.push_back({e->rock, e->mats[int(Mat::Concrete)]});
+    e->rockProto.parts.push_back({e->rock, e->mats[int(Mat::Concrete)], 0.f, 260.f});
     e->rockProto.colliderHalf = glm::vec3(0.45f);
     e->rockProto.colliderY = 0.f;
     for (int k = 0; k < 3; ++k) {
@@ -120,16 +130,32 @@ void makeProtos(Engine* e, uint32_t seed) {
 }
 
 // Agrupa construções de um mapa por célula (cada célula vira poucos meshes: 1 por material)
+// LOD: a camada de detalhe fica em células pequenas (some longe da câmera); a base é juntada em grupos
+// de `group` x `group` células (poucos draw calls, sempre visível).
 struct Cells {
     float size;
+    int group;
     std::map<int64_t, Geo> m;
-    explicit Cells(float s) : size(s) {}
-    Geo& at(glm::vec3 p) {
-        int64_t cx = int64_t(std::floor(p.x / size)), cz = int64_t(std::floor(p.z / size));
-        return m[(cx << 32) ^ (cz & 0xffffffff)];
-    }
+    Cells(float s, int grp = 1) : size(s), group(grp) {}
+    static int64_t key(int64_t cx, int64_t cz) { return (cx << 32) ^ (cz & 0xffffffff); }
+    Geo& at(glm::vec3 p) { return m[key(int64_t(std::floor(p.x / size)), int64_t(std::floor(p.z / size)))]; }
     void flush(Engine* e) {
-        for (auto& [k, g] : m) if (!g.empty() || !g.colliders.empty()) spawnGeo(e, g, "Mapa", false);
+        std::map<int64_t, Geo> big;
+        auto fdiv = [](int64_t a, int64_t b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
+        for (auto& [k, g] : m) {
+            int64_t cx = k >> 32, cz = int64_t(int32_t(uint32_t(k)));
+            Geo& b = big[key(fdiv(cx, group), fdiv(cz, group))];
+            for (int i = 0; i < int(Mat::Count); ++i) {
+                b.mats[i].append(g.mats[i]);
+                g.mats[i].clear();
+            }
+            b.colliders.insert(b.colliders.end(), g.colliders.begin(), g.colliders.end());
+            g.colliders.clear();
+            bool anyDetail = false;
+            for (auto& d : g.detailMats) anyDetail |= !d.empty();
+            if (anyDetail) spawnGeo(e, g, "Detalhes", false, glm::vec3(0.f), 0.f, kDetailFar);
+        }
+        for (auto& [k, g] : big) if (!g.empty() || !g.colliders.empty()) spawnGeo(e, g, "Mapa", false);
         m.clear();
     }
 };
@@ -275,7 +301,7 @@ void genCity(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
     const int nb = 6;
     const float block = 56.f, road = 14.f, pitch = block + road;
     const float total = nb * block + (nb + 1) * road, half = total * 0.5f;
-    Cells cells(pitch * 4.f);
+    Cells cells(pitch * 2.f, 2);  // detalhe em blocos de 2 x 2 quarteirões, base em grupos de 4 x 4
     // asfalto cobrindo tudo + faixas das ruas
     {
         Geo& g = cells.at({-1e4f, 0, -1e4f});
@@ -382,7 +408,7 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
         addHeightfield(e, c, -half, -half, 2 * half, res);
         c.cx = 1 << 20;  // fora da grade do mundo infinito
     }
-    Cells cells(105.f);
+    Cells cells(35.f, 3);
     // rua em volta do morro
     {
         Geo& g = cells.at({-1e4f, 0, -1e4f});
@@ -537,7 +563,7 @@ void genSuburb(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
     const int nb = 5;
     const float block = 64.f, road = 12.f, pitch = block + road;
     const float total = nb * block + (nb + 1) * road, half = total * 0.5f;
-    Cells cells(pitch * 2.5f);
+    Cells cells(pitch * 2.f, 2);
     {
         Geo& g = cells.at({-1e4f, 0, -1e4f});
         g.place(glm::vec3(0.f), 0.f);

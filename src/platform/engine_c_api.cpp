@@ -76,10 +76,20 @@ void engine_frame(Engine* e, float dt) {
     eng::updateAttachments(e);
 
     e->renderer.beginFrame(e->camera, e->sun);
+    const glm::vec3 camPos = e->camera.position;
     e->scene.forEach([&](GameObject& go, Scene::Handle) {
-        if (!go.meshRenderer) return;
+        const eng::MeshRenderer* mr = go.meshRenderer;
+        if (!mr) return;
         const glm::mat4* palette;
         glm::mat4 m = eng::renderMatrix(e, go, &palette);
+        if (mr->lodNear > 0.f || mr->lodFar < 1e29f) {  // LOD por distância ao centro do mesh
+            const eng::Mesh* mesh = e->renderer.mesh(mr->mesh);
+            if (!mesh) return;
+            glm::vec3 c = glm::vec3(m * glm::vec4((mesh->bounds.min + mesh->bounds.max) * 0.5f, 1.f));
+            glm::vec3 d = c - camPos;
+            float d2 = glm::dot(d, d);
+            if (d2 < mr->lodNear * mr->lodNear || d2 >= mr->lodFar * mr->lodFar) return;
+        }
         e->renderer.submit(go, m, palette);
     });
 

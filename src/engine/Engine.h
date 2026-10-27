@@ -41,8 +41,9 @@ struct CharacterInfo {
 };
 
 // Modelo reaproveitado várias vezes (árvores, casas do mundo infinito): instancing automático
+struct ProtoPart { MeshId mesh; MaterialId mat; float lodNear = 0.f, lodFar = 1e30f; };
 struct Prototype {
-    std::vector<std::pair<MeshId, MaterialId>> parts;
+    std::vector<ProtoPart> parts;
     glm::vec3 colliderHalf{0.f};
     float colliderY = 0.f;     // centro do collider acima da base
 };
@@ -150,7 +151,12 @@ Scene::Handle addMeshObject(Engine* e, const char* name, MeshId mesh, MaterialId
 void addBody(Engine* e, Scene::Handle h, ColliderType type, float mass);
 // Transforma Geo em GameObjects. local=true: Geo montado na origem; vira objeto editável (raiz registrada,
 // collider composto que acompanha o objeto). local=false: cenário de mapa em coordenadas de mundo.
-Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec3 pos = glm::vec3(0.f), float yaw = 0.f);
+Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec3 pos = glm::vec3(0.f), float yaw = 0.f,
+                       float detailFar = 160.f);
+// Distâncias de LOD (metros)
+constexpr float kDetailFar = 160.f;   // carros, postes, caixas d'água...
+constexpr float kTreeLod = 70.f;      // árvore completa -> simplificada
+constexpr float kTreeFar = 420.f;     // árvore some (neblina)
 void addStaticBoxes(Engine* e, const std::vector<BoxCollider>& boxes, StaticCollision* into = nullptr);
 void freeStatic(Engine* e, StaticCollision& s);
 MaterialId tintedMaterial(Engine* e, MaterialId base, glm::vec3 color);
