@@ -1,7 +1,11 @@
 #include "procgen/TextureGen.h"
 #include <algorithm>
 #include <cmath>
+#include <atomic>
+#include <cstdio>
 #include <functional>
+#include <thread>
+#include <sys/stat.h>
 #include <string>
 #include <stb_image.h>
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -439,7 +443,7 @@ TexData genCeramic() {
 // Muro grafitado: reboco sujo com 2 "peças" de letras gordas (preenchimento em degradê, contorno preto e brilho
 // branco), escorridos de tinta e pichações finas por cima. Tile 4 x 2 m (1024 x 512).
 TexData genGraffiti() {
-    Img im(1024, 512);
+    Img im(512, 256);
     plasterBase(im, rgb(205, 198, 186), 301, 0.35f);
     struct Letter { glm::vec2 c, h; float rot, round; };
     struct Piece { std::vector<Letter> ls; glm::vec3 a, b; };
@@ -700,7 +704,9 @@ TexData genMurals() {
         for (int i = 0; i < 3; ++i) if (loaded[i].empty()) { loaded[i] = name; fonts[i] = loadFont(name); return fonts[i]; }
         return fonts[0];
     };
-    for (int k = 0; k < kMuralCount; ++k) {
+    for (const MuralDef& M : kMurals) font(M.font);  // carrega antes: as threads só leem
+    font("Bangers.ttf");
+    auto job = [&](int k) {  // cada mural numa thread (escreve só no seu pedaço do atlas)
         const MuralDef& M = kMurals[k];
         const int ox = (k % 2) * CW, oy = (k / 2) * CH;
         Layer L(CW, CH);
@@ -721,7 +727,7 @@ TexData genMurals() {
                 glm::vec3 c = cols[t % 4];
                 for (int y = 0; y < CH; ++y) for (int x = 0; x < CW; ++x) if (float v = T.at(x, y); v > 0.f) put(x, y, c, v);
             }
-            continue;
+            return;
         }
         bool big2 = M.text2[0] != 0;
         float textY = M.deco >= 2 ? 300.f : 256.f;
@@ -776,9 +782,22 @@ TexData genMurals() {
             for (int y = top; y < std::min(CH, top + len); ++y)
                 for (int x = col - 2; x <= col + 2; ++x) if (x >= 0 && x < CW) put(x, y, M.a, 1.f);
         }
-    }
-    TexData t = finish(im, false);
-    for (int i = 0; i < im.w * im.h; ++i) t.albedo[i * 4 + 3] = to8(alpha[i]);
+    };
+    std::vector<std::thread> th;
+    for (int k = 0; k < kMuralCount; ++k) th.emplace_back(job, k);
+    for (auto& t : th) t.join();
+    // metade da resolução (1024 x 1024): leve na memória do celular e ainda nítido na parede
+    Img half(im.w / 2, im.h / 2);
+    std::vector<float> ha(half.w * half.h);
+    for (int y = 0; y < half.h; ++y)
+        for (int x = 0; x < half.w; ++x) {
+            int i = y * half.w + x, a0 = (2 * y) * im.w + 2 * x, a1 = a0 + 1, b0 = a0 + im.w, b1 = b0 + 1;
+            half.col[i] = (im.col[a0] + im.col[a1] + im.col[b0] + im.col[b1]) * 0.25f;
+            half.rough[i] = (im.rough[a0] + im.rough[a1] + im.rough[b0] + im.rough[b1]) * 0.25f;
+            ha[i] = (alpha[a0] + alpha[a1] + alpha[b0] + alpha[b1]) * 0.25f;
+        }
+    TexData t = finish(half, false);
+    for (int i = 0; i < half.w * half.h; ++i) t.albedo[i * 4 + 3] = to8(ha[i]);
     return t;
 }
 
@@ -863,10 +882,79 @@ glm::vec4 muralUV(int i) {
     return {u0, v0, u0 + 0.5f, v0 + 0.25f};
 }
 
+// Cache em disco (shaders/cache): da 2ª abertura em diante as texturas não são geradas de novo.
+// A chave muda a cada compilação (código novo = texturas novas).
+static std::string cachePath(Mat m) {
+    if (gTexDir.empty() || (m != Mat::Mural && m != Mat::Graffiti)) return "";  // só as demoradas (o resto é rápido)
+    return gTexDir + "/../cache/tex_" + std::to_string(int(m)) + ".bin";
+}
+static uint32_t cacheKey() {
+    uint32_t h = 2166136261u;
+    for (const char* p = __DATE__ __TIME__; *p; ++p) h = (h ^ uint8_t(*p)) * 16777619u;
+    return h ^ uint32_t(int(Mat::Count) * 7919);
+}
+static bool loadCached(Mat m, TexData& t) {
+    std::string path = cachePath(m);
+    FILE* f = path.empty() ? nullptr : std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    uint32_t hdr[5] = {};
+    bool ok = std::fread(hdr, 4, 5, f) == 5 && hdr[0] == 0x58455454u && hdr[1] == cacheKey() && hdr[2] > 0 && hdr[3] > 0 && hdr[2] <= 4096 && hdr[3] <= 4096;
+    if (ok) {
+        size_t n = size_t(hdr[2]) * hdr[3] * 4;
+        t.w = int(hdr[2]); t.h = int(hdr[3]);
+        t.albedo.resize(n); t.orm.resize(n);
+        if (hdr[4]) t.normal.resize(n);
+        ok = std::fread(t.albedo.data(), 1, n, f) == n && std::fread(t.orm.data(), 1, n, f) == n &&
+             (!hdr[4] || std::fread(t.normal.data(), 1, n, f) == n);
+    }
+    std::fclose(f);
+    if (!ok) t = TexData{};
+    return ok;
+}
+static void saveCached(Mat m, const TexData& t) {
+    std::string path = cachePath(m);
+    if (path.empty()) return;
+    mkdir((gTexDir + "/../cache").c_str(), 0755);
+    std::string tmp = path + ".tmp";
+    FILE* f = std::fopen(tmp.c_str(), "wb");
+    if (!f) return;
+    uint32_t hdr[5] = {0x58455454u, cacheKey(), uint32_t(t.w), uint32_t(t.h), t.normal.empty() ? 0u : 1u};
+    bool ok = std::fwrite(hdr, 4, 5, f) == 5 && std::fwrite(t.albedo.data(), 1, t.albedo.size(), f) == t.albedo.size() &&
+              std::fwrite(t.orm.data(), 1, t.orm.size(), f) == t.orm.size() &&
+              (t.normal.empty() || std::fwrite(t.normal.data(), 1, t.normal.size(), f) == t.normal.size());
+    std::fclose(f);
+    if (ok) std::rename(tmp.c_str(), path.c_str()); else std::remove(tmp.c_str());
+}
+
 const TexData& proceduralTexture(Mat m) {
     TexData& t = gCache[int(m)];
-    if (t.albedo.empty()) t = generate(m);
+    if (t.albedo.empty() && !loadCached(m, t)) { t = generate(m); saveCached(m, t); }
     return t;
+}
+
+void pregenerateTextures() {
+    // as que faltam (sem cache) são geradas em paralelo, uma por núcleo
+    std::vector<int> todo;
+    for (int k = 0; k < int(Mat::Count); ++k)
+        if (gCache[k].albedo.empty() && !loadCached(Mat(k), gCache[k])) todo.push_back(k);
+    if (todo.empty()) return;
+    // as mais demoradas primeiro
+    std::stable_sort(todo.begin(), todo.end(), [](int a, int b) {
+        auto heavy = [](int m) { return m == int(Mat::Mural) || m == int(Mat::Graffiti) || m == int(Mat::FacadeHouse) || m == int(Mat::FacadeApt); };
+        return heavy(a) && !heavy(b);
+    });
+    std::atomic<size_t> next{0};
+    unsigned n = std::max(2u, std::min(8u, std::thread::hardware_concurrency()));
+    std::vector<std::thread> th;
+    for (unsigned i = 0; i < n; ++i)
+        th.emplace_back([&] {
+            for (size_t j; (j = next++) < todo.size();) {
+                int k = todo[j];
+                gCache[k] = generate(Mat(k));
+                saveCached(Mat(k), gCache[k]);
+            }
+        });
+    for (auto& t : th) t.join();
 }
 
 }  // namespace eng

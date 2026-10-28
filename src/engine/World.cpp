@@ -875,6 +875,17 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
     }
     Cells cells(30.f, 2);
     std::vector<BoxCollider> treeBoxes;
+    // ---- plantas do kit de vegetação (3 níveis de detalhe); sem os arquivos, as árvores feitas por código ----
+    const Prototype* trees[6] = {};
+    const Prototype* bushes[5] = {};
+    const Prototype* grass[4] = {};
+    int nTrees = 0, nBushes = 0, nGrass = 0;
+    for (const char* n : {"arvore_1", "arvore_2", "arvore_3", "arvore_4", "arvores_dupla", "arvore_5"})
+        if (const Prototype* p = vegPrototype(e, n)) trees[nTrees++] = p;
+    for (const char* n : {"arbusto_1", "arbusto_2", "arbusto_3", "arbusto_redondo_1", "arbusto_redondo_2"})
+        if (const Prototype* p = vegPrototype(e, n)) bushes[nBushes++] = p;
+    for (const char* n : {"capim_1", "capim_2", "capim_3", "capim_florido"})
+        if (const Prototype* p = vegPrototype(e, n)) grass[nGrass++] = p;
 
     // ---- chão cimentado (becos, quintais, entre as casas), com alguns cantos de terra ----
     {
@@ -1246,7 +1257,19 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
         }
         for (int k = 0; k < 5; ++k) {
             glm::vec3 tp(c.x + (k % 2 ? -1.f : 1.f) * (P.half.x - 1.5f), P.y + 0.05f, c.z - P.half.y + 2.f + k * 3.5f);
-            spawnProto(e, e->treeProto[0], tp, r.range(0, 6.28f), r.range(0.8f, 1.1f), nullptr, &treeBoxes);
+            if (trees[0]) spawnProto(e, *trees[k % std::min(nTrees, 4)], tp, r.range(0, 6.28f), r.range(1.7f, 2.1f), nullptr, &treeBoxes);
+            else spawnProto(e, e->treeProto[0], tp, r.range(0, 6.28f), r.range(0.8f, 1.1f), nullptr, &treeBoxes);
+        }
+        // floreiras com plantas no fundo da praça
+        if (const Prototype* fl = vegPrototype(e, "floreira_2")) {
+            const Prototype* fc[2] = {vegPrototype(e, "forracao_1"), vegPrototype(e, "arbusto_redondo_2")};
+            for (int k = 0; k < 3; ++k) {
+                glm::vec3 fp(c.x - 7.f + k * 7.f, P.y + 0.05f, c.z - P.half.y + 0.9f);
+                spawnProto(e, *fl, fp, 0.f, 1.f, nullptr, &treeBoxes);
+                for (int j = -1; j <= 1; ++j)
+                    if (const Prototype* pl = fc[(k + j + 3) % 2])
+                        spawnProto(e, *pl, fp + glm::vec3(j * 1.f, 0.4f, 0.f), r.range(0, 6.28f), r.range(0.9f, 1.2f), nullptr, nullptr);
+            }
         }
         // luz da praça
         g.place(c + glm::vec3(0, 0.05f, 0), 0.f);
@@ -1384,8 +1407,17 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
         if (z > 80.f || std::abs(x) > half - 4.f || std::abs(z) > half - 4.f) continue;
         if (std::abs(x) < 8.f && z > 50.f) continue;
         { float t; if (segDist2({x, z}, {52.f, 36.f}, {64.f, 88.f}, t) < 5.f) continue; }
-        int kind = r.chance(0.25f) ? 2 : 0;
-        spawnProto(e, e->treeProto[kind], {x, H(x, z) - 0.2f, z}, r.range(0, 6.28f), r.range(0.9f, 1.5f), nullptr, &treeBoxes);
+        // mata da encosta: árvores do kit (2 a 3x o tamanho do jardim), arbustos e capim; palmeira de vez em quando
+        float pick = r.f();
+        if (pick < 0.12f || !trees[0]) {
+            spawnProto(e, e->treeProto[2], {x, H(x, z) - 0.2f, z}, r.range(0, 6.28f), r.range(0.9f, 1.4f), nullptr, &treeBoxes);
+        } else if (pick < 0.62f) {
+            spawnProto(e, *trees[r.irange(0, nTrees - 1)], {x, H(x, z) - 0.15f, z}, r.range(0, 6.28f), r.range(2.f, 2.9f), nullptr, &treeBoxes);
+        } else if (pick < 0.85f && bushes[0]) {
+            spawnProto(e, *bushes[r.irange(0, nBushes - 1)], {x, H(x, z) - 0.05f, z}, r.range(0, 6.28f), r.range(1.6f, 2.6f), nullptr, &treeBoxes);
+        } else if (grass[0]) {
+            spawnProto(e, *grass[r.irange(0, nGrass - 1)], {x, H(x, z) - 0.05f, z}, r.range(0, 6.28f), r.range(1.f, 1.6f), nullptr, &treeBoxes);
+        }
     }
     for (int k = 0; k < 40; ++k) {
         float x = r.range(-55.f, 55.f), z = r.range(-55.f, 45.f);
@@ -1394,7 +1426,10 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
         for (auto& [lc, lh] : lots) if (std::abs(x - lc.x) < lh.x + 1.2f && std::abs(z - lc.y) < lh.y + 1.2f) { free = false; break; }
         for (int p = 0; p < FP_Count && free; ++p) if (padDist(pads[p], x, z) < 1.f) free = false;
         if (!free) continue;
-        spawnProto(e, e->treeProto[r.chance(0.3f) ? 2 : 0], {x, H(x, z) - 0.1f, z}, r.range(0, 6.28f), r.range(0.6f, 0.9f), nullptr, &treeBoxes);
+        if (trees[0] && !r.chance(0.3f))
+            spawnProto(e, *trees[r.irange(0, nTrees - 1)], {x, H(x, z) - 0.1f, z}, r.range(0, 6.28f), r.range(1.6f, 2.2f), nullptr, &treeBoxes);
+        else
+            spawnProto(e, e->treeProto[r.chance(0.3f) ? 2 : 0], {x, H(x, z) - 0.1f, z}, r.range(0, 6.28f), r.range(0.6f, 0.9f), nullptr, &treeBoxes);
     }
 
     // ---- ao fundo: morros com casinhas e o Cristo no alto (sem colisão, fora do limite) ----

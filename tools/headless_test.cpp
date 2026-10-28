@@ -83,7 +83,9 @@ int main(int argc, char** argv) {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth);
 
+    auto tCreate = std::chrono::steady_clock::now();
     Engine* e = engine_create(argv[1]);
+    std::printf("motor iniciado em %.2f s\n", std::chrono::duration<float>(std::chrono::steady_clock::now() - tCreate).count());
     if (!e) { std::printf("engine_create falhou (shaders?)\n"); return 1; }
     engine_set_target_fbo(e, g_fbo);
     engine_resize(e, W, H);
@@ -809,6 +811,11 @@ int main(int argc, char** argv) {
             save(out, (std::string(v.name) + ".png").c_str());
             stats(e, v.name);
         }
+        // planta avulsa do kit (3 níveis de detalhe)
+        for (const char* pl : {"arvore_2", "capim_florido", "floreira_1"}) {
+            std::string sp = std::string(R"({"tipo":"planta","modelo":")") + pl + R"(","pos":[)" + std::to_string(-4 + 4 * int(pl[0] == 'c') + 8 * int(pl[0] == 'f')) + ",10,48]}";
+            if (engine_add_spec(e, sp.c_str()) < 0) { std::printf("  [ERRO] planta %s: %s\n", pl, engine_last_error(e)); ++g_fail; }
+        }
         // noite: postes acesos e as pichações
         engine_tool_call(e, "definir_ambiente", R"({"hora":21.5})");
         for (const View& v : {views[1], views[4], views[3]}) {
@@ -862,6 +869,35 @@ int main(int argc, char** argv) {
         engine_set_play(e, 0);
         engine_tool_call(e, "definir_ambiente", R"({"chuva":"automatica"})");
     };
+    if (std::getenv("SO_VEGETACAO")) {  // modelos de planta convertidos (perto e longe), lado a lado
+        engine_new_scene(e);
+        engine_tool_call(e, "definir_ambiente", R"({"hora":15.5})");
+        const char* names[] = {"arvore_1", "arvore_2", "arvore_3", "arvore_4", "arvore_5", "arvores_dupla", "arvores_trio",
+                               "arbusto_redondo_1", "arbusto_redondo_2", "arbusto_1", "arbusto_2", "arbusto_3", "capim_1", "capim_2",
+                               "capim_3", "capim_florido", "forracao_1", "forracao_2", "forracao_3", "floreira_1", "floreira_2", "floreira_3"};
+        for (int k = 0; k < 22; ++k) {
+            for (int far = 0; far < 2; ++far) {
+                std::string path = std::string("kit:vegetacao/") + names[k] + (far ? "_longe" : "");
+                int id = engine_load_model(e, path.c_str());
+                if (id < 0) { if (!(far && k >= 19)) { std::printf("  [ERRO] %s: %s\n", path.c_str(), engine_last_error(e)); ++g_fail; } continue; }
+                float p[3], r[3], sc[3];
+                engine_get_transform(e, id, p, r, sc);
+                p[0] = (k % 8) * 4.f - 14.f + far * 2.f; p[1] = 0.f; p[2] = (k / 8) * 5.f - 5.f + far * 0.f;
+                if (far) p[2] -= 0.f;
+                engine_set_transform(e, id, p, r, sc);
+            }
+        }
+        engine_select(e, -1);
+        engine_set_camera(e, 0.f, 0.8f, 0.f, 0.f, 0.35f, 19.f);
+        frames(e, 4);
+        save(out, "veg_geral.png");
+        engine_set_camera(e, -10.f, 1.3f, -5.f, 0.25f, 0.15f, 6.f);
+        frames(e, 4);
+        save(out, "veg_arvores.png");
+        engine_destroy(e);
+        std::printf(g_fail ? "FALHOU\n" : "OK\n");
+        return g_fail ? 1 : 0;
+    }
     if (std::getenv("SO_MURAIS")) {  // atlas das pichações (confere as fontes)
         eng::setMaterialTextureDir((std::string(argv[1]) + "/materials").c_str());
         const eng::TexData& t = eng::proceduralTexture(eng::Mat::Mural);

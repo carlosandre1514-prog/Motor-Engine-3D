@@ -5,3 +5,4 @@ app/.cxx/
 local.properties
 *.iml
 .idea/
+shaders/cache/

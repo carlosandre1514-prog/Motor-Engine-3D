@@ -62,6 +62,8 @@ void setMaterialTextureDir(const char* dir);
 
 // Gera (uma vez, com cache) as texturas de um material
 const TexData& proceduralTexture(Mat m);
+// Gera de uma vez (em paralelo) as que ainda não estão prontas nem no cache em disco
+void pregenerateTextures();
 
 // Parâmetros PBR base de cada material (multiplicam o ORM)
 struct MatParams { float roughness, metallic; int mode; bool doubleSided; };

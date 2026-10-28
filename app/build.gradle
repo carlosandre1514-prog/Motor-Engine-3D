@@ -34,6 +34,10 @@ android {
     sourceSets {
         main { assets.srcDirs = ['src/main/assets', '../shaders'] }
     }
+    // sem compressão no APK: a cópia na 1ª abertura fica mais rápida e dá para ver o tamanho sem ler o arquivo
+    androidResources {
+        noCompress 'glb', 'gltf', 'bin', 'wav', 'anim', 'ttf', 'fbx', 'jpg', 'png'
+    }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

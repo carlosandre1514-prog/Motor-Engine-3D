@@ -127,7 +127,26 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         store = ProjectStore(this)
-        view = EngineView(this, copyShaders())
+        // Arquivos do motor (modelos, animações, texturas, sons): copiados numa thread separada, com aviso na tela.
+        // Copiar na thread principal travava o app ("não está respondendo") na 1ª abertura depois de atualizar.
+        val splash = TextView(this).apply {
+            text = "Preparando o motor…"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            gravity = Gravity.CENTER
+            setBackgroundColor(0xFF15181D.toInt())
+        }
+        setContentView(splash)
+        Thread {
+            val dir = copyShaders { done, total ->
+                runOnUiThread { splash.text = "Preparando os arquivos do jogo…\n$done de $total\n(só depois de instalar ou atualizar)" }
+            }
+            runOnUiThread { if (!isFinishing && !isDestroyed) setupUi(dir) }
+        }.start()
+    }
+
+    private fun setupUi(shaderDir: String) {
+        view = EngineView(this, shaderDir)
         view.afterFrame = { frame ->
             sound.playEvents(NativeBridge.nativePollSounds())  // tiros, recarga, trovão...
             if (frame % 10 == 0) { NativeBridge.nativeGetWeather(weather); sound.setRain(weather[0]) }
@@ -178,12 +197,17 @@ class MainActivity : Activity() {
 
     // Fechar/minimizar: salva antes de pausar a thread GL (espera até 2 s)
     override fun onPause() {
+        if (!::view.isInitialized) { super.onPause(); return }  // ainda preparando os arquivos
         sound.pause()
         saveBlocking()
         super.onPause()
         view.onPause()
     }
-    override fun onResume() { super.onResume(); view.onResume(); sound.resume() }
+    override fun onResume() {
+        super.onResume()
+        if (!::view.isInitialized) return
+        view.onResume(); sound.resume()
+    }
     override fun onDestroy() { ui.removeCallbacksAndMessages(null); sound.release(); super.onDestroy() }
 
     // ---------------- projeto: abrir, salvar, autosave ----------------
@@ -407,7 +431,7 @@ class MainActivity : Activity() {
     }
 
     // O renderer lê os shaders por caminho de arquivo: copia os assets (.vert/.frag/.glsl) para o storage interno.
-    private fun copyShaders(): String {
+    private fun copyShaders(progress: (Int, Int) -> Unit = { _, _ -> }): String {
         val dir = File(filesDir, "shaders").apply { mkdirs() }
         for (name in assets.list("").orEmpty()) {
             if (!(name.endsWith(".vert") || name.endsWith(".frag") || name.endsWith(".glsl") || name.endsWith(".jpg"))) continue
@@ -415,21 +439,31 @@ class MainActivity : Activity() {
         }
         // texturas do terreno e dos materiais (alguns MB): copiadas só na instalação/atualização do app
         val installed = packageManager.getPackageInfo(packageName, 0).lastUpdateTime.toString()
-        fun copyTree(path: String, to: File) {
-            to.mkdirs()
+        // lista primeiro (para mostrar o progresso), depois copia só o que mudou de tamanho
+        val pending = ArrayList<Pair<String, File>>()
+        fun listTree(path: String, to: File) {
             for (name in assets.list(path).orEmpty()) {
                 val child = "$path/$name"
-                if (assets.list(child).orEmpty().isNotEmpty()) copyTree(child, File(to, name))
-                else assets.open(child).use { input -> File(to, name).outputStream().use { input.copyTo(it) } }
+                val sub = assets.list(child).orEmpty()
+                if (sub.isNotEmpty()) listTree(child, File(to, name)) else pending.add(child to File(to, name))
             }
         }
+        val stamps = ArrayList<File>()
         for (sub in listOf("terrain", "materials", "kit", "anim")) {
             val folder = File(dir, sub)
             val stamp = File(folder, ".versao")
             if (stamp.exists() && stamp.readText() == installed) continue
-            copyTree(sub, folder)
-            stamp.writeText(installed)
+            listTree(sub, folder)
+            stamps.add(stamp)
         }
+        pending.forEachIndexed { i, (asset, dst) ->
+            if (i % 10 == 0) progress(i, pending.size)
+            val size = try { assets.openFd(asset).use { it.length } } catch (_: Exception) { -1L }  // -1: comprimido no APK
+            if (size >= 0 && dst.exists() && dst.length() == size) return@forEachIndexed
+            dst.parentFile?.mkdirs()
+            assets.open(asset).use { input -> dst.outputStream().use { input.copyTo(it, 1 shl 16) } }
+        }
+        for (st in stamps) { st.parentFile?.mkdirs(); st.writeText(installed) }
         return dir.absolutePath
     }
 
@@ -532,8 +566,21 @@ class MainActivity : Activity() {
                 }
                 3 -> constructionMenu()
                 4 -> kitMenu()
-                5 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
-                    gl { NativeBridge.nativeCreateBuilding(6 + k, seed()) }
+                5 -> {
+                    val plants = arrayOf("arvore_1" to "🌳 Árvore 1", "arvore_2" to "🌳 Árvore 2", "arvore_3" to "🌳 Árvore 3",
+                        "arvore_4" to "🌳 Árvore 4", "arvore_5" to "🌳 Árvore 5 (pequena)", "arvores_dupla" to "🌳 Duas árvores",
+                        "arvores_trio" to "🌳 Três árvores", "arbusto_1" to "🌿 Arbusto 1", "arbusto_2" to "🌿 Arbusto 2",
+                        "arbusto_3" to "🌿 Arbusto 3", "arbusto_redondo_1" to "🟢 Arbusto redondo 1", "arbusto_redondo_2" to "🟢 Arbusto redondo 2",
+                        "capim_1" to "🌾 Capim 1", "capim_2" to "🌾 Capim 2", "capim_3" to "🌾 Capim 3", "capim_florido" to "🌸 Capim florido",
+                        "forracao_1" to "☘ Forração 1", "forracao_2" to "☘ Forração 2", "forracao_3" to "☘ Forração 3",
+                        "floreira_1" to "🪴 Floreira baixa", "floreira_2" to "🪴 Floreira média", "floreira_3" to "🪴 Floreira alta")
+                    val old = arrayOf("Árvore simples", "Pinheiro", "Palmeira", "Carro", "Poste")
+                    list("Natureza e objetos", plants.map { it.second }.toTypedArray() + old) { k ->
+                        if (k < plants.size) gl {
+                            if (NativeBridge.addSpec("{\"tipo\":\"planta\",\"modelo\":\"${plants[k].first}\"}") < 0) toast("Erro: " + NativeBridge.nativeLastError())
+                            else saveIfChanged()
+                        } else gl { NativeBridge.nativeCreateBuilding(6 + k - plants.size, seed()) }
+                    }
                 }
                 else -> list("Formas básicas", arrayOf("Cubo", "Esfera", "Cápsula", "Pedra (collider convexo)")) { k ->
                     gl { NativeBridge.nativeAddObject(k, true) }

@@ -118,6 +118,7 @@ void ensureBasics(Engine* e) {
 
     // Biblioteca procedural (texturas geradas uma vez e reenviadas à GPU a cada cena); usa as imagens de shaders/materials
     setMaterialTextureDir((e->renderer.shaderDir() + "/materials").c_str());
+    pregenerateTextures();  // todos os núcleos; da 2ª abertura em diante vem do cache
     for (int k = 0; k < int(Mat::Count); ++k) {
         const TexData& t = proceduralTexture(Mat(k));
         MatParams mp = matParams(Mat(k));
@@ -347,6 +348,7 @@ void clearScene(Engine* e) {
     e->animators.clear();
     e->characters.clear();
     e->retargets.clear();
+    e->veg.clear();
     e->recipes.clear();
     e->doors.clear();
     e->teles.clear();

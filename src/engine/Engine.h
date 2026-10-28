@@ -228,6 +228,7 @@ struct Engine {
     std::vector<MeshId> freeGeoMeshes;   // malhas de cidade de chunks descarregados (reaproveitadas)
     std::vector<MeshId> freeChunkMeshes;
     Prototype treeProto[3], rockProto, houseProto[3];
+    std::map<std::string, Prototype> veg;  // plantas do kit carregadas nesta cena (vegPrototype)
     Prototype kitBuilding[3];          // prédios prontos do kit da cidade (planeta); vazio = não carregou
     Scene::Handle water;
     // Mapa editável: cada construção/árvore/poste vira objeto ("peça"); o projeto guarda só as mudanças
@@ -420,6 +421,8 @@ std::string jsonString(const std::string& s);   // "texto" com escapes JSON
 GameObject* rootOf(Engine* e, GameObject* g);   // raiz editável (com id) acima de g
 // Peça do kit da cidade (shaders/kit/<nome>.gltf) como protótipo: centrada, base no chão, collider na caixa
 bool kitPrototype(Engine* e, const char* name, Prototype& out, float lodFar);
+// Planta do kit de vegetação (shaders/kit/vegetacao): 3 níveis de detalhe pela distância. nullptr se não houver.
+const Prototype* vegPrototype(Engine* e, const std::string& name);
 // Malhas fixas de um arquivo 3D (só os nós cujo nome, ou de um pai, contém `only`; nulo = todos), cada uma com a
 // matriz no espaço do arquivo, e a caixa que envolve todas. O modelo carregado é apagado depois.
 bool modelParts(Engine* e, const std::string& path, const char* only, std::vector<ProtoPart>& parts, AABB& box,

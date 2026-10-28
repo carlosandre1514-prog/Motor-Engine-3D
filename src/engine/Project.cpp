@@ -11,6 +11,7 @@
 #include "assets/TextureManager.h"
 #include "engine/Engine.h"
 #include "json.hpp"
+#include <glm/gtx/matrix_decompose.hpp>
 
 namespace eng {
 
@@ -491,6 +492,32 @@ bool kitPrototype(Engine* e, const char* name, Prototype& out, float lodFar) {
     return !out.parts.empty();
 }
 
+const Prototype* vegPrototype(Engine* e, const std::string& name) {
+    if (auto it = e->veg.find(name); it != e->veg.end()) return it->second.parts.empty() ? nullptr : &it->second;
+    Prototype& out = e->veg[name];
+    const char* suffix[3] = {"", "_longe", "_muito_longe"};
+    const float dist[4] = {0.f, 22.f, 65.f, 400.f};
+    int levels = 0;
+    for (int k = 0; k < 3; ++k) {
+        Prototype lp;
+        std::string file = "vegetacao/" + name + suffix[k];
+        if (!kitPrototype(e, file.c_str(), lp, dist[k + 1])) {
+            if (k == 0) { e->lastError.clear(); return nullptr; }
+            break;
+        }
+        if (k == 0) { out.colliderHalf = lp.colliderHalf; out.colliderY = lp.colliderY; }
+        for (ProtoPart& pp : lp.parts) { pp.lodNear = dist[k]; out.parts.push_back(pp); }
+        ++levels;
+    }
+    e->lastError.clear();
+    if (levels == 1) for (ProtoPart& pp : out.parts) pp.lodFar = dist[3];  // floreira: um nível só
+    out.name = name;
+    const float h = out.colliderHalf.y * 2.f;
+    if (name.rfind("arvore", 0) == 0) { out.colliderHalf = {0.12f, h * 0.4f, 0.12f}; out.colliderY = h * 0.4f; }  // só o tronco
+    else if (name.rfind("capim", 0) == 0 || name.rfind("forracao", 0) == 0) out.colliderHalf = glm::vec3(0.f);  // passa por dentro
+    return &out;
+}
+
 void applyMapSwaps(Engine* e, bool textures, bool models) {
     if (models) for (auto& [key, path] : e->protoSwaps) {
         std::string k = norm(key);
@@ -575,6 +602,40 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         addFloor(e, size);
         Scene::Handle h = e->objects.empty() ? Scene::Handle{} : e->objects.back();
         return finish(e, h, spec, false);
+    }
+    if (tipo == "planta" || tipo == "vegetacao") {
+        // Árvore/arbusto/capim/forração/floreira do kit de vegetação, com os 3 níveis de detalhe
+        std::string name = norm(str(spec, "modelo", "arvore_1"));
+        const Prototype* p = vegPrototype(e, name);
+        if (!p) return fail("planta desconhecida: " + name);
+        float sc = std::clamp(num(spec, "escala", name.rfind("arvore", 0) == 0 ? 2.f : 1.5f), 0.05f, 20.f);
+        spec["escala"] = sc;
+        if (!hasPos) pos.y = mapHeight(e, pos.x, pos.z);
+        Scene::Handle rootH = e->scene.create(name.c_str());
+        GameObject* root = e->scene.get(rootH);
+        if (!root) return fail("não consegui criar a planta");
+        root->transform.setPosition(pos);
+        root->transform.setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
+        root->transform.setScale(glm::vec3(sc));
+        registerObject(e, rootH);
+        for (const ProtoPart& pp : p->parts) {
+            glm::vec3 s3, tr, skew; glm::vec4 persp; glm::quat rot;
+            glm::decompose(pp.local, s3, rot, tr, skew, persp);
+            Scene::Handle ch = e->scene.create(name.c_str(), root);
+            GameObject* c = e->scene.get(ch);
+            if (!c) break;
+            c->transform.setPosition(tr); c->transform.setRotation(rot); c->transform.setScale(s3);
+            auto rh = e->meshRenderers.acquire();
+            if (MeshRenderer* mr = e->meshRenderers.get(rh)) {
+                mr->mesh = pp.mesh; mr->material = pp.mat; mr->lodNear = pp.lodNear; mr->lodFar = pp.lodFar;
+                c->meshRenderer = mr;
+            }
+            registerObject(e, ch);
+        }
+        if (p->colliderHalf.x > 0.f) addBoxCollider(e, rootH, {0.f, p->colliderY, 0.f}, p->colliderHalf);
+        spec["tipo"] = "planta";
+        spec["modelo"] = name;
+        return finish(e, rootH, spec, false);
     }
     if (tipo == "imagem" || tipo == "pichacao" || tipo == "grafite") {
         // Pichação pronta (atlas de murais) ou imagem do celular colada numa parede

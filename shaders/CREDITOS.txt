@@ -42,3 +42,7 @@ Fontes das pichações e grafites (shaders/materials/fontes)
 
 Sons (app/src/main/assets/sons)
   Sintetizados por tools/gerar_sons.py (tiros de cada arma, recarga, impacto, golpes, chuva e trovão): sem gravações de terceiros.
+
+Plantas (shaders/kit/vegetacao): árvores, arbustos, capins, forrações e floreiras
+  Kit enviado pelo dono do projeto (Obj.obj exportado do 3ds Max em 23/11/2024) — autor e licença a confirmar.
+  Convertido e simplificado por tools/converter_vegetacao.py (3 níveis de detalhe, cores por vértice).
