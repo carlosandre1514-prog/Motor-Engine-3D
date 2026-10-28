@@ -1063,7 +1063,7 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
                 bool onPad = false;
                 for (int k = 0; k < FP_Count && !onPad; ++k) onPad = padDist(pads[k], cx, cz) < 0.3f;
                 if (onPad || (std::abs(cx) < 3.6f && cz > 54.f)) continue;
-                if (nearRoute({cx, cz}, 1.2f) || underHouse(cx, cz)) continue;  // escadaria já tem degrau; casa cobre
+                if (nearRoute({cx, cz}, 0.6f) || underHouse(cx, cz)) continue;  // escadaria já tem degrau; casa cobre
                 if (fbm(cx * 0.07f + 3.f, cz * 0.07f, 3, seed + 41) > 0.63f) continue;  // canto de terra
                 Geo& g = cells.at({cx, 0.f, cz});
                 if (started.insert(&g).second) g.place(glm::vec3(0.f), 0.f);
