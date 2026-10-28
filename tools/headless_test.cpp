@@ -992,10 +992,17 @@ int main(int argc, char** argv) {
         const char* ban[] = {"Magrão", "Baixinho", "Cabeça", "Zóio", "Bigode"};
         const char* ba[] = {"ak47", "ak74", "pistola", "escopeta", "ak47"};
         for (int i = 0; i < 5; ++i) {
-            objs.push_back({{"tipo", "personagem"}, {"time", "policia"}, {"nome", pol[i]}, {"arma", pa[i]}, {"roupa", i % 4},
-                            {"pos", P(-6.f + i * 3.f, 104.f)}, {"rot_y", 180}});
-            objs.push_back({{"tipo", "personagem"}, {"time", "bandidos"}, {"nome", ban[i]}, {"arma", ba[i]}, {"roupa", i % 4},
-                            {"pos", P(-4.f + i * 3.f, -38.f)}, {"rot_y", 0}});
+            // personagem base com a roupa de cada um (a mesma da loja: "roupa" 0..4)
+            const char* pv[] = {"pm", "pm_camuflada", "civil", "bope"};
+            const char* bv[] = {"camisa_time", "regata", "moletom", "vermelho_preto"};
+            const json pg[] = {{"colete_pm", "cinto_tatico"}, {"colete_pm", "cinto_tatico", "capacete_preto"}, {"colete_civil", "cinto_tatico"},
+                               {"colete_bope", "cinto_tatico", "capacete_preto"}};
+            const json bg[] = {{"bone_tras_branco", "corrente_ouro", "cinto_tatico_marrom"}, {"bone_tras_vermelho", "corrente_ouro_grossa", "relogio_ouro", "cinto_tatico_marrom"},
+                               {"bone_tras_preto", "relogio_ouro", "cinto_tatico_marrom"}, {"bone_tras_preto", "corrente_ouro", "cinto_tatico_marrom"}};
+            objs.push_back({{"tipo", "modelo"}, {"arquivo", "kit:personagens/base"}, {"personagem", true}, {"visual", pv[i % 4]}, {"equipamento", pg[i % 4]},
+                            {"time", "policia"}, {"nome", pol[i]}, {"arma", pa[i]}, {"roupa", i % 4}, {"pos", P(-6.f + i * 3.f, 104.f)}, {"rot_y", 180}});
+            objs.push_back({{"tipo", "modelo"}, {"arquivo", "kit:personagens/base"}, {"personagem", true}, {"visual", bv[i % 4]}, {"equipamento", bg[i % 4]},
+                            {"time", "bandidos"}, {"nome", ban[i]}, {"arma", ba[i]}, {"roupa", i % 4}, {"pos", P(-4.f + i * 3.f, -38.f)}, {"rot_y", 0}});
         }
         json res = json::parse(std::string(engine_tool_call(e, "criar_objetos", json{{"objetos", objs}}.dump().c_str())));
         if (res.contains("erros")) { std::printf("  [ERRO] Polícia x Bandidos: %s\n", res["erros"].dump().c_str()); ++g_fail; }
@@ -1258,6 +1265,51 @@ int main(int argc, char** argv) {
             frames(e, 2);
             save(out, (std::string(name) + "_fundo.png").c_str());
         }
+        engine_destroy(e);
+        std::printf("OK\n");
+        return 0;
+    }
+    // Elenco: o personagem base com cada visual (textura) lado a lado, de frente e de costas
+    if (const char* base = std::getenv("SO_ELENCO")) {
+        using nlohmann::json;
+        engine_new_scene(e);
+        engine_set_grid(e, 0);
+        engine_tool_call(e, "definir_ambiente", R"({"hora":14,"neblina":0})");
+        std::string list = std::getenv("VISUAIS") ? std::getenv("VISUAIS") : "";
+        std::vector<std::string> files;
+        for (size_t p = 0; p <= list.size();) {
+            size_t q = list.find(',', p);
+            if (q == std::string::npos) q = list.size();
+            if (q > p) files.push_back(list.substr(p, q - p));
+            p = q + 1;
+        }
+        if (files.empty()) files.push_back("");
+        const float gap = 0.95f;
+        for (size_t i = 0; i < files.size(); ++i) {
+            json spec = {{"tipo", "modelo"}, {"arquivo", base}, {"personagem", true}, {"pos", {(float(i) - (files.size() - 1) * 0.5f) * gap, 0, 0}}};
+            if (!files[i].empty()) spec["textura"] = files[i];
+            if (const char* eq = std::getenv("EQUIP")) spec["equipamento"] = json::parse(eq);
+            if (const char* eqs = std::getenv("EQUIPS")) {  // um por personagem: [[...],[...]]
+                json all = json::parse(eqs);
+                if (i < all.size()) spec["equipamento"] = all[i];
+            }
+            if (files[i].rfind("kit:", 0) == 0) { spec.erase("textura"); spec["visual"] = files[i].substr(4); }
+            int id = engine_add_spec(e, spec.dump().c_str());
+            if (id < 0) std::printf("  [ERRO] %s\n", engine_last_error(e));
+        }
+        engine_select(e, -1);
+        engine_set_anim_preview(e, 1);
+        frames(e, 30);
+        float dist = std::max(3.2f, files.size() * gap * 1.05f);
+        engine_set_camera(e, 0.f, 1.0f, 0.f, 0.f, 0.08f, dist);
+        frames(e, 2, 0.f);
+        save(out, "elenco_frente.png");
+        engine_set_camera(e, 0.f, 1.0f, 0.f, 3.14159f, 0.08f, dist);
+        frames(e, 2, 0.f);
+        save(out, "elenco_costas.png");
+        engine_set_camera(e, 0.f, 1.45f, 0.f, 0.f, 0.05f, std::max(1.6f, dist * 0.45f));
+        frames(e, 2, 0.f);
+        save(out, "elenco_rosto.png");
         engine_destroy(e);
         std::printf("OK\n");
         return 0;

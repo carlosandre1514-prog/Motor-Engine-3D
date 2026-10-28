@@ -127,8 +127,13 @@
    "tipo": "loja"
   },
   {
-   "arma": "fuzil",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "colete_pm",
+    "cinto_tatico"
+   ],
    "nome": "Sgt. Rocha",
+   "personagem": true,
    "pos": [
     -6.0,
     4.2,
@@ -136,26 +141,38 @@
    ],
    "rot_y": 180.0,
    "roupa": 0,
-   "semente": 1197066665,
    "time": "policia",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "pm"
   },
   {
-   "arma": "fuzil",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "bone_tras_branco",
+    "corrente_ouro",
+    "cinto_tatico_marrom"
+   ],
    "nome": "Magrão",
+   "personagem": true,
    "pos": [
     -4.0,
     23.5,
     -38.0
    ],
    "roupa": 0,
-   "semente": 543748413,
    "time": "bandidos",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "camisa_time"
   },
   {
-   "arma": "fuzil",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "colete_pm",
+    "cinto_tatico",
+    "capacete_preto"
+   ],
    "nome": "Cb. Lima",
+   "personagem": true,
    "pos": [
     -3.0,
     4.2,
@@ -163,26 +180,38 @@
    ],
    "rot_y": 180.0,
    "roupa": 1,
-   "semente": 1043777091,
    "time": "policia",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "pm_camuflada"
   },
   {
-   "arma": "fuzil",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "bone_tras_vermelho",
+    "corrente_ouro_grossa",
+    "relogio_ouro",
+    "cinto_tatico_marrom"
+   ],
    "nome": "Baixinho",
+   "personagem": true,
    "pos": [
     -1.0,
     23.5,
     -38.0
    ],
    "roupa": 1,
-   "semente": 794703543,
    "time": "bandidos",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "regata"
   },
   {
-   "arma": "pistola",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "colete_civil",
+    "cinto_tatico"
+   ],
    "nome": "Sd. Nunes",
+   "personagem": true,
    "pos": [
     0.0,
     4.2,
@@ -190,26 +219,38 @@
    ],
    "rot_y": 180.0,
    "roupa": 2,
-   "semente": 894146441,
    "time": "policia",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "civil"
   },
   {
-   "arma": "pistola",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "bone_tras_preto",
+    "relogio_ouro",
+    "cinto_tatico_marrom"
+   ],
    "nome": "Cabeça",
+   "personagem": true,
    "pos": [
     2.0,
     23.5,
     -38.0
    ],
    "roupa": 2,
-   "semente": 969072955,
    "time": "bandidos",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "moletom"
   },
   {
-   "arma": "escopeta",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "colete_bope",
+    "cinto_tatico",
+    "capacete_preto"
+   ],
    "nome": "Ten. Costa",
+   "personagem": true,
    "pos": [
     3.0,
     4.2,
@@ -217,26 +258,37 @@
    ],
    "rot_y": 180.0,
    "roupa": 3,
-   "semente": 1990508933,
    "time": "policia",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "bope"
   },
   {
-   "arma": "escopeta",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "bone_tras_preto",
+    "corrente_ouro",
+    "cinto_tatico_marrom"
+   ],
    "nome": "Zóio",
+   "personagem": true,
    "pos": [
     5.0,
     23.5,
     -38.0
    ],
    "roupa": 3,
-   "semente": 1218133545,
    "time": "bandidos",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "vermelho_preto"
   },
   {
-   "arma": "fuzil",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "colete_pm",
+    "cinto_tatico"
+   ],
    "nome": "Sd. Alves",
+   "personagem": true,
    "pos": [
     6.0,
     4.2,
@@ -244,22 +296,28 @@
    ],
    "rot_y": 180.0,
    "roupa": 0,
-   "semente": 770559991,
    "time": "policia",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "pm"
   },
   {
-   "arma": "fuzil",
+   "arquivo": "kit:personagens/base",
+   "equipamento": [
+    "bone_tras_branco",
+    "corrente_ouro",
+    "cinto_tatico_marrom"
+   ],
    "nome": "Bigode",
+   "personagem": true,
    "pos": [
     8.0,
     23.5,
     -38.0
    ],
    "roupa": 0,
-   "semente": 1962086309,
    "time": "bandidos",
-   "tipo": "personagem"
+   "tipo": "modelo",
+   "visual": "camisa_time"
   }
  ],
  "regras": {

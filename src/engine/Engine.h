@@ -42,6 +42,7 @@ struct CharacterInfo {
     int handJoint = CJ_RHand;  // osso da mão direita (arma)
     glm::mat4 handFix{1.f};    // corrige o referencial da mão de modelos importados
     Scene::Handle weapon;      // arma equipada (opcional)
+    std::vector<Scene::Handle> gear;  // equipamento preso aos ossos (colete, cinto, boné, corrente...)
     int weaponKind = -1;
     std::string shotSound;     // som do tiro/golpe da arma equipada (ex.: "tiro_ak47")
     glm::vec3 muzzle{0.f};     // ponta do cano no espaço da arma
@@ -469,6 +470,8 @@ bool modelParts(Engine* e, const std::string& path, const char* only, std::vecto
 void spawnPrototype(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, float scale, std::vector<Scene::Handle>* out,
                 std::vector<BoxCollider>* colliders);
 int loadModelFile(Engine* e, const char* path); // .glb/.gltf/.fbx -> id da raiz (-1 = erro em lastError)
+// Equipamento do personagem (shaders/kit/personagens/equip/<nome>.glb, osso em equipamento.txt): preso ao osso
+bool attachGear(Engine* e, int character, const std::string& name);
 std::string gameStatusText(Engine* e);
 // Partida de times: escolha do lado, lojas (o app mostra a lista e compra), caminhos dos robôs
 void teamChoose(Engine* e, int team);

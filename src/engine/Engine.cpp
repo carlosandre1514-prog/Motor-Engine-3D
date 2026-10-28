@@ -1037,6 +1037,10 @@ void updatePlayer(Engine* e, float dt) {
 void deleteObject(Engine* e, Scene::Handle h) {
     GameObject* sel = e->scene.get(h);
     if (!sel) return;
+    // personagem apagado leva junto o equipamento preso nele
+    std::vector<Scene::Handle> gear;
+    for (const CharacterInfo& c : e->characters)
+        if (c.root.index == h.index && c.root.gen == h.gen) gear = c.gear;
     std::vector<const Transform3D*> gone;
     Scene::forEachInSubtree(*sel, [&](GameObject& g) { gone.push_back(&g.transform); });
     auto isGone = [&](const Transform3D* t) { return t && std::find(gone.begin(), gone.end(), t) != gone.end(); };
@@ -1080,6 +1084,7 @@ void deleteObject(Engine* e, Scene::Handle h) {
     for (Animator* a : ownAnims) e->animatorPool.release(a);
     e->scene.destroy(h);
     ++e->revision;
+    for (Scene::Handle g : gear) deleteObject(e, g);
 }
 
 // ---------------- efeitos ----------------

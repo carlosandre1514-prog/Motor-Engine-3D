@@ -1,0 +1,16 @@
+colete_pm mixamorig:Spine1
+colete_bope mixamorig:Spine1
+colete_swat mixamorig:Spine1
+colete_civil mixamorig:Spine1
+cinto_tatico mixamorig:Hips
+cinto_tatico_marrom mixamorig:Hips
+capacete_preto mixamorig:Head
+capacete_azul mixamorig:Head
+bone_tras_preto mixamorig:Head
+bone_tras_vermelho mixamorig:Head
+bone_tras_branco mixamorig:Head
+corrente_ouro mixamorig:Spine2
+corrente_ouro_grossa mixamorig:Spine2
+relogio_ouro mixamorig:LeftForeArm
+brinco_argola mixamorig:Head
+brinco_diamante mixamorig:Head

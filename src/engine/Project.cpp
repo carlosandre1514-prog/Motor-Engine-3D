@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <stb_image.h>
 #include "assets/TextureManager.h"
 #include "engine/Engine.h"
@@ -377,6 +378,37 @@ int loadModelFile(Engine* e, const char* pathIn) {
         }
     }
     return rootId;
+}
+
+bool attachGear(Engine* e, int ci, const std::string& name) {
+    if (ci < 0 || ci >= int(e->characters.size()) || !e->characters[ci].anim || !e->characters[ci].anim->skeleton) return false;
+    // osso de cada peça (gerado junto com as peças pelo tools/gerar_equipamento.py)
+    static std::map<std::string, std::string> bones;
+    if (bones.empty())
+        if (FILE* f = std::fopen(kitPath(e, "personagens/equip/equipamento.txt").c_str(), "r")) {
+            char a[96], b[96];
+            while (std::fscanf(f, "%95s %95s", a, b) == 2) bones[a] = b;
+            std::fclose(f);
+        }
+    auto it = bones.find(name);
+    if (it == bones.end()) { e->lastError = "equipamento desconhecido: " + name; return false; }
+    CharacterInfo& c = e->characters[ci];
+    const Skeleton& S = *c.anim->skeleton;
+    int joint = -1;
+    for (int j = 0; j < S.jointCount; ++j) if (it->second == S.name[j]) joint = j;
+    if (joint < 0) { e->lastError = "o personagem não tem o osso " + it->second; return false; }
+    Scene::Handle selected = e->selected;
+    int id = loadModelFile(e, ("kit:personagens/equip/" + name).c_str());
+    e->selected = selected;
+    GameObject* g = objectById(e, id);
+    if (!g) return false;
+    Scene::Handle h = Scene::handleOf(*g);
+    g->transform.setScale(glm::vec3(1.f));
+    // a peça foi modelada na pose de repouso do personagem: o inverso do bind do osso leva ela para o osso
+    e->attachments.push_back({h, c.anim, joint, S.inverseBind[joint]});
+    c.gear.push_back(h);
+    updateAttachments(e);
+    return true;
 }
 
 int matIndexByName(const std::string& name) { return matOf(name); }
@@ -1041,6 +1073,14 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
             makeCharacterFromModel(e, flag(spec, "jogador", false));
             spec["personagem"] = true;
             spec.erase("jogador");
+            // roupa pintada na textura do corpo e equipamento preso aos ossos
+            if (auto v = spec.find("visual"); v != spec.end() && v->is_string() && !v->get<std::string>().empty())
+                applyMaterialTo(e, *g, true, json{{"textura", kitPath(e, "personagens/visual/" + v->get<std::string>() + ".jpg")}});
+            if (auto eq = spec.find("equipamento"); eq != spec.end() && eq->is_array()) {
+                int ci = charIndexOf(e, g);
+                for (const auto& it : *eq)
+                    if (it.is_string() && !attachGear(e, ci, it.get<std::string>())) e->lastError.clear();
+            }
             return finish(e, Scene::handleOf(*g), spec, true);
         }
         return finish(e, Scene::handleOf(*g), spec, false);

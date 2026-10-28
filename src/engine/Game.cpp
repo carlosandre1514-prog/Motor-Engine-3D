@@ -2,6 +2,7 @@
 // Os comportamentos vêm da receita de cada objeto (Project.cpp): o "tipo" já traz o comportamento principal
 // (inimigo, coletavel, objetivo, spawner, zona_dano) e "comportamentos": [...] acrescenta outros.
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
 #include "engine/Engine.h"
@@ -279,18 +280,20 @@ int enemyTarget(Engine* e) {
 
 
 // ================= Polícia x Bandidos (partida de times) =================
-struct SkinDef { const char* name; int price; const char* shirt; const char* pants; const char* shoes; const char* style; bool sleeves; const char* model; };
+// Roupas da partida: o personagem base (kit:personagens/base) com a roupa pintada na textura ("visual") e o
+// equipamento preso aos ossos (colete, cinto com carregadores e radinho, capacete, boné, corrente, relógio, brinco)
+struct SkinDef { const char* name; int price; const char* visual; const char* gear; };
 const SkinDef kSkins[2][5] = {
-    {{"PM (farda cinza)", 0, "#5d6872", "#353b44", "#121212", "bone", true, ""},
-     {"PM camuflada", 500, "#56603e", "#414a2f", "#1b1b14", "bone", true, ""},
-     {"Polícia Civil", 600, "#1d2533", "#2a2e35", "#151515", "curto", false, ""},
-     {"BOPE (preto)", 800, "#141618", "#141618", "#0b0b0b", "bone", true, ""},
-     {"Tático (traje robótico)", 1500, "", "", "", "", true, "kit:personagens/soldado"}},
-    {{"Camisa de time", 0, "#f2cf1d", "#1c5cc0", "#f2f2f2", "curto", false, ""},
-     {"Regata e boné", 300, "#e9e9e9", "#2a2a2a", "#d02020", "bone", false, ""},
-     {"Moletom com capuz", 500, "#3a3e45", "#1d2a46", "#f0f0f0", "curto", true, ""},
-     {"Vermelho e preto", 800, "#b3121b", "#141414", "#141414", "bone", false, ""},
-     {"Tático preto", 1200, "#121212", "#121212", "#0a0a0a", "bone", true, ""}}};
+    {{"PM (farda cinza-azulada)", 0, "pm", "colete_pm cinto_tatico"},
+     {"PM camuflada", 500, "pm_camuflada", "colete_pm cinto_tatico capacete_preto"},
+     {"Polícia Civil", 600, "civil", "colete_civil cinto_tatico relogio_ouro"},
+     {"BOPE", 800, "bope", "colete_bope cinto_tatico capacete_preto"},
+     {"SWAT", 1500, "swat", "colete_swat cinto_tatico capacete_azul"}},
+    {{"Camisa de time e boné", 0, "camisa_time", "bone_tras_branco corrente_ouro cinto_tatico_marrom"},
+     {"Regata, ouro e tatuagem", 300, "regata", "bone_tras_vermelho corrente_ouro_grossa relogio_ouro brinco_diamante cinto_tatico_marrom"},
+     {"Moletom", 500, "moletom", "bone_tras_preto relogio_ouro brinco_argola cinto_tatico_marrom"},
+     {"Vermelho e preto", 800, "vermelho_preto", "bone_tras_preto corrente_ouro relogio_ouro brinco_argola cinto_tatico_marrom"},
+     {"Balaclava", 1200, "balaclava_preta", "cinto_tatico relogio_ouro corrente_ouro"}}};
 struct GunDef { const char* key; const char* name; int price; int team; float dmg, interval, spread; int burst, pellets; };
 const GunDef kGuns[] = {
     {"pistola", "Pistola", 0, -1, 22.f, 0.4f, 0.03f, 2, 1},
@@ -340,10 +343,14 @@ void equipGun(Engine* e, Fighter& f) {
 // Cria (ou recria, ao trocar de roupa) o personagem em jogo do lutador, em pos/yaw
 void spawnFighterBody(Engine* e, Fighter& f, glm::vec3 pos, float yaw) {
     const SkinDef& sk = kSkins[f.team][std::clamp(f.skin, 0, 4)];
-    json spec;
-    if (sk.model[0]) spec = {{"tipo", "modelo"}, {"arquivo", sk.model}, {"personagem", true}};
-    else spec = {{"tipo", "personagem"}, {"semente", int(e->fxRng.next() & 0x7fffffff) | 1},
-                 {"aparencia", {{"camisa", sk.shirt}, {"calca", sk.pants}, {"tenis", sk.shoes}, {"estilo_cabelo", sk.style}, {"manga_comprida", sk.sleeves}}}};
+    json gear = json::array();
+    for (const char* p = sk.gear; *p;) {
+        const char* q = std::strchr(p, ' ');
+        size_t n = q ? size_t(q - p) : std::strlen(p);
+        if (n) gear.push_back(std::string(p, n));
+        p += n + (q ? 1 : 0);
+    }
+    json spec = {{"tipo", "modelo"}, {"arquivo", "kit:personagens/base"}, {"personagem", true}, {"visual", sk.visual}, {"equipamento", gear}};
     spec["pos"] = {pos.x, pos.y, pos.z};
     spec["rot_y"] = glm::degrees(yaw);
     spec["nome"] = f.name;

@@ -927,7 +927,8 @@ class MainActivity : Activity() {
     private fun characterMenu() {
         val items = arrayOf("Aleatório", "Personalizar…", "✏ Editar o personagem selecionado…",
                             "📂 Personagem de um arquivo 3D (.fbx, .glb, .gltf, .obj)…", "Controlar o personagem selecionado no Play",
-                            "Ver / trocar animações…", "Transformar o modelo selecionado em personagem", "🪖 Soldado (traje tático)")
+                            "Ver / trocar animações…", "Transformar o modelo selecionado em personagem", "🪖 Soldado (traje tático)",
+                            "👮 Policial / 🔫 Bandido (roupas e equipamento)…")
         dialog().setTitle("Personagem").setItems(items) { _, which ->
             when (which) {
                 0 -> gl { NativeBridge.nativeCreateRandomCharacter(seed(), false) }
@@ -948,7 +949,62 @@ class MainActivity : Activity() {
                     toast(if (cid < 0) "Não deu: " + NativeBridge.nativeLastError() else "Soldado pronto! Dê uma arma a ele e aperte ▶ Play")
                     saveIfChanged()
                 }
+                8 -> outfitMenu()
                 else -> gl { NativeBridge.nativeSetPlayer(); toast("Esse personagem é o jogador no Play") }
+            }
+        }.show()
+    }
+
+    // Personagem base com a roupa pintada no corpo ("visual") e o equipamento preso aos ossos
+    private val visuals = arrayOf("pm" to "PM (cinza-azulada)", "pm_camuflada" to "PM camuflada", "civil" to "Polícia Civil", "bope" to "BOPE",
+                                  "swat" to "SWAT", "camisa_time" to "Camisa de time", "regata" to "Regata com tatuagens",
+                                  "moletom" to "Moletom", "vermelho_preto" to "Vermelho e preto", "tatico_preto" to "Tático preto",
+                                  "balaclava_preta" to "Balaclava e moletom preto", "regata_balaclava" to "Regata e balaclava")
+    private val gearItems = arrayOf("colete_pm" to "Colete PM", "colete_bope" to "Colete BOPE", "colete_swat" to "Colete SWAT",
+                                    "colete_civil" to "Colete Polícia Civil", "cinto_tatico" to "Cinto tático (carregadores e radinho)",
+                                    "cinto_tatico_marrom" to "Cinto marrom (carregadores e radinho)", "capacete_preto" to "Capacete preto",
+                                    "capacete_azul" to "Capacete azul", "bone_tras_preto" to "Boné pra trás preto",
+                                    "bone_tras_vermelho" to "Boné pra trás vermelho", "bone_tras_branco" to "Boné pra trás branco",
+                                    "corrente_ouro" to "Corrente de ouro", "corrente_ouro_grossa" to "Corrente de ouro grossa",
+                                    "relogio_ouro" to "Relógio de ouro", "brinco_argola" to "Brinco de argola", "brinco_diamante" to "Brinco de diamante")
+    private val outfitPresets = arrayOf(
+        Triple("🚓 PM", "pm", "colete_pm cinto_tatico"), Triple("🚓 PM camuflada", "pm_camuflada", "colete_pm cinto_tatico capacete_preto"),
+        Triple("🚓 Polícia Civil", "civil", "colete_civil cinto_tatico relogio_ouro"), Triple("🚓 BOPE", "bope", "colete_bope cinto_tatico capacete_preto"),
+        Triple("🚓 SWAT", "swat", "colete_swat cinto_tatico capacete_azul"),
+        Triple("🔫 Camisa de time e boné", "camisa_time", "bone_tras_branco corrente_ouro cinto_tatico_marrom"),
+        Triple("🔫 Regata, ouro e tatuagem", "regata", "bone_tras_vermelho corrente_ouro_grossa relogio_ouro brinco_diamante cinto_tatico_marrom"),
+        Triple("🔫 Moletom", "moletom", "bone_tras_preto relogio_ouro brinco_argola cinto_tatico_marrom"),
+        Triple("🔫 Vermelho e preto", "vermelho_preto", "bone_tras_preto corrente_ouro relogio_ouro brinco_argola cinto_tatico_marrom"),
+        Triple("🔫 Balaclava", "balaclava_preta", "cinto_tatico relogio_ouro corrente_ouro"))
+
+    private fun addOutfitCharacter(visual: String, gear: List<String>, team: String) {
+        val j = JSONObject()
+        j.put("tipo", "modelo"); j.put("arquivo", "kit:personagens/base"); j.put("personagem", true)
+        j.put("visual", visual); j.put("equipamento", JSONArray(gear))
+        if (team.isNotEmpty()) j.put("time", team)
+        gl {
+            if (NativeBridge.addSpec(j.toString()) < 0) toast("Erro: " + NativeBridge.nativeLastError())
+            else { toast("Personagem criado no foco da câmera"); saveIfChanged() }
+        }
+    }
+
+    private fun outfitMenu() {
+        val labels = outfitPresets.map { it.first }.toTypedArray() + "🧩 Montar: escolher roupa e equipamento…"
+        dialog().setTitle("Policial / Bandido").setItems(labels) { _, which ->
+            if (which < outfitPresets.size) {
+                val p = outfitPresets[which]
+                addOutfitCharacter(p.second, p.third.split(" "), if (p.first.startsWith("🚓")) "policia" else "bandidos")
+            } else {
+                dialog().setTitle("Roupa").setItems(visuals.map { it.second }.toTypedArray()) { _, v ->
+                    val checked = BooleanArray(gearItems.size)
+                    dialog().setTitle("Equipamento (marque quantos quiser)")
+                        .setMultiChoiceItems(gearItems.map { it.second }.toTypedArray(), checked) { _, i, on -> checked[i] = on }
+                        .setPositiveButton("Criar") { _, _ ->
+                            val gear = gearItems.filterIndexed { i, _ -> checked[i] }.map { it.first }
+                            val police = visuals[v].first in setOf("pm", "pm_camuflada", "civil", "bope", "swat")
+                            addOutfitCharacter(visuals[v].first, gear, if (police) "policia" else "bandidos")
+                        }.setNegativeButton("Cancelar", null).show()
+                }.show()
             }
         }.show()
     }
