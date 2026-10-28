@@ -411,7 +411,7 @@ class MainActivity : Activity() {
                 else assets.open(child).use { input -> File(to, name).outputStream().use { input.copyTo(it) } }
             }
         }
-        for (sub in listOf("terrain", "materials", "kit")) {
+        for (sub in listOf("terrain", "materials", "kit", "anim")) {
             val folder = File(dir, sub)
             val stamp = File(folder, ".versao")
             if (stamp.exists() && stamp.readText() == installed) continue

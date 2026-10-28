@@ -1,0 +1,38 @@
+# Animações capturadas (Mixamo) -> shaders/anim. Converter:
+#   MOCAP_LISTA=assets-fontes/animacoes/manifesto.txt MOCAP_OUT=shaders/anim ./build/mobile3d_headless shaders saida
+# arquivo.fbx;saida.anim;papel (- = só aparece na lista de animações);Nome;modo (solto | lugar | pose)
+# Papéis: fuzil_parado fuzil_andando fuzil_correndo fuzil_mirando fuzil_andando_mirando fuzil_costas fuzil_esquerda
+#         fuzil_direita fuzil_atirando recarregar morte pulo (e também parado andando correndo pistola_* faca_*)
+Idle.fbx;fuzil_parado.anim;fuzil_parado;Parado (fuzil);lugar
+Rifle_Walk.fbx;fuzil_andando.anim;fuzil_andando;Andando (fuzil);lugar
+rifle_run.fbx;fuzil_correndo.anim;fuzil_correndo;Correndo (fuzil);lugar
+rifle_aiming_idle.fbx;fuzil_mirando.anim;fuzil_mirando;Mirando (fuzil);lugar
+walking.fbx;fuzil_andando_mirando.anim;fuzil_andando_mirando;Andando mirando (fuzil);lugar
+walking_backwards.fbx;fuzil_costas.anim;fuzil_costas;De costas (fuzil);lugar
+strafe_2.fbx;fuzil_esquerda.anim;fuzil_esquerda;Lado esquerdo (fuzil);lugar
+strafe.fbx;fuzil_direita.anim;fuzil_direita;Lado direito (fuzil);lugar
+firing_rifle.fbx;fuzil_atirando.anim;fuzil_atirando;Atirando (fuzil);lugar
+Reloading.fbx;recarregar.anim;recarregar;Recarregando (fuzil);lugar
+Death_From_The_Front.fbx;morte.anim;morte;Morte (de frente);solto
+jump_forward.fbx;pulo.anim;pulo;Pulando;pose
+Walk_With_Rifle.fbx;andando_mirando_2.anim;-;Andando mirando 2 (fuzil);lugar
+Run_Forward.fbx;correndo_2.anim;-;Correndo 2 (fuzil);lugar
+Backwards_Rifle_Walk.fbx;de_costas_2.anim;-;De costas 2 (fuzil);lugar
+Strafe.fbx;passo_esquerda.anim;-;Passo para a esquerda (fuzil);lugar
+Rifle_Side_Step.fbx;passo_direita.anim;-;Passo para a direita (fuzil);lugar
+run_backwards.fbx;correndo_de_costas.anim;-;Correndo de costas (fuzil);lugar
+Crouch_Walking.fbx;agachado_andando.anim;-;Agachado andando (fuzil);lugar
+Rifle_Crouch_Walk_To_Kneel.fbx;agachar_ajoelhar.anim;-;Agachar e ajoelhar (fuzil);lugar
+Rifle_Turn.fbx;virando_fuzil.anim;-;Virando (fuzil);lugar
+Turning.fbx;virando.anim;-;Virando andando;lugar
+Turn_Left_45_Degrees.fbx;virar_esquerda_45.anim;-;Virar 45° à esquerda;lugar
+Walk_Forward_Left.fbx;andando_diagonal_esquerda.anim;-;Andando na diagonal (esquerda);lugar
+Start_Walking.fbx;comecar_andar.anim;-;Começar a andar;lugar
+start_walking.fbx;comecar_andar_fuzil.anim;-;Começar a andar (fuzil);lugar
+Stop_Walking_With_Rifle.fbx;parar_andar_fuzil.anim;-;Parar de andar (fuzil);lugar
+stop_walking.fbx;parar_andar_fuzil_2.anim;-;Parar de andar 2 (fuzil);lugar
+start_walking_backwards.fbx;comecar_de_costas.anim;-;Começar de costas (fuzil);lugar
+walk_backwards_stop.fbx;parar_de_costas.anim;-;Parar de costas (fuzil);lugar
+jump_backward.fbx;pulo_para_tras.anim;-;Pulo para trás;pose
+Death_From_Right.fbx;morte_direita.anim;-;Morte (tiro da direita);solto
+walking_to_dying.fbx;andando_e_morrendo.anim;-;Andando e morrendo;solto

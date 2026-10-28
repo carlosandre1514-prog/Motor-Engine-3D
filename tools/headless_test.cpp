@@ -454,6 +454,69 @@ int main(int argc, char** argv) {
         if (px[2] < 90) { std::printf("  [ERRO] céu escuro depois de reabrir do globo\n"); ++g_fail; }
         engine_set_play(e, 0);
     };
+    // MOCAP_LISTA=<manifesto> MOCAP_OUT=<pasta>: converte as animações (Mixamo) para .anim do motor e escreve a
+    // biblioteca.txt. Linhas do manifesto: arquivo.fbx;saida.anim;papel (- = só na lista);Nome;modo (solto|lugar|pose)
+    if (const char* list = std::getenv("MOCAP_LISTA")) {
+        std::string outDir = std::getenv("MOCAP_OUT") ? std::getenv("MOCAP_OUT") : ".";
+        std::string base = list;
+        base = base.substr(0, base.find_last_of('/') + 1);
+        FILE* in = std::fopen(list, "r");
+        FILE* lib = std::fopen((outDir + "/biblioteca.txt").c_str(), "w");
+        if (!in || !lib) { std::printf("  [ERRO] manifesto ou saída\n"); return 1; }
+        std::fprintf(lib, "# gerado por tools/headless_test (MOCAP_LISTA): arquivo;papel;Nome;loop\n");
+        char line[512];
+        while (std::fgets(line, sizeof(line), in)) {
+            std::string l = line;
+            l.erase(l.find_last_not_of("\r\n") + 1);
+            if (l.empty() || l[0] == '#') continue;
+            std::vector<std::string> f;
+            size_t a = 0;
+            for (size_t b; (b = l.find(';', a)) != std::string::npos; a = b + 1) f.push_back(l.substr(a, b - a));
+            f.push_back(l.substr(a));
+            if (f.size() < 5) continue;
+            int mode = f[4] == "lugar" ? 1 : f[4] == "pose" ? 2 : 0;
+            int n = engine_mocap_bake((base + f[0]).c_str(), (outDir + "/" + f[1]).c_str(), mode, f[3].c_str());
+            std::printf("  %-34s %-24s %s %4d quadros\n", f[0].c_str(), f[2].c_str(), n ? "ok" : "ERRO", n);
+            if (!n) { ++g_fail; continue; }
+            std::fprintf(lib, "%s;%s;%s;%d\n", f[1].c_str(), f[2].c_str(), f[3].c_str(), mode == 1 ? 1 : 0);
+        }
+        std::fclose(in);
+        std::fclose(lib);
+        engine_destroy(e);
+        return g_fail ? 1 : 0;
+    }
+    // SO_ANIMS: personagem do motor tocando cada animação da lista (2 momentos de cada), para conferir
+    if (std::getenv("SO_ANIMS")) {
+        engine_new_scene(e);
+        int ch = engine_create_random_character(e, 3, 0);
+        engine_select(e, ch);
+        engine_create_weapon(e, 1);
+        engine_select(e, ch);
+        engine_set_anim_preview(e, 1);
+        std::string names = engine_animation_list(e);
+        int idx = 0;
+        size_t pos = 0;
+        while (pos < names.size()) {
+            size_t nl = names.find('\n', pos);
+            std::string nm = names.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+            pos = nl == std::string::npos ? names.size() : nl + 1;
+            const char* only = std::getenv("SO_ANIMS_DE");
+            if (!only || idx >= std::atoi(only)) {
+                engine_set_animation(e, idx);
+                for (int k = 0; k < 2; ++k) {
+                    engine_set_camera(e, 0.f, 0.9f, 0.f, 0.7f + 0.0f * k, 0.15f, 3.6f);
+                    frames(e, k == 0 ? 8 : 18);
+                    char fn[96];
+                    std::snprintf(fn, sizeof(fn), "anim_%02d_%d.png", idx, k);
+                    save(out, fn);
+                }
+                std::printf("  %02d %s\n", idx, nm.c_str());
+            }
+            ++idx;
+        }
+        engine_destroy(e);
+        return 0;
+    }
     if (std::getenv("SO_GLOBO_PLAY")) { globePlay(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ARMAS")) { weapons(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_DESEMPENHO")) { perf(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }

@@ -1,0 +1,34 @@
+# gerado por tools/headless_test (MOCAP_LISTA): arquivo;papel;Nome;loop
+fuzil_parado.anim;fuzil_parado;Parado (fuzil);1
+fuzil_andando.anim;fuzil_andando;Andando (fuzil);1
+fuzil_correndo.anim;fuzil_correndo;Correndo (fuzil);1
+fuzil_mirando.anim;fuzil_mirando;Mirando (fuzil);1
+fuzil_andando_mirando.anim;fuzil_andando_mirando;Andando mirando (fuzil);1
+fuzil_costas.anim;fuzil_costas;De costas (fuzil);1
+fuzil_esquerda.anim;fuzil_esquerda;Lado esquerdo (fuzil);1
+fuzil_direita.anim;fuzil_direita;Lado direito (fuzil);1
+fuzil_atirando.anim;fuzil_atirando;Atirando (fuzil);1
+recarregar.anim;recarregar;Recarregando (fuzil);1
+morte.anim;morte;Morte (de frente);0
+pulo.anim;pulo;Pulando;0
+andando_mirando_2.anim;-;Andando mirando 2 (fuzil);1
+correndo_2.anim;-;Correndo 2 (fuzil);1
+de_costas_2.anim;-;De costas 2 (fuzil);1
+passo_esquerda.anim;-;Passo para a esquerda (fuzil);1
+passo_direita.anim;-;Passo para a direita (fuzil);1
+correndo_de_costas.anim;-;Correndo de costas (fuzil);1
+agachado_andando.anim;-;Agachado andando (fuzil);1
+agachar_ajoelhar.anim;-;Agachar e ajoelhar (fuzil);1
+virando_fuzil.anim;-;Virando (fuzil);1
+virando.anim;-;Virando andando;1
+virar_esquerda_45.anim;-;Virar 45° à esquerda;1
+andando_diagonal_esquerda.anim;-;Andando na diagonal (esquerda);1
+comecar_andar.anim;-;Começar a andar;1
+comecar_andar_fuzil.anim;-;Começar a andar (fuzil);1
+parar_andar_fuzil.anim;-;Parar de andar (fuzil);1
+parar_andar_fuzil_2.anim;-;Parar de andar 2 (fuzil);1
+comecar_de_costas.anim;-;Começar de costas (fuzil);1
+parar_de_costas.anim;-;Parar de costas (fuzil);1
+pulo_para_tras.anim;-;Pulo para trás;0
+morte_direita.anim;-;Morte (tiro da direita);0
+andando_e_morrendo.anim;-;Andando e morrendo;0

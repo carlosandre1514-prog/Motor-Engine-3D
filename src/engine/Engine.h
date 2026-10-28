@@ -46,7 +46,13 @@ struct CharacterInfo {
     glm::vec3 muzzle{0.f};     // ponta do cano no espaço da arma
     float aimTimer = 0.f;      // > 0: mirando/atacando (arma apontada para frente)
     bool aimHold = false;      // botão "Mirar" segurado (jogador)
+    float fireAnim = 0.f;      // > 0: acabou de atirar (animação de tiro, com coice)
+    int ammo = 30;             // balas no pente (fuzil/escopeta/sniper do jogador)
+    float reloadTimer = 0.f;   // > 0: recarregando (não atira)
+    bool dying = false;        // tocando a animação de morte
 };
+// Animação de morte (não repete); sem ela, congela parado
+void playDeath(CharacterInfo& c);
 
 // Modelo reaproveitado várias vezes (árvores, casas do mundo infinito): instancing automático
 struct ProtoPart { MeshId mesh; MaterialId mat; float lodNear = 0.f, lodFar = 1e30f; glm::mat4 local{1.f}; };

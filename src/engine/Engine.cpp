@@ -775,18 +775,43 @@ bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bo
         b->setWorldTransform(t);
         go->transform.setRotation(q);
     }
-    if (c.anim) {
+    c.fireAnim = std::max(0.f, c.fireAnim - dt);
+    c.reloadTimer = std::max(0.f, c.reloadTimer - dt);
+    if (c.anim && !c.dying) {
         float hs = std::sqrt(nv.x() * nv.x() + nv.z() * nv.z());
         int base = armedClipBase(c.weaponKind);
         bool aiming = c.aimTimer > 0.f || c.aimHold;
         int clip = hs < 0.4f ? CC_Idle : hs < 4.f ? CC_Walk : CC_Run;
         if (base >= 0)
             clip = base + (hs < 0.4f ? (aiming ? AP_Aim : AP_Idle) : (aiming ? AP_AimWalk : hs < 4.f ? AP_Walk : AP_Run));
-        clip = c.clipMap[clip];
-        if (grounded && clip >= 0 && c.anim->clipIndex != clip) c.anim->setClip(clip);
-        c.anim->speed = hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
+        if (base == CC_Rifle) {
+            // mirando com fuzil: anda de costas e de lado olhando para o alvo; parado, o tiro tem coice
+            glm::vec3 local = glm::inverse(go->transform.rotation) * glm::vec3(nv.x(), 0.f, nv.z());
+            if (aiming && hs >= 0.4f) {
+                if (local.z < -0.5f * hs) clip = CC_RifleBack;
+                else if (std::abs(local.x) > std::abs(local.z)) clip = local.x > 0.f ? CC_RifleLeft : CC_RifleRight;
+            }
+            if (aiming && hs < 0.4f && c.fireAnim > 0.f) clip = CC_RifleFire;
+            if (c.reloadTimer > 0.f && hs < 4.f) clip = CC_Reload;
+        }
+        bool airborne = !grounded && std::abs(float(vel.y())) > 1.5f;
+        if (airborne) clip = CC_Jump;
+        int mapped = c.clipMap[clip];
+        if (mapped < 0 && clip >= CC_Death) mapped = c.clipMap[base >= 0 ? base + AP_Aim : CC_Idle];  // modelo sem essa animação
+        if ((grounded || airborne) && mapped >= 0 && c.anim->clipIndex != mapped) c.anim->setClip(mapped);
+        c.anim->loop = true;
+        c.anim->speed = clip == CC_Reload ? 1.4f : clip == CC_Jump || clip == CC_RifleFire ? 1.f
+                      : hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
     }
     return grounded;
+}
+
+void playDeath(CharacterInfo& c) {
+    c.dying = true;
+    if (!c.anim) return;
+    int d = c.clipMap[CC_Death];
+    if (d >= 0) { c.anim->setClip(d); c.anim->loop = false; c.anim->speed = 1.f; }
+    else c.anim->speed = 0.f;
 }
 
 void updatePlayer(Engine* e, float dt) {
@@ -798,6 +823,7 @@ void updatePlayer(Engine* e, float dt) {
     if (!go || !go->rigidBody || !go->rigidBody->body) return;
     btRigidBody* b = go->rigidBody->body;
     bool alive = e->game.state == 0;  // derrota/vitória: o jogador para
+    if (e->game.state == 2 && !c.dying) playDeath(c);
 
     float yaw = e->editorCam.yaw;
     glm::vec3 fwd(-std::sin(yaw), 0.f, -std::cos(yaw)), right(std::cos(yaw), 0.f, -std::sin(yaw));
@@ -808,7 +834,21 @@ void updatePlayer(Engine* e, float dt) {
     driveCharacter(e, c, move, speed, alive && e->jumpRequest, dt, face);
     e->jumpRequest = false;
 
-    if (alive && e->fireRequest && e->fireCooldown <= 0.f) fire(e, c, *go, b);
+    // fuzil, escopeta e sniper: pente de 30 tiros; vazio, recarrega sozinho (com a animação)
+    bool longGun = c.weaponKind == WK_Rifle || c.weaponKind == WK_Shotgun || c.weaponKind == WK_Sniper;
+    if (alive && e->fireRequest && e->fireCooldown <= 0.f && c.reloadTimer <= 0.f) {
+        fire(e, c, *go, b);
+        if (longGun) {
+            c.fireAnim = 0.35f;
+            if (--c.ammo <= 0) {
+                c.ammo = 30;
+                const AnimationClip* rc = c.anim && c.clipMap[CC_Reload] >= 0 ? c.anim->clipAt(c.clipMap[CC_Reload]) : nullptr;
+                c.reloadTimer = rc ? rc->duration / 1.4f : 2.f;
+                if (c.anim && c.clipMap[CC_Reload] >= 0) c.anim->setClip(c.clipMap[CC_Reload]);
+                e->game.message = "Recarregando...";
+            }
+        }
+    }
     e->fireRequest = false;
 
     // câmera em terceira pessoa segue o jogador

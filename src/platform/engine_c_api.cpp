@@ -1,4 +1,5 @@
 #include "platform/engine_c_api.h"
+#include "procgen/Mocap.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -61,6 +62,7 @@ Engine* engine_create(const char* shader_dir) {
     if (!e->renderer.init(shader_dir)) { delete e; return nullptr; }
     if (e->particles.init(e->renderer)) e->renderer.particles = &e->particles;
     e->objects.reserve(Scene::kMaxObjects);
+    eng::loadMocapLibrary(std::string(shader_dir) + "/anim");  // animações capturadas (antes de criar personagens)
     eng::ensureBasics(e);
     return e;
 }
@@ -233,7 +235,9 @@ void engine_set_play(Engine* e, int playing) {
             e->animators[i]->clipIndex = e->animSnap[i].clip;
             e->animators[i]->time = e->animSnap[i].time;
             e->animators[i]->speed = 1.f;
+            e->animators[i]->loop = true;
         }
+        for (auto& c : e->characters) { c.dying = false; c.ammo = 30; c.reloadTimer = 0.f; c.fireAnim = 0.f; }
         e->bodies.forEach([&](RigidBody& rb, RigidBodyPool::Handle) { e->physics.syncFromTransform(rb); });
         e->editorCam.target = e->savedCam.target; e->editorCam.yaw = e->savedCam.yaw;
         e->editorCam.pitch = e->savedCam.pitch; e->editorCam.distance = e->savedCam.distance;
@@ -460,6 +464,14 @@ const char* engine_animation_name(Engine* e) {
 }
 
 // ---------- estatísticas ----------
+int engine_mocap_bake(const char* fbx, const char* outAnim, int rootMode, const char* name) {
+    eng::MocapClip c;
+    std::string err;
+    if (!eng::bakeMocap(fbx, rootMode, c, err)) { std::fprintf(stderr, "%s: %s\n", fbx, err.c_str()); return 0; }
+    c.name = name ? name : "";
+    return eng::saveMocap(outAnim, c) ? c.frames : 0;
+}
+
 void engine_set_quality(Engine* e, int q) { if (e) e->quality = std::clamp(q, 0, 2); }
 
 void engine_get_profile(Engine* e, float* o) {

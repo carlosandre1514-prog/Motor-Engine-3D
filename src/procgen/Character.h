@@ -17,8 +17,12 @@ enum CharJointExtra { CJ_Neck = CJ_Count,
 
 // Animações geradas para todo personagem. Com arma: 5 por tipo (parado, andando, correndo, mirando/atacando,
 // andando mirando), na ordem de AP_*; a base de cada tipo é CC_Rifle, CC_Pistol ou CC_Melee.
+// Depois delas: morte, recarregar, mirando com fuzil andar de costas e de lado (esquerda/direita), atirar e pular.
 enum CharClip { CC_Idle, CC_Walk, CC_Run, CC_Dance, CC_Wave,
-                CC_Rifle, CC_Pistol = CC_Rifle + 5, CC_Melee = CC_Pistol + 5, CC_Count = CC_Melee + 5 };
+                CC_Rifle, CC_Pistol = CC_Rifle + 5, CC_Melee = CC_Pistol + 5,
+                CC_Death = CC_Melee + 5, CC_Reload, CC_RifleBack, CC_RifleLeft, CC_RifleRight, CC_RifleFire, CC_Jump, CC_Count };
+// Papel de cada animação (para a biblioteca de captura de movimento: shaders/anim/biblioteca.txt)
+const char* clipSlot(int charClip);
 enum ArmedPose { AP_Idle, AP_Walk, AP_Run, AP_Aim, AP_AimWalk };
 // tipo de pose da arma (WeaponKind abaixo): fuzil/escopeta/sniper, pistola, faca/taco
 int armedClipBase(int weaponKind);

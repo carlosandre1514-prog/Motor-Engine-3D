@@ -143,7 +143,7 @@ void dieBehavior(Engine* e, Behavior& b, GameObject& g) {
     if (b.type == BH_Enemy) {
         ++e->game.killed;
         if (g.rigidBody) { e->physics.setEnabled(*g.rigidBody, false); e->game.disabledBodies.push_back(g.rigidBody); }
-        if (CharacterInfo* c = charOf(e, &g); c && c->anim && c->clipMap[CC_Idle] >= 0) { c->anim->setClip(c->clipMap[CC_Idle]); c->anim->speed = 0.f; }
+        if (CharacterInfo* c = charOf(e, &g)) playDeath(*c);
         e->game.message = "Inimigo derrotado";
     } else if (b.type == BH_Explosive) {
         spawnEffect(e, FX_Explosion, EL_Fire, pos + glm::vec3(0, 0.5f, 0));
@@ -193,11 +193,12 @@ void updateEnemy(Engine* e, size_t i, float dt, CharacterInfo* pc, GameObject* p
     if (!go || !go->active) return;
     CharacterInfo* c = charOf(e, go);
     if (!c) return;
-    if (b.dead) {  // cai para trás e some
+    if (b.dead) {  // animação de morte (ou, sem ela, tomba para trás) e some
         b.deadTime += dt;
+        bool anim = c->anim && c->clipMap[CC_Death] >= 0;
         float k = std::min(1.f, b.deadTime / 0.5f);
-        go->transform.setRotation(b.startRot * glm::angleAxis(-1.5f * k * k, glm::vec3(1, 0, 0)));
-        if (b.deadTime > 4.f) {
+        if (!anim) go->transform.setRotation(b.startRot * glm::angleAxis(-1.5f * k * k, glm::vec3(1, 0, 0)));
+        if (b.deadTime > (anim ? 5.f : 4.f)) {
             hideObject(e, *go);
             if (GameObject* w = e->scene.get(c->weapon)) setSubtreeActive(*w, false), e->game.hidden.push_back(c->weapon);
         }

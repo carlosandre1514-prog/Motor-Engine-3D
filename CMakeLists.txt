@@ -40,6 +40,7 @@ add_library(mobile3d SHARED
   src/procgen/Buildings.cpp
   src/procgen/Weapons.cpp
   src/procgen/Character.cpp
+  src/procgen/Mocap.cpp
   src/engine/Engine.cpp
   src/engine/World.cpp
   src/engine/Project.cpp

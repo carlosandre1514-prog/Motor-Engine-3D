@@ -1,4 +1,5 @@
 #include "procgen/Character.h"
+#include "procgen/Mocap.h"
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -446,13 +447,48 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
     b.color = glm::vec4(1.f);
     // skinning rígido: todos os vértices já têm joints/weights do osso
 
-    // ---- animações
-    out.channelStorage.reserve(CC_Count * 48);  // exato o suficiente: ponteiros dos clips não podem mudar
-    { ClipWriter w(out, "Parado", 3.f); idle(w, J); w.finish(); }
-    { ClipWriter w(out, "Andando", 1.05f); locomotion(w, J, 0.5f, 0.75f, 0.4f, 0.25f, 0.03f, 0.025f); w.finish(); }
-    { ClipWriter w(out, "Correndo", 0.66f); locomotion(w, J, 0.95f, 1.5f, 0.85f, 1.25f, 0.2f, 0.06f); w.finish(); }
-    { ClipWriter w(out, "Dancando", 1.3f); dance(w, J); w.finish(); }
-    { ClipWriter w(out, "Acenando", 1.6f); wave(w, J); w.finish(); }
+    // ---- animações: captura de movimento (biblioteca) onde houver; senão, feitas por código
+    const auto& lib = mocapLibrary();
+    out.channelStorage.reserve((CC_Count + lib.size()) * 48);  // os ponteiros dos clips não podem mudar
+    out.keyData.reserve(out.keyData.size() + (CC_Count + lib.size()) * 48);
+    auto mocap = [&](const MocapClip& c, const char* name) {
+        AnimationClip clip;
+        std::snprintf(clip.name, sizeof(clip.name), "%s", name);
+        clip.duration = c.duration();
+        size_t first = out.channelStorage.size();
+        for (int j = 0; j < CJ_Total; ++j) {  // rotações: direto da biblioteca (iguais para qualquer altura)
+            Channel ch;
+            ch.joint = j; ch.path = ChannelPath::Rotation; ch.keyCount = c.frames;
+            ch.times = c.times.data(); ch.values = c.rot.data() + size_t(j) * c.frames * 4;
+            out.channelStorage.push_back(ch);
+        }
+        out.keyData.emplace_back(size_t(c.frames) * 3);  // quadril na altura deste personagem
+        std::vector<float>& hp = out.keyData.back();
+        const glm::vec3 hips0 = J.pos[CJ_Hips];
+        for (int f = 0; f < c.frames; ++f) {
+            glm::vec3 v = hips0 + c.hips[f] * hips0.y;
+            hp[f * 3] = v.x; hp[f * 3 + 1] = v.y; hp[f * 3 + 2] = v.z;
+        }
+        Channel ch;
+        ch.joint = CJ_Hips; ch.path = ChannelPath::Translation; ch.keyCount = c.frames;
+        ch.times = c.times.data(); ch.values = hp.data();
+        out.channelStorage.push_back(ch);
+        clip.channels = out.channelStorage.data() + first;
+        clip.channelCount = int(out.channelStorage.size() - first);
+        out.clips.push_back(clip);
+    };
+    // cada papel: a animação capturada (se a biblioteca tiver) ou a gerada
+    auto slot = [&](int cc, const char* name, float dur, const std::function<void(ClipWriter&)>& gen) {
+        if (const MocapClip* m = mocapForSlot(clipSlot(cc))) { mocap(*m, name); return; }
+        ClipWriter w(out, name, dur);
+        gen(w);
+        w.finish();
+    };
+    slot(CC_Idle, "Parado", 3.f, [&](ClipWriter& w) { idle(w, J); });
+    slot(CC_Walk, "Andando", 1.05f, [&](ClipWriter& w) { locomotion(w, J, 0.5f, 0.75f, 0.4f, 0.25f, 0.03f, 0.025f); });
+    slot(CC_Run, "Correndo", 0.66f, [&](ClipWriter& w) { locomotion(w, J, 0.95f, 1.5f, 0.85f, 1.25f, 0.2f, 0.06f); });
+    slot(CC_Dance, "Dancando", 1.3f, [&](ClipWriter& w) { dance(w, J); });
+    slot(CC_Wave, "Acenando", 1.6f, [&](ClipWriter& w) { wave(w, J); });
     const char* cls[3] = {"fuzil", "pistola", "faca"};
     const char* modes[5] = {"Parado", "Andando", "Correndo", "Mirando", "Andando mirando"};
     const float durs[5] = {3.f, 1.05f, 0.7f, 2.f, 1.05f};
@@ -460,10 +496,27 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
         for (int m = 0; m < 5; ++m) {
             char name[32];
             std::snprintf(name, sizeof(name), "%s (%s)", c == 2 && m >= AP_Aim ? (m == AP_Aim ? "Golpe" : "Golpe andando") : modes[m], cls[c]);
-            ClipWriter w(out, name, c == 2 && m >= AP_Aim ? 0.5f : durs[m]);
-            armedClip(w, J, CC_Rifle + c * 5, m);
-            w.finish();
+            slot(CC_Rifle + c * 5 + m, name, c == 2 && m >= AP_Aim ? 0.5f : durs[m], [&](ClipWriter& w) { armedClip(w, J, CC_Rifle + c * 5, m); });
         }
+    // extras: sem animação capturada, usam uma parecida feita por código
+    slot(CC_Death, "Morte", 3.f, [&](ClipWriter& w) { idle(w, J); });
+    slot(CC_Reload, "Recarregando (fuzil)", 2.f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_Idle); });
+    slot(CC_RifleBack, "De costas (fuzil)", 1.05f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_AimWalk); });
+    slot(CC_RifleLeft, "Lado esquerdo (fuzil)", 1.05f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_AimWalk); });
+    slot(CC_RifleRight, "Lado direito (fuzil)", 1.05f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_AimWalk); });
+    slot(CC_RifleFire, "Atirando (fuzil)", 1.f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_Aim); });
+    slot(CC_Jump, "Pulando", 0.9f, [&](ClipWriter& w) { idle(w, J); });
+    // o resto da biblioteca (sem papel) entra no fim da lista
+    for (const MocapClip& m : lib) if (m.slot.empty() || m.slot == "-") mocap(m, m.name.c_str());
+}
+
+const char* clipSlot(int cc) {
+    static const char* slots[CC_Count] = {"parado", "andando", "correndo", "dancando", "acenando",
+                                          "fuzil_parado", "fuzil_andando", "fuzil_correndo", "fuzil_mirando", "fuzil_andando_mirando",
+                                          "pistola_parado", "pistola_andando", "pistola_correndo", "pistola_mirando", "pistola_andando_mirando",
+                                          "faca_parado", "faca_andando", "faca_correndo", "faca_golpe", "faca_golpe_andando",
+                                          "morte", "recarregar", "fuzil_costas", "fuzil_esquerda", "fuzil_direita", "fuzil_atirando", "pulo"};
+    return cc >= 0 && cc < CC_Count ? slots[cc] : "";
 }
 
 }  // namespace eng
