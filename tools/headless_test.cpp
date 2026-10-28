@@ -643,7 +643,7 @@ int main(int argc, char** argv) {
         engine_set_play(e, 0);
     };
     // Personagem andando no Play guiado por uma direção no mundo (câmera fixa em yaw 0: frente = -Z)
-    auto steer = [&](int ch, int maxFrames, const std::function<glm::vec2(glm::vec3)>& dirOf) {
+    auto steer = [&](int ch, int maxFrames, const std::function<glm::vec2(glm::vec3)>& dirOf, int run = 0) {
         float p[3], r[3], sc[3];
         for (int k = 0; k < maxFrames; ++k) {
             engine_get_transform(e, ch, p, r, sc);
@@ -651,7 +651,7 @@ int main(int argc, char** argv) {
             if (std::getenv("DEPURAR") && k % 40 == 0) std::printf("    %3d: %.2f %.2f %.2f -> %.2f %.2f\n", k, p[0], p[1], p[2], d.x, d.y);
             if (glm::length(d) > 1.f) d = glm::normalize(d);
             engine_set_camera(e, p[0], p[1] + 1.f, p[2], 0.f, 0.3f, 4.f);
-            engine_player_input(e, d.x, -d.y, 0);
+            engine_player_input(e, d.x, -d.y, run);
             frames(e, 1);
         }
         engine_player_input(e, 0.f, 0.f, 0);
@@ -778,6 +778,60 @@ int main(int argc, char** argv) {
         if (p.z < 10.f) { std::printf("  [ERRO] atravessou o muro fora do corte\n"); ++g_fail; }
         engine_set_play(e, 0);
     };
+    // Mapa da favela (projeto "Favela Game"): vistas e o jogador subindo da entrada até o campinho
+    auto favela = [&]() {
+        std::printf("[31] mapa da favela\n");
+        auto t0 = std::chrono::steady_clock::now();
+        engine_tool_call(e, "carregar_mapa", R"({"tipo":"favela","semente":5,"com_jogador":true})");
+        float secs = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("  gerado em %.2f s\n", secs);
+        auto hAt = [&](float x, float z) {
+            nlohmann::json r = nlohmann::json::parse(std::string(engine_tool_call(e, "altura_terreno", nlohmann::json{{"pontos", {{x, z}}}}.dump().c_str())));
+            return r["alturas"][0].is_number() ? r["alturas"][0].get<float>() : 0.f;
+        };
+        engine_select(e, -1);
+        struct View { const char* name; float x, y, z, yaw, pitch, dist; bool ground; };
+        const View views[] = {
+            {"31_visao_geral", 0.f, 12.f, 0.f, 0.55f, 0.72f, 175.f, false},
+            {"31_entrada", 0.f, 1.7f, 58.f, 0.f, 0.12f, 6.f, true},
+            {"31_campinho", 2.f, 1.f, -41.f, 0.35f, 0.38f, 32.f, true},
+            {"31_praca", -33.f, 1.f, 27.f, -0.7f, 0.3f, 20.f, true},
+            {"31_beco", 0.f, 1.6f, 30.f, 0.f, 0.06f, 2.5f, true},
+            {"31_lajes", 8.f, 9.f, 2.f, 0.8f, 0.28f, 26.f, true},
+            {"31_area_alta", -46.f, 1.7f, -45.f, 3.6f, 0.08f, 2.f, true},
+            {"31_area_baixa", 45.f, 1.f, 22.f, -2.4f, 0.3f, 22.f, true},
+        };
+        for (const View& v : views) {
+            float y = v.ground ? hAt(v.x, v.z) + v.y : v.y;
+            engine_set_camera(e, v.x, y, v.z, v.yaw, v.pitch, v.dist);
+            frames(e, 4);
+            save(out, (std::string(v.name) + ".png").c_str());
+            stats(e, v.name);
+        }
+        // desempenho andando no Play
+        int pl = -1;
+        for (int id = 0; id < engine_object_count(e) && pl < 0; ++id)
+            if (engine_object_valid(e, id) && std::string(engine_object_name(e, id)) == "Jogador") pl = id;
+        if (pl < 0) { std::printf("  [ERRO] sem jogador\n"); ++g_fail; return; }
+        engine_set_play(e, 1);
+        frames(e, 15);
+        // sobe pela escadaria central: entrada -> (0,22) -> (-14,10) -> (-14,-14) -> (-6,-29) -> campinho
+        const glm::vec2 path[] = {{0, 42}, {0, 22}, {-14, 10}, {-14, -14}, {-6, -29}, {-2, -38}};
+        size_t wp = 0;
+        float worst = 0.f, total = 0.f;
+        int n = 0;
+        glm::vec3 end = steer(pl, 1200, [&](glm::vec3 p) -> glm::vec2 {
+            while (wp < 6 && glm::length(glm::vec2(p.x, p.z) - path[wp]) < 1.2f) ++wp;
+            if (wp >= 6) return {0.f, 0.f};
+            return glm::normalize(path[wp] - glm::vec2(p.x, p.z));
+        }, 1);
+        (void)worst; (void)total; (void)n;
+        std::printf("  jogador chegou em %.1f %.1f %.1f (alvo: campinho em z = -38), ponto %zu de 6\n", end.x, end.y, end.z, wp);
+        if (wp < 6) { std::printf("  [ERRO] não chegou ao campinho pelas escadarias\n"); ++g_fail; }
+        save(out, "31_play_campinho.png");
+        engine_set_play(e, 0);
+    };
+    if (std::getenv("SO_FAVELA")) { favela(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ESCADAS")) { stairs(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ABERTURAS")) { openings(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_CONSTRUCAO")) { modules(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
@@ -1446,6 +1500,7 @@ int main(int argc, char** argv) {
     modules();
     stairs();
     openings();
+    favela();
     supportHand();
 
     engine_destroy(e);

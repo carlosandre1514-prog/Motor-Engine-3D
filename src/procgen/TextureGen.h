@@ -35,6 +35,9 @@ enum class Mat : uint8_t {
     Dirt,          // terra batida (tile 3 x 3 m)
     Stone,         // piso de pedras (tile 2 x 2 m)
     Ceramic,       // piso cerâmico em lajotas de 40 cm (tile 2 x 2 m)
+    Graffiti,      // muro de reboco com grafites coloridos e pichação (tile 4 x 2 m)
+    ChainLink,     // alambrado / tela de arame (alfa recortado, tile 1 x 1 m)
+    Corrugated,    // telha ondulada de fibrocimento (ondas ao longo de u, tile 2 x 2 m)
     Count
 };
 

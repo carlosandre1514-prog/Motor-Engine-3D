@@ -118,13 +118,118 @@ float infiniteHeight(float x, float z, uint32_t seed) {
     return glm::mix(h, std::max(h, 4.f + hills * 3.f), spawn);
 }
 
-// Favela: morro central com encostas irregulares, base plana em volta
+// Favela (projeto "Favela Game"): morro em platô com encostas de pedra e mata, subindo do sul (entrada) para o norte
+// (campinho e área alta). Áreas planas (patamares) com muro de arrimo: campinho, área alta, praça, entrada e área baixa.
+// Norte = -Z. Rua do bairro embaixo, ao sul.
+struct FavelaPad { glm::vec2 c, half; float y; };
+enum { FP_Field, FP_High, FP_Square, FP_Entrance, FP_Low, FP_Count };
+
+float smoothStepTo(float a, float b, float x) { return smooth01(a, b, x); }
+
+// Distância de p ao segmento ab (t: posição ao longo, 0..1)
+float segDist2(glm::vec2 p, glm::vec2 a, glm::vec2 b, float& t) {
+    glm::vec2 ab = b - a;
+    t = std::clamp(glm::dot(p - a, ab) / std::max(glm::dot(ab, ab), 1e-6f), 0.f, 1.f);
+    return glm::length(p - (a + ab * t));
+}
+
+// Superelipse do platô: 1 na borda
+float favelaEdge(float x, float z) {
+    float ax = std::abs(x) / 64.f, az = std::abs(z) / 62.f;
+    return std::pow(ax * ax * ax * ax + az * az * az * az, 0.25f);
+}
+
+// Morro sem os patamares
+float favelaRaw(float x, float z, uint32_t seed) {
+    float n = fbm(x * 0.03f, z * 0.03f, 3, seed) - 0.5f;
+    float hb = 10.f + 14.f * smooth01(45.f, -50.f, z)
+             + 4.f * smooth01(-25.f, -55.f, x) * smooth01(-5.f, -45.f, z)                              // área alta (noroeste)
+             - 4.f * smooth01(26.f, 46.f, x) * smooth01(-12.f, 12.f, z) * (1.f - smooth01(40.f, 56.f, z))  // área baixa (leste)
+             + n * 2.4f;
+    float hv = 4.2f + (fbm(x * 0.02f + 7.f, z * 0.02f, 3, seed + 5) - 0.5f) * 3.f;  // baixada em volta
+    float s = favelaEdge(x, z);
+    float cliff = smooth01(0.97f, 1.16f, s + n * 0.04f);
+    float h = glm::mix(hb, hv, cliff);
+    // rua de acesso (entrada principal): desce do platô até a rua do bairro
+    auto ramp = [&](glm::vec2 a, glm::vec2 b, float ya, float yb, float w) {
+        float t, d = segDist2({x, z}, a, b, t);
+        float k = 1.f - smooth01(w * 0.5f, w * 0.5f + 2.5f, d);
+        h = glm::mix(h, glm::mix(ya, yb, t), k);
+    };
+    ramp({0.f, 56.f}, {0.f, 90.f}, 10.f, 4.2f, 8.f);
+    ramp({52.f, 36.f}, {64.f, 88.f}, 9.f, 4.2f, 6.f);   // acesso rápido pela área baixa
+    // rua do bairro (plana)
+    h = glm::mix(h, 4.2f, smooth01(84.f, 88.f, z));
+    return h;
+}
+
+const FavelaPad* favelaPads(uint32_t seed) {
+    static FavelaPad pads[FP_Count];
+    static uint32_t cached = 0xffffffffu;
+    if (cached != seed) {
+        cached = seed;
+        pads[FP_Field] = {{2.f, -41.f}, {16.f, 11.f}, 0.f};
+        pads[FP_High] = {{-46.f, -45.f}, {9.f, 8.f}, 0.f};
+        pads[FP_Square] = {{-33.f, 27.f}, {12.f, 9.f}, 0.f};
+        pads[FP_Entrance] = {{0.f, 49.f}, {10.f, 7.f}, 0.f};
+        pads[FP_Low] = {{45.f, 22.f}, {10.f, 12.f}, 0.f};
+        for (FavelaPad& p : pads) p.y = std::round(favelaRaw(p.c.x, p.c.y, seed) * 2.f) * 0.5f;
+        pads[FP_Entrance].y = 10.f;
+    }
+    return pads;
+}
+
+// Escadarias principais (rotas amarelas do mapa): saem da entrada, da praça e da área baixa e sobem até o campinho
+const std::vector<std::vector<glm::vec2>>& favelaRoutes() {
+    static const std::vector<std::vector<glm::vec2>> routes = {
+        {{0, 42}, {0, 22}, {-14, 10}, {-14, -14}, {-6, -29}},                // central, da entrada ao campinho
+        {{8, 42}, {24, 30}, {26, 6}, {20, -14}, {12, -29}},                  // leste
+        {{-21, 33}, {-36, 14}, {-40, -12}, {-44, -36}},                      // oeste, da praça à área alta
+        {{35, 18}, {40, -6}, {30, -26}, {19, -31}},                          // da área baixa ao campinho
+        {{-21, 22}, {0, 22}}, {{24, 30}, {35, 26}}, {{-40, -12}, {-14, -14}}, {{20, -14}, {40, -6}},
+        {{52, 35}, {56, 52}},                                                // estrada de terra da área baixa
+    };
+    return routes;
+}
+struct PadEntry { int pad; glm::vec2 a, b; };  // rampa suave de a (na borda do patamar) até b (para fora, ao longo da rota)
+const std::vector<PadEntry>& favelaEntries(uint32_t seed);
+
+float padDist(const FavelaPad& p, float x, float z) {
+    return std::max(std::abs(x - p.c.x) - p.half.x, std::abs(z - p.c.y) - p.half.y);
+}
+
+const std::vector<PadEntry>& favelaEntries(uint32_t seed) {
+    static std::vector<PadEntry> list;
+    static uint32_t cached = 0xffffffffu;
+    if (cached == seed) return list;
+    cached = seed;
+    list.clear();
+    const FavelaPad* pads = favelaPads(seed);
+    for (const auto& rt : favelaRoutes())
+        for (int end = 0; end < 2; ++end) {
+            glm::vec2 e = end ? rt.back() : rt.front(), prev = end ? rt[rt.size() - 2] : rt[1];
+            for (int k = 0; k < FP_Count; ++k)
+                if (padDist(pads[k], e.x, e.y) < 4.f) list.push_back({k, e, e + glm::normalize(prev - e) * 8.f});
+        }
+    return list;
+}
+
 float favelaHeight(float x, float z, uint32_t seed) {
-    float r = std::sqrt(x * x + z * z);
-    float n = fbm(x * 0.02f, z * 0.02f, 4, seed) * 6.f;
-    float hill = 46.f * std::exp(-std::pow(r / 88.f, 2.f)) + n * (1.f - smooth01(95.f, 118.f, r));
-    float flat = 2.5f;
-    return glm::mix(flat + hill, flat, smooth01(108.f, 122.f, r));
+    float h = favelaRaw(x, z, seed);
+    const FavelaPad* pads = favelaPads(seed);
+    const auto& entries = favelaEntries(seed);
+    for (int k = 0; k < FP_Count; ++k) {
+        float d = padDist(pads[k], x, z);
+        if (d > 11.f) continue;
+        float blend = 1.6f;
+        for (const PadEntry& en : entries) {  // onde a escadaria chega, o patamar desce em rampa
+            if (en.pad != k) continue;
+            float t, ds = segDist2({x, z}, en.a, en.b, t);
+            if (ds < 4.f) blend = std::max(blend, glm::mix(1.6f, 9.f, 1.f - smooth01(2.f, 4.f, ds)));
+        }
+        if (d < blend) h = glm::mix(h, pads[k].y, 1.f - smooth01(0.f, blend, d));
+    }
+    return h;
 }
 
 // hint (opcional): tipo de chão para o shader de terreno, gravado como 1 - cor do vértice (branco = sem dica)
@@ -580,91 +685,683 @@ void genCity(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
     e->renderer.fogDensity = 0.0016f;
 }
 
+// Caixa ao longo do segmento a-b (fios, corrimãos, correntes, vergalhões)
+void segBox(MeshBuilder& m, glm::vec3 a, glm::vec3 b, float t, float t2 = -1.f) {
+    glm::vec3 d = b - a;
+    float L = glm::length(d);
+    if (L < 1e-4f) return;
+    glm::vec3 z = d / L, x = glm::normalize(glm::cross(std::abs(z.y) < 0.95f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0), z)), y = glm::cross(z, x);
+    glm::mat4 keep = m.xf;
+    m.xf = keep * glm::mat4(glm::vec4(x, 0), glm::vec4(y, 0), glm::vec4(z, 0), glm::vec4(a, 1));
+    if (t2 < 0.f) t2 = t;
+    m.box({-t / 2, -t2 / 2, 0.f}, {t, t2, L});
+    m.xf = keep;
+}
+// Caixa girada em Y (pelo centro da base)
+void yawBox(MeshBuilder& m, glm::vec3 base, glm::vec3 size, float yaw) {
+    glm::mat4 keep = m.xf;
+    m.xf = glm::rotate(glm::translate(keep, base), yaw, glm::vec3(0, 1, 0));
+    m.box({-size.x / 2, 0.f, -size.z / 2}, size);
+    m.xf = keep;
+}
+// Fio com barriga entre dois pontos
+void wire(MeshBuilder& m, glm::vec3 a, glm::vec3 b, float sag) {
+    const int n = 4;
+    glm::vec3 prev = a;
+    for (int i = 1; i <= n; ++i) {
+        float t = float(i) / n;
+        glm::vec3 p = glm::mix(a, b, t) - glm::vec3(0, sag * 4.f * t * (1.f - t), 0);
+        segBox(m, prev, p, 0.025f);
+        prev = p;
+    }
+}
+
+// Casa da favela, andar por andar (módulos de verdade: entra, sobe a escada, anda na laje).
+// Origem: centro da base no topo da fundação; frente +Z. footLow: quanto o chão desce abaixo da base (fundação).
+void favelaHouse(Geo& g, Rng& r, float w, float d, int floors, float footLow, bool frontOpen) {
+    glm::vec4 paint = favelaPaint(r);
+    const bool brickBase = r.chance(0.3f), graffitiBase = !brickBase && r.chance(0.18f);
+    const bool rawUpper = r.chance(0.45f);
+    const bool outsideStairs = r.chance(0.5f);
+    const bool porchGround = frontOpen && r.chance(0.3f);
+    float bw = outsideStairs ? w - 1.05f : w;          // escada externa ocupa 1 m do lado -X
+    float bx = outsideStairs ? 0.525f : 0.f;
+    float bd = porchGround ? d - 2.f : d;              // varanda coberta na frente
+    float bz = porchGround ? -1.f : 0.f;
+    // fundação até o chão (terreno inclinado)
+    {
+        MeshBuilder& f = g[brickBase ? Mat::Brick : Mat::Concrete];
+        f.color = glm::vec4(1.f); f.uvTile = {1.f, 1.f};
+        if (footLow > 0.05f) {
+            f.box({-w / 2, -footLow - 0.3f, -d / 2}, {w, footLow + 0.3f, d});
+            g.collider({-w / 2, -footLow - 0.3f, -d / 2}, {w, footLow + 0.3f, d});
+        }
+    }
+    float y = 0.f;
+    g.offset({bx, 0.f, bz});
+    for (int f = 0; f < floors; ++f) {
+        ModuleSpec ms;
+        ms.w = bw; ms.d = bd; ms.h = 2.7f;
+        ms.floor = f == 0;
+        ms.slab = true;
+        ms.wallMat = f == 0 ? (brickBase ? Mat::Brick : graffitiBase ? Mat::Graffiti : Mat::Plaster)
+                            : (rawUpper ? Mat::Brick : brickBase ? Mat::Brick : Mat::Plaster);
+        ms.wallColor = paint;
+        ms.floorMat = r.chance(0.6f) ? Mat::Ceramic : Mat::Concrete;
+        ms.walls[0] = f == 0 ? MW_Door : (r.chance(0.8f) ? MW_Window : MW_Plain);
+        ms.walls[1] = r.chance(0.5f) ? MW_Window : MW_Plain;
+        ms.walls[2] = r.chance(0.25f) ? MW_Window : MW_Plain;
+        ms.walls[3] = r.chance(0.25f) ? MW_Window : MW_Plain;
+        if (bw < 3.2f || bd < 3.2f) ms.walls[2] = ms.walls[3] = MW_Plain;
+        // acesso à laje: escada externa em todo andar, ou interna (reta) quando cabe
+        if (outsideStairs) ms.stairs = SK_Outside;
+        else if (bd >= 4.4f && bw >= 3.4f) ms.stairs = SK_Straight;
+        ms.porch = f == 0 ? porchGround : (frontOpen && r.chance(0.3f));
+        ms.porchD = f == 0 ? 2.f : 1.1f;
+        ms.parapet = f == floors - 1 && r.chance(0.35f);
+        g.offset({0.f, y, 0.f});
+        buildModule(g, ms);
+        g.offset({0.f, -y, 0.f});
+        y += moduleTop(ms);
+    }
+    g.offset({-bx, 0.f, -bz});
+    // laje: caixa d'água, telhado de fibrocimento, varal, antena, parabólica, vergalhões
+    DetailScope ds(g);
+    const float top = y;
+    MeshBuilder& p = g[Mat::Painted];
+    p.uvTile = {0.f, 0.f};
+    float tx = r.chance(0.5f) ? bx + bw / 2 - 0.8f : bx - bw / 2 + 0.8f, tz = bz - bd / 2 + 0.8f;
+    if (r.chance(0.85f)) {
+        MeshBuilder& c = g[Mat::Concrete];
+        c.color = glm::vec4(1.f); c.uvTile = {1.f, 1.f};
+        c.box({tx - 0.7f, top, tz - 0.7f}, {1.4f, 0.25f, 1.4f});
+        buildWaterTank(p, {tx, top + 0.25f, tz});
+        g.collider({tx - 0.7f, top, tz - 0.7f}, {1.4f, 1.2f, 1.4f});
+    }
+    if (r.chance(0.35f)) {  // meia-água de telha ondulada em cima de parte da laje
+        MeshBuilder& t = g[Mat::Corrugated];
+        t.color = glm::vec4(1.f); t.uvTile = {2.f, 2.f};
+        float x0 = bx - bw / 2, x1 = bx + bw / 2, z0 = bz + bd * 0.05f, z1 = bz + bd / 2;
+        float y0 = top + 2.2f, y1 = top + 1.9f;
+        t.quad({x0, y0, z0}, {x0, y1, z1}, {x1, y1, z1}, {x1, y0, z0});
+        MeshBuilder& m = g[Mat::Wood];
+        m.color = glm::vec4(1.f); m.uvTile = {0.f, 0.f};
+        for (float x : {x0 + 0.1f, x1 - 0.2f}) m.box({x, top, z1 - 0.2f}, {0.1f, 1.9f, 0.1f});
+    }
+    if (r.chance(0.35f)) {  // varal com roupa
+        MeshBuilder& m = g[Mat::GunMetal];
+        m.color = glm::vec4(1.f); m.uvTile = {0.f, 0.f};
+        glm::vec3 a(bx - bw / 2 + 0.3f, top, bz + 0.3f), b(bx + bw / 2 - 0.3f, top, bz + 0.3f);
+        m.box(a - glm::vec3(0.03f, 0, 0.03f), {0.05f, 1.7f, 0.05f});
+        m.box(b - glm::vec3(0.03f, 0, 0.03f), {0.05f, 1.7f, 0.05f});
+        segBox(m, a + glm::vec3(0, 1.65f, 0), b + glm::vec3(0, 1.65f, 0), 0.015f);
+        for (float x = a.x + 0.3f; x < b.x - 0.3f; x += r.range(0.45f, 0.7f)) {
+            p.color = favelaPaint(r);
+            p.box({x, top + 1.05f + r.range(0.f, 0.2f), a.z - 0.01f}, {r.range(0.3f, 0.5f), r.range(0.35f, 0.55f), 0.02f});
+        }
+    }
+    if (r.chance(0.3f)) {  // parabólica
+        p.color = srgb(220, 220, 215);
+        glm::vec3 c(bx + bw / 2 - 0.5f, top + 0.9f, bz + bd / 2 - 0.5f);
+        p.cylinder(c, c + glm::vec3(0.2f, 0.12f, 0.25f), 0.45f, 0.05f, 10);
+        MeshBuilder& m = g[Mat::GunMetal];
+        m.box({c.x - 0.03f, top, c.z - 0.03f}, {0.06f, 0.9f, 0.06f});
+    }
+    if (r.chance(0.3f)) {  // vergalhões nos cantos (obra que vai continuar)
+        MeshBuilder& m = g[Mat::GunMetal];
+        for (float sx : {-1.f, 1.f})
+            for (float sz : {-1.f, 1.f}) {
+                glm::vec3 c(bx + sx * (bw / 2 - 0.1f), top, bz + sz * (bd / 2 - 0.1f));
+                for (int k = 0; k < 3; ++k) segBox(m, c + glm::vec3(k * 0.04f, 0, 0), c + glm::vec3(k * 0.04f + r.range(-0.05f, 0.05f), r.range(0.6f, 1.1f), 0), 0.02f);
+            }
+    }
+    if (r.chance(0.25f)) {  // vasos de planta
+        for (int k = 0; k < 3; ++k) {
+            glm::vec3 c(bx + r.range(-bw / 2 + 0.4f, bw / 2 - 0.4f), top, bz + bd / 2 - 0.35f);
+            p.color = srgb(150, 80, 50);
+            p.box(c - glm::vec3(0.15f, 0, 0.15f), {0.3f, 0.3f, 0.3f});
+            p.color = srgb(60, 130, 50);
+            p.boxC(c + glm::vec3(0, 0.5f, 0), {0.45f, 0.4f, 0.45f});
+        }
+    }
+}
+
 void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
-    const float half = 150.f;
+    const float half = 130.f;
     const uint32_t seed = e->mapSeed;
     HeightFn H = [seed](float x, float z) { return favelaHeight(x, z, seed); };
-    // chão do morro (malha + heightfield)
+    const FavelaPad* pads = favelaPads(seed);
+    // chão (malha de 1 m + heightfield). Dica do shader: chão batido no platô e nas ruas, mata nas encostas
     {
         e->chunks.emplace_back();
         TerrainChunk& c = e->chunks.back();
         c.used = true;
         std::vector<Vertex> v; std::vector<uint32_t> idx;
-        const int res = 120;
-        terrainMesh(v, idx, -half, -half, 2 * half, res, H, &c.heights);
+        const int res = 220;
+        std::function<glm::vec3(float, float)> hint = [](float x, float z) {
+            float s = favelaEdge(x, z);
+            float town = 1.f - smooth01(0.9f, 0.98f, s);
+            float road = (1.f - smooth01(5.f, 7.f, std::abs(x))) * smooth01(50.f, 56.f, z) * (1.f - smooth01(90.f, 94.f, z));
+            float forest = smooth01(0.98f, 1.06f, s) * (1.f - road) * (1.f - smooth01(80.f, 86.f, z));
+            return glm::vec3(std::max(town, road), forest, 0.f);
+        };
+        terrainMesh(v, idx, -half, -half, 2 * half, res, H, &c.heights, &hint);
         c.mesh = e->renderer.createMesh(v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()), false);
         c.ground = addMeshObject(e, "Morro", c.mesh, e->mats[int(Mat::Terrain)], glm::vec3(0.f), glm::vec3(1.f), glm::vec3(0.f), false);
+        if (GameObject* go = e->scene.get(c.ground)) if (go->meshRenderer) go->meshRenderer->castShadows = false;  // só recebe sombra
         addHeightfield(e, c, -half, -half, 2 * half, res);
         c.cx = 1 << 20;  // fora da grade do mundo infinito
     }
-    Cells cells(35.f, 3);
-    // rua em volta do morro
+    Cells cells(30.f, 2);
+    std::vector<BoxCollider> treeBoxes;
+
+    // ---- rotas principais (escadarias de concreto pelos becos) ----
+    const auto& routes = favelaRoutes();
+    const auto& entries = favelaEntries(seed);
+    auto nearRoute = [&](glm::vec2 p, float w) {
+        for (const auto& rt : routes)
+            for (size_t i = 0; i + 1 < rt.size(); ++i) { float t; if (segDist2(p, rt[i], rt[i + 1], t) < w) return true; }
+        return false;
+    };
     {
         Geo& g = cells.at({-1e4f, 0, -1e4f});
         g.place(glm::vec3(0.f), 0.f);
-        const int seg = 48;
-        const float rr = 128.f;
-        for (int k = 0; k < seg; ++k) {
-            float a0 = 6.2831853f * k / seg, a1 = 6.2831853f * (k + 1) / seg;
-            roadStrip(g[Mat::Road], {std::cos(a0) * rr, std::sin(a0) * rr}, {std::cos(a1) * rr, std::sin(a1) * rr}, 11.f, 2.62f);
-        }
-    }
-    // barracos
-    const float pitch = 6.3f;
-    int count = 0;
-    for (float z = -104.f; z <= 104.f; z += pitch)
-        for (float x = -104.f; x <= 104.f; x += pitch) {
-            int ix = int(std::round(x / pitch)), iz = int(std::round(z / pitch));
-            float px = x + r.range(-0.7f, 0.7f), pz = z + r.range(-0.7f, 0.7f);
-            float rad = std::sqrt(px * px + pz * pz);
-            if (rad > 104.f || rad < 3.f) continue;
-            if (ix % 5 == 0 || iz % 6 == 0) continue;  // vielas
-            if (std::abs(px) < 3.f) continue;            // escadaria principal
-            if (r.chance(0.07f)) continue;
-            float w = r.range(3.3f, 5.f), d = r.range(3.3f, 5.f);
-            float hs[4] = {H(px - w / 2, pz - d / 2), H(px + w / 2, pz - d / 2), H(px - w / 2, pz + d / 2), H(px + w / 2, pz + d / 2)};
-            float mn = *std::min_element(hs, hs + 4), mx = *std::max_element(hs, hs + 4);
-            int floors = r.chance(0.35f) ? 1 : r.chance(0.6f) ? 2 : 3;
-            if (rad > 90.f) floors = std::min(floors, 2);
-            glm::vec3 p(px, mx, pz);
-            Geo& g = cells.at(p);
-            g.place(p, r.range(-0.12f, 0.12f) + (r.chance(0.3f) ? 1.5707963f : 0.f));
-            buildBarraco(g, r, w, d, floors, r.chance(0.55f), favelaPaint(r), mx - mn + 0.3f);
-            ++count;
-        }
-    // escadaria principal (rampa de concreto subindo o morro)
-    {
-        Geo& g = cells.at({0, 0, 0});
-        g.place(glm::vec3(0.f), 0.f);
         MeshBuilder& c = g[Mat::Concrete];
-        c.uvTile = {2.f, 2.f};
-        for (float z = -104.f; z < 104.f; z += 1.f) {
-            float h = H(0, z), h2 = H(0, z + 1.f);
-            c.quad({-1.5f, h + 0.08f, z}, {-1.5f, h2 + 0.08f, z + 1.f}, {1.5f, h2 + 0.08f, z + 1.f}, {1.5f, h + 0.08f, z});
+        c.color = glm::vec4(1.f); c.uvTile = {1.f, 1.f};
+        for (size_t ri = 0; ri + 1 < routes.size(); ++ri)  // a última é a estrada de terra
+            for (size_t i = 0; i + 1 < routes[ri].size(); ++i) {
+                const auto& rt = routes[ri];
+                glm::vec2 a = rt[i], b = rt[i + 1], dir = glm::normalize(b - a);
+                float L = glm::length(b - a), yaw = std::atan2(dir.x, dir.y);
+                for (float s = 0.f; s < L; s += 0.45f) {
+                    glm::vec2 q = a + dir * (s + 0.225f);
+                    float h = H(q.x, q.y);
+                    yawBox(c, {q.x, h - 0.35f, q.y}, {2.8f, 0.42f, 0.47f}, yaw);  // degrau seguindo o morro
+                }
+            }
+    }
+    // ---- postes com fiação ----
+    {
+        std::vector<glm::vec3> poles;
+        for (size_t ri = 0; ri + 1 < routes.size(); ++ri)
+            for (size_t i = 0; i + 1 < routes[ri].size(); ++i) {
+                const auto& rt = routes[ri];
+                glm::vec2 a = rt[i], b = rt[i + 1], dir = glm::normalize(b - a), side(-dir.y, dir.x);
+                float L = glm::length(b - a);
+                for (float s = 4.f; s < L; s += 16.f) {
+                    glm::vec2 q = a + dir * s + side * 1.7f;
+                    poles.push_back({q.x, H(q.x, q.y), q.y});
+                }
+            }
+        for (size_t k = 0; k < poles.size(); ++k) {
+            glm::vec3 p = poles[k];
+            Geo& g = cells.at(p);
+            g.place(p, 0.f);
+            MeshBuilder& c = g[Mat::Concrete];
+            c.color = glm::vec4(1.f); c.uvTile = {1.f, 1.f};
+            c.cylinder({0, 0, 0}, {0, 8.f, 0}, 0.13f, 0.09f, 8);
+            g.collider({-0.15f, 0, -0.15f}, {0.3f, 8.f, 0.3f});
+            DetailScope ds(g);
+            MeshBuilder& m = g[Mat::GunMetal];
+            m.color = glm::vec4(1.f); m.uvTile = {0.f, 0.f};
+            m.box({-0.7f, 7.3f, -0.05f}, {1.4f, 0.1f, 0.1f});
+            m.box({-0.25f, 6.2f, -0.2f}, {0.5f, 0.6f, 0.4f});  // transformador / caixa de luz
+            g.place(glm::vec3(0.f), 0.f);
+            if (k + 1 < poles.size() && glm::length(poles[k + 1] - p) < 22.f)
+                for (float o : {-0.6f, 0.f, 0.6f}) wire(g[Mat::Polymer], p + glm::vec3(o, 7.35f, 0), poles[k + 1] + glm::vec3(o, 7.35f, 0), 0.6f);
         }
     }
-    // árvores e prédios na baixada
-    std::vector<BoxCollider> treeBoxes;
-    for (int k = 0; k < 60; ++k) {
-        float a = r.range(0, 6.28f), rad = r.range(106.f, 145.f);
-        if (std::abs(rad - 128.f) < 7.f) continue;
-        float x = std::cos(a) * rad, z = std::sin(a) * rad;
-        spawnProto(e, e->treeProto[r.chance(0.4f) ? 2 : 0], {x, H(x, z) - 0.1f, z}, r.range(0, 6.28f), r.range(0.9f, 1.3f), nullptr, &treeBoxes);
+
+    // ---- casas: lotes em grade, becos entre eles ----
+    std::vector<std::pair<glm::vec2, glm::vec2>> lots;  // centro, meio tamanho (para os testes)
+    const float pitchX = 7.6f, pitchZ = 7.2f;
+    for (float gz = -60.f; gz < 58.f; gz += pitchZ)
+        for (float gx = -64.f; gx < 64.f; gx += pitchX) {
+            glm::vec2 c(gx + pitchX * 0.5f + r.range(-0.3f, 0.3f), gz + pitchZ * 0.5f + r.range(-0.3f, 0.3f));
+            float gap = r.range(1.2f, 1.6f);
+            float lw = pitchX - gap, ld = pitchZ - gap;
+            if (r.chance(0.15f)) lw -= r.range(0.5f, 1.5f);
+            // o lote encolhe do lado de uma escadaria/patamar em vez de sumir
+            auto fits = [&](glm::vec2 cc, glm::vec2 hh) {
+                for (int i = -1; i <= 1; ++i)
+                    for (int j = -1; j <= 1; ++j) {
+                        glm::vec2 q = cc + glm::vec2(i * hh.x, j * hh.y);
+                        if (favelaEdge(q.x, q.y) > 0.93f) return false;
+                        for (int k = 0; k < FP_Count; ++k) if (padDist(pads[k], q.x, q.y) < 1.8f) return false;
+                        if (nearRoute(q, 1.65f)) return false;
+                        if (std::abs(q.x) < 7.f && q.y > 40.f) return false;  // rua da entrada
+                    }
+                return true;
+            };
+            glm::vec2 hs(lw * 0.5f, ld * 0.5f);
+            bool ok = fits(c, hs);
+            for (int tries = 0; !ok && tries < 8; ++tries) {
+                glm::vec2 sh = tries < 4 ? glm::vec2(lw * 0.34f, ld * 0.34f) : glm::vec2(lw * 0.5f, ld * 0.5f);
+                int side = tries % 4;
+                glm::vec2 h2 = side < 2 ? glm::vec2(hs.x - sh.x * 0.5f, hs.y) : glm::vec2(hs.x, hs.y - sh.y * 0.5f);
+                glm::vec2 c2 = c + (side == 0 ? glm::vec2(sh.x * 0.5f, 0) : side == 1 ? glm::vec2(-sh.x * 0.5f, 0)
+                                  : side == 2 ? glm::vec2(0, sh.y * 0.5f) : glm::vec2(0, -sh.y * 0.5f));
+                if (h2.x > 1.4f && h2.y > 1.4f && fits(c2, h2)) { c = c2; hs = h2; lw = hs.x * 2; ld = hs.y * 2; ok = true; }
+            }
+            if (!ok || r.chance(0.04f)) continue;
+            // casa: base no canto mais alto do terreno; a fundação desce até o mais baixo
+            float hs4[4] = {H(c.x - hs.x, c.y - hs.y), H(c.x + hs.x, c.y - hs.y), H(c.x - hs.x, c.y + hs.y), H(c.x + hs.x, c.y + hs.y)};
+            float mn = *std::min_element(hs4, hs4 + 4), mx = *std::max_element(hs4, hs4 + 4);
+            int floors = r.chance(0.2f) ? 1 : r.chance(0.55f) ? 2 : r.chance(0.7f) ? 3 : 4;
+            float yaw = 0.f;
+            float pick = r.f();
+            if (pick > 0.75f) yaw = 1.5707963f; else if (pick > 0.55f) yaw = -1.5707963f;
+            float w = yaw == 0.f ? lw : ld, d = yaw == 0.f ? ld : lw;
+            bool frontOpen = true;
+            glm::vec3 pos(c.x, mx + 0.05f, c.y);
+            Geo& g = cells.at(pos);
+            g.place(pos, yaw);
+            favelaHouse(g, r, w, d, floors, mx - mn + 0.05f, frontOpen);
+            lots.push_back({c, hs});
+        }
+
+    // ---- muros de arrimo dos patamares (grafitados) ----
+    for (int k = 0; k < FP_Count; ++k) {
+        const FavelaPad& P = pads[k];
+        Geo& g = cells.at({P.c.x, 0, P.c.y});
+        g.place(glm::vec3(0.f), 0.f);
+        for (int side = 0; side < 4; ++side) {
+            glm::vec2 n = side == 0 ? glm::vec2(0, 1) : side == 1 ? glm::vec2(0, -1) : side == 2 ? glm::vec2(1, 0) : glm::vec2(-1, 0);
+            glm::vec2 t(-n.y, n.x);
+            float len = side < 2 ? P.half.x * 2.f : P.half.y * 2.f;
+            glm::vec2 edge = P.c + n * (side < 2 ? P.half.y : P.half.x);
+            for (float s = -len / 2; s < len / 2 - 0.01f; s += 2.f) {
+                float segL = std::min(2.f, len / 2 - s);
+                glm::vec2 q = edge + t * (s + segL * 0.5f) + n * 0.2f;
+                glm::vec2 out = q + n * 2.2f;
+                float ho = favelaRaw(out.x, out.y, seed);
+                float diff = ho - P.y;
+                if (std::abs(diff) < 0.5f) continue;
+                if (k == FP_Entrance && side == 0) continue;  // a rua chega por aqui
+                bool entry = false;
+                for (const PadEntry& en : entries) { float t; if (en.pad == k && segDist2(q, en.a, en.b, t) < 3.2f) entry = true; }
+                if (entry) continue;  // passagem da escadaria
+                float y0 = std::min(ho, P.y) - 0.6f, y1 = diff < 0.f ? P.y + 0.9f : ho + 0.1f;  // aterro: guarda-corpo de 90 cm
+                Mat wm = r.chance(0.55f) ? Mat::Graffiti : r.chance(0.5f) ? Mat::Concrete : Mat::Stone;
+                MeshBuilder& m = g[wm];
+                m.color = glm::vec4(1.f);
+                m.uvTile = wm == Mat::Graffiti ? glm::vec2(4.f, 2.f) : glm::vec2(2.f, 2.f);
+                glm::vec3 size(side < 2 ? segL : 0.4f, y1 - y0, side < 2 ? 0.4f : segL);
+                glm::vec3 mnp(q.x - size.x / 2, y0, q.y - size.z / 2);
+                m.box(mnp, size);
+                g.collider(mnp, size);
+            }
+        }
     }
-    for (int k = 0; k < 4; ++k) {
-        float a = 0.785398f + k * 1.5707963f;
-        glm::vec3 p(std::cos(a) * 140.f, 2.5f, std::sin(a) * 140.f);
-        Geo& g = cells.at(p);
-        g.place(p, -a - 1.5707963f);
-        buildApartment(g, r, 16.f, 12.f, r.irange(4, 8), buildingPaint(r));
+
+    // ---- campinho de futebol: gramado com linhas, traves com rede e alambrado em volta ----
+    {
+        const FavelaPad& P = pads[FP_Field];
+        glm::vec3 c(P.c.x, P.y, P.c.y);
+        Geo& g = cells.at(c);
+        g.place(c, 0.f);
+        MeshBuilder& b = g[Mat::Concrete];
+        b.color = glm::vec4(1.f); b.uvTile = {2.f, 2.f};
+        b.box({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        g.collider({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        MeshBuilder& q = g[Mat::Court];
+        glm::vec2 uv[4] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+        q.quad({-14, 0.07f, 7.5f}, {14, 0.07f, 7.5f}, {14, 0.07f, -7.5f}, {-14, 0.07f, -7.5f}, uv);
+        MeshBuilder& wpost = g[Mat::Painted];
+        wpost.color = srgb(240, 240, 240); wpost.uvTile = {0.f, 0.f};
+        MeshBuilder& net = g[Mat::ChainLink];
+        net.color = glm::vec4(1.f); net.uvTile = {1.f, 1.f};
+        for (float sx : {-1.f, 1.f}) {
+            float x = sx * 13.f;
+            for (float z : {-1.5f, 1.5f}) wpost.box({x - 0.06f, 0.05f, z - 0.06f}, {0.12f, 2.f, 0.12f});
+            wpost.box({x - 0.06f, 2.f, -1.56f}, {0.12f, 0.12f, 3.12f});
+            float back = x + sx * 1.f;
+            net.box({std::min(x, back), 0.05f, -1.5f}, {1.f, 2.05f, 3.f}, sx > 0 ? 1 : 2);  // rede (sem a face da boca)
+            g.collider({sx > 0 ? x + 0.9f : back, 0.05f, -1.5f}, {0.12f, 2.f, 3.f});
+        }
+        // alambrado de 4 m com portões no lado sul (onde chegam as escadarias)
+        MeshBuilder& post = g[Mat::GunMetal];
+        post.color = glm::vec4(1.f); post.uvTile = {0.f, 0.f};
+        const float fh = 4.f, hx = P.half.x - 0.5f, hz = P.half.y - 0.5f;
+        auto fence = [&](glm::vec2 a, glm::vec2 b2) {
+            glm::vec2 d = b2 - a;
+            float L = glm::length(d);
+            for (float s = 0.f; s < L - 0.01f; s += 3.f) {
+                float l = std::min(3.f, L - s);
+                glm::vec2 p0 = a + d / L * s, p1 = a + d / L * (s + l);
+                glm::vec2 mn = glm::min(p0, p1), mx = glm::max(p0, p1);
+                // gates: aberturas onde chegam as rotas
+                glm::vec2 mid = (p0 + p1) * 0.5f;
+                if (std::abs(mid.y - hz) < 0.1f && (std::abs(mid.x + 8.f + P.c.x * 0.f) < 1.6f || std::abs(mid.x - 10.f) < 1.6f)) continue;
+                net.box({mn.x - 0.01f, 0.f, mn.y - 0.01f}, {mx.x - mn.x + 0.02f, fh, mx.y - mn.y + 0.02f});
+                g.collider({mn.x - 0.03f, 0.f, mn.y - 0.03f}, {mx.x - mn.x + 0.06f, fh, mx.y - mn.y + 0.06f});
+                post.box({p0.x - 0.04f, 0.f, p0.y - 0.04f}, {0.08f, fh + 0.1f, 0.08f});
+                segBox(post, {p0.x, fh, p0.y}, {p1.x, fh, p1.y}, 0.05f);
+            }
+        };
+        fence({-hx, -hz}, {hx, -hz});
+        fence({hx, -hz}, {hx, hz});
+        fence({hx, hz}, {-hx, hz});
+        fence({-hx, hz}, {-hx, -hz});
+        // arquibancada de concreto no lado leste (fora do alambrado não cabe: fica dentro, atrás da linha)
+        MeshBuilder& a = g[Mat::Concrete];
+        for (int k = 0; k < 2; ++k) {
+            a.box({14.6f + k * 0.0f, 0.f, -6.f}, {0.6f, 0.45f * (k + 1), 12.f});
+            g.collider({14.6f, 0.f, -6.f}, {0.6f, 0.45f * (k + 1), 12.f});
+        }
     }
+
+    // ---- área alta (mirante): laje com guarda-corpo, banco e torre de antena ----
+    {
+        const FavelaPad& P = pads[FP_High];
+        glm::vec3 c(P.c.x, P.y, P.c.y);
+        Geo& g = cells.at(c);
+        g.place(c, 0.f);
+        MeshBuilder& b = g[Mat::Concrete];
+        b.color = glm::vec4(1.f); b.uvTile = {2.f, 2.f};
+        b.box({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        g.collider({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        MeshBuilder& m = g[Mat::GunMetal];
+        m.color = glm::vec4(1.f); m.uvTile = {0.f, 0.f};
+        // torre treliçada de 18 m
+        glm::vec3 t0(-P.half.x + 2.f, 0.05f, -P.half.y + 2.f);
+        for (int k = 0; k < 4; ++k) {
+            glm::vec3 a = t0 + glm::vec3(k & 1 ? 1.2f : -1.2f, 0, k & 2 ? 1.2f : -1.2f);
+            segBox(m, a, t0 + glm::vec3(k & 1 ? 0.2f : -0.2f, 18.f, k & 2 ? 0.2f : -0.2f), 0.08f);
+        }
+        for (float h = 1.5f; h < 18.f; h += 1.5f) {
+            float s = 1.2f - h / 18.f * 1.0f;
+            for (int k = 0; k < 4; ++k) {
+                glm::vec3 a = t0 + glm::vec3((k == 0 || k == 3) ? -s : s, h, k < 2 ? -s : s);
+                glm::vec3 b2 = t0 + glm::vec3((k == 0 || k == 1) ? s : -s, h, (k == 1 || k == 2) ? s : -s);
+                segBox(m, a, b2, 0.04f);
+            }
+        }
+        g.collider(t0 - glm::vec3(1.3f, 0, 1.3f), {2.6f, 18.f, 2.6f});
+        MeshBuilder& w = g[Mat::Wood];
+        w.color = glm::vec4(1.f); w.uvTile = {0.f, 0.f};
+        for (int k = 0; k < 2; ++k) {
+            float z = 1.f + k * 3.f;
+            w.box({2.f, 0.45f, z}, {2.f, 0.06f, 0.5f});
+            m.box({2.1f, 0.f, z + 0.2f}, {0.06f, 0.45f, 0.06f});
+            m.box({3.8f, 0.f, z + 0.2f}, {0.06f, 0.45f, 0.06f});
+        }
+    }
+
+    // ---- praça das crianças: chão de terra, balanço, escorregador, gangorra, gira-gira, bancos e árvores ----
+    {
+        const FavelaPad& P = pads[FP_Square];
+        glm::vec3 c(P.c.x, P.y, P.c.y);
+        Geo& g = cells.at(c);
+        g.place(c, 0.f);
+        MeshBuilder& gr = g[Mat::Dirt];
+        gr.color = glm::vec4(1.7f, 1.55f, 1.35f, 1.f); gr.uvTile = {3.f, 3.f};
+        gr.box({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        g.collider({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        MeshBuilder& p = g[Mat::Painted];
+        p.uvTile = {0.f, 0.f};
+        MeshBuilder& m = g[Mat::GunMetal];
+        m.color = glm::vec4(1.f); m.uvTile = {0.f, 0.f};
+        // balanço (2 lugares)
+        {
+            glm::vec3 o(-6.f, 0.05f, -3.f);
+            p.color = srgb(230, 60, 50);
+            for (float x : {-1.6f, 1.6f}) {
+                segBox(p, o + glm::vec3(x, 0, -0.9f), o + glm::vec3(x, 2.4f, 0), 0.09f);
+                segBox(p, o + glm::vec3(x, 0, 0.9f), o + glm::vec3(x, 2.4f, 0), 0.09f);
+            }
+            segBox(p, o + glm::vec3(-1.7f, 2.4f, 0), o + glm::vec3(1.7f, 2.4f, 0), 0.1f);
+            for (float x : {-0.75f, 0.75f}) {
+                segBox(m, o + glm::vec3(x - 0.2f, 2.4f, 0), o + glm::vec3(x - 0.2f, 0.55f, 0), 0.02f);
+                segBox(m, o + glm::vec3(x + 0.2f, 2.4f, 0), o + glm::vec3(x + 0.2f, 0.55f, 0), 0.02f);
+                p.color = srgb(250, 200, 40);
+                p.box(o + glm::vec3(x - 0.25f, 0.5f, -0.12f), {0.5f, 0.05f, 0.24f});
+                p.color = srgb(230, 60, 50);
+            }
+            g.collider(o + glm::vec3(-1.8f, 0, -0.1f), {3.6f, 2.5f, 0.2f});
+        }
+        // escorregador: escada atrás, plataforma, rampa vermelha
+        {
+            glm::vec3 o(3.f, 0.05f, -3.f);
+            p.color = srgb(40, 120, 220);
+            for (float x : {-0.35f, 0.35f}) segBox(p, o + glm::vec3(x, 0, -1.2f), o + glm::vec3(x, 2.f, -0.2f), 0.07f);
+            for (float h = 0.35f; h < 2.f; h += 0.35f) p.box(o + glm::vec3(-0.35f, h, -1.2f + h * 0.5f - 0.03f), {0.7f, 0.05f, 0.08f});
+            p.color = srgb(250, 200, 40);
+            p.box(o + glm::vec3(-0.4f, 1.95f, -0.3f), {0.8f, 0.08f, 0.6f});
+            for (float x : {-0.38f, 0.32f}) for (float z : {-0.3f, 0.24f}) p.box(o + glm::vec3(x, 0, z), {0.06f, 1.95f, 0.06f});
+            p.color = srgb(225, 50, 45);
+            segBox(p, o + glm::vec3(0, 1.98f, 0.3f), o + glm::vec3(0, 0.25f, 2.9f), 0.62f, 0.06f);
+            g.collider(o + glm::vec3(-0.45f, 0, -1.25f), {0.9f, 2.f, 1.6f});
+        }
+        // gangorra
+        {
+            glm::vec3 o(-6.f, 0.05f, 4.f);
+            p.color = srgb(60, 170, 80);
+            p.box(o + glm::vec3(-0.15f, 0, -0.15f), {0.3f, 0.45f, 0.3f});
+            segBox(p, o + glm::vec3(-1.8f, 0.2f, 0), o + glm::vec3(1.8f, 0.7f, 0), 0.3f, 0.06f);
+            g.collider(o + glm::vec3(-1.8f, 0, -0.15f), {3.6f, 0.6f, 0.3f});
+        }
+        // gira-gira
+        {
+            glm::vec3 o(3.f, 0.05f, 4.f);
+            p.color = srgb(250, 140, 40);
+            p.cylinder(o + glm::vec3(0, 0.25f, 0), o + glm::vec3(0, 0.33f, 0), 1.2f, 1.2f, 16);
+            m.cylinder(o, o + glm::vec3(0, 0.25f, 0), 0.08f, 0.08f, 8);
+            for (int k = 0; k < 4; ++k) {
+                float a = k * 1.5707963f;
+                segBox(m, o + glm::vec3(std::cos(a) * 1.05f, 0.33f, std::sin(a) * 1.05f), o + glm::vec3(0, 1.f, 0), 0.04f);
+            }
+            g.collider(o - glm::vec3(1.2f, 0, 1.2f), {2.4f, 0.4f, 2.4f});
+        }
+        // caixa de areia
+        {
+            MeshBuilder& w = g[Mat::Wood];
+            w.color = glm::vec4(1.f); w.uvTile = {1.f, 1.f};
+            glm::vec3 o(8.5f, 0.05f, 4.f);
+            w.box(o + glm::vec3(-1.5f, 0, -1.5f), {3.f, 0.3f, 0.12f});
+            w.box(o + glm::vec3(-1.5f, 0, 1.38f), {3.f, 0.3f, 0.12f});
+            w.box(o + glm::vec3(-1.5f, 0, -1.5f), {0.12f, 0.3f, 3.f});
+            w.box(o + glm::vec3(1.38f, 0, -1.5f), {0.12f, 0.3f, 3.f});
+            p.color = srgb(220, 200, 150);
+            p.box(o + glm::vec3(-1.4f, 0, -1.4f), {2.8f, 0.22f, 2.8f});
+        }
+        // bancos
+        MeshBuilder& w = g[Mat::Wood];
+        w.color = glm::vec4(1.f); w.uvTile = {0.f, 0.f};
+        for (int k = 0; k < 4; ++k) {
+            glm::vec3 o(-9.f + k * 6.f, 0.05f, P.half.y - 1.2f);
+            for (int i = 0; i < 3; ++i) w.box(o + glm::vec3(-0.9f, 0.42f, -0.25f + i * 0.17f), {1.8f, 0.04f, 0.14f});
+            m.box(o + glm::vec3(-0.8f, 0, -0.2f), {0.05f, 0.42f, 0.4f});
+            m.box(o + glm::vec3(0.75f, 0, -0.2f), {0.05f, 0.42f, 0.4f});
+            g.collider(o + glm::vec3(-0.9f, 0, -0.3f), {1.8f, 0.46f, 0.6f});
+        }
+        for (int k = 0; k < 5; ++k) {
+            glm::vec3 tp(c.x + (k % 2 ? -1.f : 1.f) * (P.half.x - 1.5f), P.y + 0.05f, c.z - P.half.y + 2.f + k * 3.5f);
+            spawnProto(e, e->treeProto[0], tp, r.range(0, 6.28f), r.range(0.8f, 1.1f), nullptr, &treeBoxes);
+        }
+        // luz da praça
+        g.place(c + glm::vec3(0, 0.05f, 0), 0.f);
+        buildStreetLight(g);
+    }
+
+    // ---- entrada principal: rua subindo do bairro, largo de concreto, vans estacionadas, boteco ----
+    {
+        Geo& g = cells.at({0, 0, 70});
+        g.place(glm::vec3(0.f), 0.f);
+        MeshBuilder& road = g[Mat::Asphalt];
+        road.color = glm::vec4(1.f); road.uvTile = {0.f, 0.f};
+        for (float z = 55.f; z < 92.f; z += 1.f) {
+            float h0 = H(0.f, z) + 0.04f, h1 = H(0.f, z + 1.f) + 0.04f;
+            glm::vec2 uv[4] = {{0, z / 4.f}, {0, (z + 1) / 4.f}, {1.5f, (z + 1) / 4.f}, {1.5f, z / 4.f}};
+            road.quad({-3.5f, h0, z}, {-3.5f, h1, z + 1.f}, {3.5f, h1, z + 1.f}, {3.5f, h0, z}, uv);
+        }
+        // acesso rápido da área baixa (estrada de terra até a rua)
+        MeshBuilder& dirt = g[Mat::Dirt];
+        dirt.color = glm::vec4(1.f); dirt.uvTile = {0.f, 0.f};
+        {
+            glm::vec2 a(52.f, 36.f), b(64.f, 88.f), dir = glm::normalize(b - a), side(-dir.y, dir.x);
+            float L = glm::length(b - a);
+            for (float s = 0.f; s < L; s += 1.f) {
+                glm::vec2 p0 = a + dir * s, p1 = a + dir * std::min(L, s + 1.f);
+                glm::vec3 q0(p0.x, H(p0.x, p0.y) + 0.04f, p0.y), q1(p1.x, H(p1.x, p1.y) + 0.04f, p1.y);
+                glm::vec3 sd(side.x * 2.6f, 0, side.y * 2.6f);
+                glm::vec2 uv[4] = {{0, s / 3.f}, {0, (s + 1) / 3.f}, {1.7f, (s + 1) / 3.f}, {1.7f, s / 3.f}};
+                dirt.quad(q0 - sd, q1 - sd, q1 + sd, q0 + sd, uv);
+            }
+        }
+        const FavelaPad& P = pads[FP_Entrance];
+        glm::vec3 c(P.c.x, P.y, P.c.y);
+        Geo& ge = cells.at(c);
+        ge.place(c, 0.f);
+        MeshBuilder& b = ge[Mat::Sidewalk];
+        b.color = glm::vec4(1.f); b.uvTile = {2.f, 2.f};
+        b.box({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        ge.collider({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        for (int k = 0; k < 2; ++k) {
+            glm::vec3 cp = c + glm::vec3(-6.5f + k * 13.f, 0.05f, 2.5f - k * 1.f);
+            Geo& gc = cells.at(cp);
+            gc.place(cp, k ? 0.1f : 3.0f);
+            buildCar(gc, r);
+        }
+        // boteco: cômodo com porta larga aberta e toldo de telha ondulada
+        glm::vec3 bp = c + glm::vec3(-P.half.x + 3.f, 0.05f, -P.half.y + 2.6f);
+        ge.place(bp, 0.f);
+        ModuleSpec ms;
+        ms.w = 5.f; ms.d = 4.f; ms.h = 2.8f;
+        ms.walls[0] = MW_Open; ms.walls[1] = MW_Plain; ms.walls[2] = MW_Window; ms.walls[3] = MW_Plain;
+        ms.wallMat = Mat::Plaster; ms.wallColor = srgb(240, 200, 60); ms.floorMat = Mat::Ceramic;
+        buildModule(ge, ms);
+        MeshBuilder& t = ge[Mat::Corrugated];
+        t.color = glm::vec4(1.f); t.uvTile = {2.f, 2.f};
+        t.quad({-2.6f, 2.9f, 2.f}, {-2.6f, 2.5f, 4.f}, {2.6f, 2.5f, 4.f}, {2.6f, 2.9f, 2.f});
+        MeshBuilder& pw = ge[Mat::Wood];
+        for (float x : {-2.5f, 2.4f}) pw.box({x, 0.f, 3.9f}, {0.1f, 2.5f, 0.1f});
+        MeshBuilder& tb = ge[Mat::Painted];
+        tb.color = srgb(230, 40, 40); tb.uvTile = {0.f, 0.f};
+        for (int k = 0; k < 2; ++k) {  // mesas de plástico
+            glm::vec3 o(-1.f + k * 2.f, 0.f, 3.f);
+            tb.box(o + glm::vec3(-0.4f, 0.7f, -0.4f), {0.8f, 0.04f, 0.8f});
+            tb.box(o + glm::vec3(-0.04f, 0.f, -0.04f), {0.08f, 0.7f, 0.08f});
+        }
+    }
+
+    // ---- área baixa (acesso rápido): terreiro de terra com carros e entulho ----
+    {
+        const FavelaPad& P = pads[FP_Low];
+        glm::vec3 c(P.c.x, P.y, P.c.y);
+        Geo& g = cells.at(c);
+        g.place(c, 0.f);
+        MeshBuilder& b = g[Mat::Dirt];
+        b.color = glm::vec4(1.6f, 1.45f, 1.3f, 1.f); b.uvTile = {3.f, 3.f};
+        b.box({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        g.collider({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
+        MeshBuilder& w = g[Mat::Wood];
+        w.color = glm::vec4(1.f); w.uvTile = {1.f, 1.f};
+        for (int k = 0; k < 4; ++k) {  // caixotes (cobertura no tiroteio)
+            glm::vec3 o(r.range(-6.f, 6.f), 0.05f, r.range(-8.f, 4.f));
+            w.box(o, {1.f, 1.f, 1.f});
+            g.collider(o, {1.f, 1.f, 1.f});
+        }
+        for (int k = 0; k < 2; ++k) {
+            glm::vec3 cp = c + glm::vec3(-3.f + k * 6.f, 0.05f, 6.f);
+            Geo& gc = cells.at(cp);
+            gc.place(cp, 1.5707963f + r.range(-0.3f, 0.3f));
+            buildCar(gc, r);
+        }
+    }
+
+    // ---- rua do bairro embaixo, com prédios do outro lado ----
+    {
+        Geo& g = cells.at({0, 0, 93});
+        g.place(glm::vec3(0.f), 0.f);
+        roadStrip(g[Mat::Road], {-half, 93.f}, {half, 93.f}, 10.f, 4.26f);
+        MeshBuilder& sw = g[Mat::Sidewalk];
+        sw.color = glm::vec4(1.f); sw.uvTile = {2.f, 2.f};
+        sw.box({-half, 4.f, 98.f}, {2 * half, 0.4f, 4.f});
+        g.collider({-half, 4.f, 98.f}, {2 * half, 0.4f, 4.f});
+        for (float x = -110.f; x < 110.f; x += 22.f) {
+            glm::vec3 p(x + r.range(-2.f, 2.f), 4.4f, 112.f);
+            Geo& gb = cells.at(p);
+            gb.place(p, 3.14159265f);
+            buildApartment(gb, r, r.range(14.f, 18.f), 12.f, r.irange(3, 6), buildingPaint(r));
+        }
+        for (int k = 0; k < 5; ++k) {
+            glm::vec3 cp(r.range(-90.f, 90.f), 4.22f, 96.2f);
+            Geo& gc = cells.at(cp);
+            gc.place(cp, 1.5707963f);
+            buildCar(gc, r);
+        }
+    }
+
+    // ---- mata nas encostas e algumas árvores entre as casas ----
+    for (int k = 0; k < 260; ++k) {
+        float a = r.range(0, 6.2831853f), rr = r.range(0.98f, 1.5f);
+        float x = std::cos(a) * 64.f * rr, z = std::sin(a) * 62.f * rr;
+        if (z > 80.f || std::abs(x) > half - 4.f || std::abs(z) > half - 4.f) continue;
+        if (std::abs(x) < 8.f && z > 50.f) continue;
+        { float t; if (segDist2({x, z}, {52.f, 36.f}, {64.f, 88.f}, t) < 5.f) continue; }
+        int kind = r.chance(0.25f) ? 2 : 0;
+        spawnProto(e, e->treeProto[kind], {x, H(x, z) - 0.2f, z}, r.range(0, 6.28f), r.range(0.9f, 1.5f), nullptr, &treeBoxes);
+    }
+    for (int k = 0; k < 40; ++k) {
+        float x = r.range(-55.f, 55.f), z = r.range(-55.f, 45.f);
+        if (favelaEdge(x, z) > 0.95f) continue;
+        bool free = !nearRoute({x, z}, 1.6f);
+        for (auto& [lc, lh] : lots) if (std::abs(x - lc.x) < lh.x + 1.2f && std::abs(z - lc.y) < lh.y + 1.2f) { free = false; break; }
+        for (int p = 0; p < FP_Count && free; ++p) if (padDist(pads[p], x, z) < 1.f) free = false;
+        if (!free) continue;
+        spawnProto(e, e->treeProto[r.chance(0.3f) ? 2 : 0], {x, H(x, z) - 0.1f, z}, r.range(0, 6.28f), r.range(0.6f, 0.9f), nullptr, &treeBoxes);
+    }
+
+    // ---- ao fundo: morros com casinhas e o Cristo no alto (sem colisão, fora do limite) ----
+    {
+        auto far = [seed](float x, float z) {
+            float r2 = std::sqrt(x * x + z * z);
+            float hills = 6.f + fbm(x * 0.005f, z * 0.005f, 4, seed + 77) * 55.f;
+            float cristo = 45.f * std::exp(-glm::dot(glm::vec2(x + 120.f, z + 380.f), glm::vec2(x + 120.f, z + 380.f)) / (2.f * 60.f * 60.f));
+            return glm::mix(-30.f, hills + cristo, smooth01(170.f, 260.f, r2));
+        };
+        e->chunks.emplace_back();
+        TerrainChunk& c = e->chunks.back();
+        c.used = true;
+        std::vector<Vertex> v; std::vector<uint32_t> idx;
+        std::function<glm::vec3(float, float)> hint = [](float, float) { return glm::vec3(0.f, 1.f, 0.f); };
+        terrainMesh(v, idx, -700.f, -700.f, 1400.f, 120, far, nullptr, &hint);
+        c.mesh = e->renderer.createMesh(v.data(), uint32_t(v.size()), idx.data(), uint32_t(idx.size()), false);
+        c.ground = addMeshObject(e, "Morros ao fundo", c.mesh, e->mats[int(Mat::Terrain)], glm::vec3(0.f), glm::vec3(1.f), glm::vec3(0.f), false);
+        if (GameObject* go = e->scene.get(c.ground)) if (go->meshRenderer) go->meshRenderer->castShadows = false;
+        c.cx = (1 << 20) + 1;
+        // casinhas coloridas nas encostas viradas para cá
+        Geo& g = cells.at({1e4f, 0, 1e4f});
+        g.place(glm::vec3(0.f), 0.f);
+        MeshBuilder& p = g[Mat::Painted];
+        p.uvTile = {0.f, 0.f};
+        for (int k = 0; k < 1400; ++k) {
+            float a = r.range(0, 6.2831853f), d = r.range(230.f, 450.f);
+            float x = std::cos(a) * d, z = std::sin(a) * d;
+            float h = far(x, z);
+            if (h < 6.f || h > 50.f) continue;
+            p.color = favelaPaint(r) * r.range(0.75f, 1.f);
+            float w = r.range(4.f, 7.f), hh = r.range(3.f, 8.f);
+            p.box({x - w / 2, h - 1.f, z - w / 2}, {w, hh + 1.f, w * r.range(0.8f, 1.2f)});
+        }
+        // Cristo Redentor (silhueta) no morro mais alto ao norte
+        glm::vec3 cb(-120.f, far(-120.f, -380.f) - 2.f, -380.f);
+        p.color = srgb(235, 232, 225);
+        p.box(cb + glm::vec3(-5.f, 0, -5.f), {10.f, 10.f, 10.f});
+        p.cylinder(cb + glm::vec3(0, 10.f, 0), cb + glm::vec3(0, 34.f, 0), 3.4f, 2.2f, 10);
+        p.box(cb + glm::vec3(-14.f, 29.f, -1.5f), {28.f, 3.f, 3.f});
+        p.cylinder(cb + glm::vec3(0, 34.f, 0), cb + glm::vec3(0, 38.f, 0), 1.6f, 1.2f, 10);
+    }
+
     cells.flush(e);
     addStaticBoxes(e, treeBoxes);
-    setBounds(e, {-half + 2, -half + 2}, {half - 2, half - 2});
-    spawn = {0.f, H(0, -128.f) + 0.1f, -128.f};
-    spawnYaw = 0.f;  // de frente para o morro
-    e->renderer.fogDensity = 0.002f;
-    (void)count;
+    setBounds(e, {-half + 8, -half + 8}, {half - 8, 104.f});
+    const FavelaPad& P = pads[FP_Entrance];
+    spawn = {P.c.x, P.y + 0.1f, P.c.y + 3.f};
+    spawnYaw = 3.14159265f;  // olhando para dentro da favela (norte)
+    e->renderer.fogDensity = 0.0018f;
+    setTimeOfDay(e, 16.9f);   // fim de tarde, luz dourada
 }
 
 void genSchool(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {

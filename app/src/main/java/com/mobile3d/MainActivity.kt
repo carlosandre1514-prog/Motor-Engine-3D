@@ -924,7 +924,7 @@ class MainActivity : Activity() {
         val entries = listOf(
             "🌍 Planeta (globo: dê zoom até as cidades; ▶ Play = no chão)" to 5,
             "🗺 Mapa do mundo do planeta (ir para uma cidade)…" to -2,
-            "🏙 Cidade" to 1, "🏘 Favela no morro" to 2, "🏫 Colégio" to 3, "🏡 Bairro residencial" to 4,
+            "🏙 Cidade" to 1, "🏘 Favela (campinho, praça, becos, lajes)" to 2, "🏫 Colégio" to 3, "🏡 Bairro residencial" to 4,
             "♾ Mundo infinito (natureza sem fim)" to 0,
             "➕ Criar novo mapa / cena vazia (do zero)" to -1,
             "🔭 Visão geral do mapa atual" to -3,

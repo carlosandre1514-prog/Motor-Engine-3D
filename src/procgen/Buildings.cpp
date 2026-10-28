@@ -383,7 +383,7 @@ void wallRun(Geo& g, const ModuleSpec& s, const glm::mat4& xf, float len, float 
     m.xf = base; frame.xf = base; g.mats[0].xf = base;
     g.yaw += std::atan2(-xf[0][2], xf[0][0]);  // colliders giram junto com a parede
     m.color = s.wallMat == Mat::Plaster || s.wallMat == Mat::Concrete ? s.wallColor : glm::vec4(1.f);
-    m.uvTile = s.wallMat == Mat::Brick ? glm::vec2(1.f, 1.f) : glm::vec2(2.f, 2.f);
+    m.uvTile = s.wallMat == Mat::Brick ? glm::vec2(1.f, 1.f) : s.wallMat == Mat::Graffiti ? glm::vec2(4.f, 2.f) : glm::vec2(2.f, 2.f);
     frame.color = glm::vec4(1.f); frame.uvTile = {1.f, 1.f};
     auto piece = [&](float x, float y, float w, float h) {
         if (w <= 0.01f || h <= 0.01f) return;
@@ -656,7 +656,7 @@ void buildModulePiece(Geo& g, int piece, const ModuleSpec& s, int wallKind) {
             break;
         }
         case MP_Porch: {  // varanda coberta (no chão) ou sacada com grade (andar de cima), 2 m à frente
-            const float pd = 2.f;
+            const float pd = s.porchD;
             if (s.floor) slabWithHole(g, s.floorMat, -w / 2, w / 2, d / 2, d / 2 + pd, 0.f, kSlabT, false, 0, 0, 0, 0);
             else slabWithHole(g, Mat::Concrete, -w / 2, w / 2, d / 2, d / 2 + pd, -kSlabT, kSlabT, false, 0, 0, 0, 0);
             MeshBuilder& p = g[Mat::Concrete];

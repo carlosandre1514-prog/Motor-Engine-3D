@@ -138,6 +138,7 @@ void ensureBasics(Engine* e) {
             m.albedoFactor = glm::vec4(0.01f, 0.07f, 0.12f, 1.f);  // cor da água funda (azul-esverdeado escuro)
             m.doubleSided = true;
         }
+        if (Mat(k) == Mat::ChainLink) m.alphaCutoff = 0.5f;  // alambrado: só o arame aparece
         if (Mat(k) == Mat::Terrain) {
             // terreno padrão: camadas de textura reais (shaders/terrain); a ordem é a mesma do pbr.frag
             static const char* kLayers[] = {"grama", "campo", "floresta", "chao", "areia", "terra", "seixos"};
@@ -288,7 +289,8 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
             mr->mesh = id; mr->material = e->mats[k]; c->meshRenderer = mr;
             // pisos planos só recebem sombra (economiza draw calls no shadow pass)
             Mat m = Mat(k);
-            mr->castShadows = !(m == Mat::Asphalt || m == Mat::Road || m == Mat::Sidewalk || m == Mat::Grass || m == Mat::Court || m == Mat::Terrain);
+            mr->castShadows = !(m == Mat::Asphalt || m == Mat::Road || m == Mat::Sidewalk || m == Mat::Grass || m == Mat::Court || m == Mat::Terrain ||
+                                 m == Mat::ChainLink);  // tela: a sombra sairia cheia
             if (layer) mr->lodFar = layer == 2 ? std::min(detailFar, kInteriorFar) : detailFar;  // LOD: detalhe/interior só perto
         }
         if (local) registerObject(e, ch);

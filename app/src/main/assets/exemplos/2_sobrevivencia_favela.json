@@ -3,16 +3,16 @@
   "exposicao": 1.0,
   "grade": true,
   "hora": 21.0,
-  "neblina": 0.0020000000949949026,
+  "neblina": 0.0017999999690800905,
   "sol": 0.3
  },
  "camera": {
   "alvo": [
    0.0,
-   25.117,
-   0.0
+   8.85,
+   -9.0
   ],
-  "distancia": 251.6,
+  "distancia": 207.4,
   "pitch": 0.75,
   "yaw": 3.642
  },
@@ -30,9 +30,10 @@
    "nome": "Jogador",
    "pos": [
     0.0,
-    2.8,
-    -128.0
+    10.3,
+    52.0
    ],
+   "rot_y": 180.0,
    "semente": 38,
    "tipo": "personagem"
   },
@@ -43,9 +44,9 @@
    "maximo": 3,
    "nome": "Spawner de inimigos",
    "pos": [
-    0.0,
-    17.096,
-    -100.0
+    -0.0,
+    11.302,
+    24.0
    ],
    "tipo": "spawner",
    "vida": 60
@@ -56,8 +57,8 @@
    "nome": "Spawner de inimigos",
    "pos": [
     0.0,
-    2.5,
-    -148.0
+    7.271,
+    72.0
    ],
    "tipo": "spawner",
    "vida": 80
@@ -71,9 +72,9 @@
    "item": "vida",
    "nome": "Vida",
    "pos": [
-    1.5,
-    3.4,
-    -134.0
+    -1.5,
+    10.559,
+    58.0
    ],
    "tipo": "coletavel"
   },
@@ -86,9 +87,9 @@
    "item": "vida",
    "nome": "Vida",
    "pos": [
-    1.5,
-    3.4,
-    -125.0
+    -1.5,
+    10.9,
+    49.0
    ],
    "tipo": "coletavel"
   },
@@ -101,9 +102,9 @@
    "item": "vida",
    "nome": "Vida",
    "pos": [
-    1.5,
-    6.589,
-    -116.0
+    -1.5,
+    10.898,
+    40.0
    ],
    "tipo": "coletavel"
   },
@@ -111,9 +112,9 @@
    "efeito": "fogueira",
    "nome": "Fogueira (Fogo)",
    "pos": [
-    2.5,
-    2.5,
-    -124.0
+    -2.5,
+    10.0,
+    48.0
    ],
    "tipo": "efeito"
   },
@@ -127,9 +128,9 @@
    "intensidade": 12,
    "nome": "Luz",
    "pos": [
-    0.0,
-    8.01,
-    -118.0
+    -0.0,
+    14.0,
+    42.0
    ],
    "raio": 14,
    "tipo": "luz"

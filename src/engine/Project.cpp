@@ -111,7 +111,9 @@ int matOf(const std::string& s) {
                        {"pintura", int(Mat::Painted)}, {"liso", int(Mat::Painted)}, {"vidro", int(Mat::Glass)},
                        {"tijolo_vermelho", int(Mat::RedBrick)}, {"fachada_tijolo", int(Mat::FacadeBrick)}, {"ardosia", int(Mat::Slate)},
                        {"marmore", int(Mat::Marble)}, {"terra", int(Mat::Dirt)}, {"pedra", int(Mat::Stone)},
-                       {"ceramica", int(Mat::Ceramic)}, {"lajota", int(Mat::Ceramic)}});
+                       {"ceramica", int(Mat::Ceramic)}, {"lajota", int(Mat::Ceramic)}, {"grafite", int(Mat::Graffiti)},
+                       {"alambrado", int(Mat::ChainLink)}, {"tela", int(Mat::ChainLink)}, {"telha_ondulada", int(Mat::Corrugated)},
+                       {"fibrocimento", int(Mat::Corrugated)}, {"brasilit", int(Mat::Corrugated)}});
     return k;
 }
 

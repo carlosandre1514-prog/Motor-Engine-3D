@@ -137,6 +137,7 @@ struct ModuleSpec {
     bool parapet = false;   // mureta em volta da laje (terraço)
     int stairs = SK_None;   // StairKind; as internas ficam no canto esquerdo-fundo e abrem a laje
     bool porch = false;     // varanda coberta na frente (no chão) ou sacada (andar de cima)
+    float porchD = 2.f;     // profundidade da varanda/sacada
 };
 // Altura do topo do módulo (onde o próximo andar começa)
 float moduleTop(const ModuleSpec& s);

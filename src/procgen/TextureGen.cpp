@@ -12,7 +12,8 @@ const char* matName(Mat m) {
     static const char* names[] = {"Reboco", "Fachada casa", "Fachada prédio", "Vidro de escritório", "Tijolo", "Tijolo com janela",
                                   "Telha", "Concreto", "Asfalto", "Rua", "Calçada", "Grama", "Madeira", "Metal", "Metal escuro",
                                   "Plástico", "Quadra", "Água", "Terreno", "Pintura lisa", "Vidro", "Tijolo vermelho",
-                                  "Fachada de tijolo", "Ardósia", "Mármore", "Terra", "Pedra", "Cerâmica"};
+                                  "Fachada de tijolo", "Ardósia", "Mármore", "Terra", "Pedra", "Cerâmica", "Grafite",
+                                  "Alambrado", "Telha ondulada"};
     return names[int(m)];
 }
 
@@ -24,6 +25,8 @@ MatParams matParams(Mat m) {
         case Mat::Terrain: return {1.f, 0.f, 1, false};
         case Mat::RoofTile: return {1.f, 0.f, 0, true};   // telhado visto por baixo também
         case Mat::Slate: return {1.f, 0.f, 0, true};
+        case Mat::ChainLink: return {1.f, 1.f, 0, true};   // tela vista dos dois lados
+        case Mat::Corrugated: return {1.f, 0.f, 0, true};
         default: return {1.f, 1.f, 0, false};
     }
 }
@@ -429,6 +432,121 @@ TexData genCeramic() {
     return finish(im, true, 2.f);
 }
 
+// Muro grafitado: reboco sujo com 2 "peças" de letras gordas (preenchimento em degradê, contorno preto e brilho
+// branco), escorridos de tinta e pichações finas por cima. Tile 4 x 2 m (1024 x 512).
+TexData genGraffiti() {
+    Img im(1024, 512);
+    plasterBase(im, rgb(205, 198, 186), 301, 0.35f);
+    struct Letter { glm::vec2 c, h; float rot, round; };
+    struct Piece { std::vector<Letter> ls; glm::vec3 a, b; };
+    const glm::vec3 pal[] = {rgb(236, 64, 122), rgb(41, 182, 246), rgb(255, 202, 40), rgb(102, 187, 106), rgb(255, 112, 67),
+                             rgb(171, 71, 188), rgb(38, 198, 218), rgb(240, 240, 240)};
+    std::vector<Piece> pieces;
+    uint32_t sd = 311;
+    auto rnd = [&]() { return hashf(int(sd++), 7, 313); };
+    for (int k = 0; k < 2; ++k) {
+        Piece pc;
+        pc.a = pal[int(rnd() * 7.99f)];
+        pc.b = pal[int(rnd() * 7.99f)];
+        float x = 0.06f + k * 0.5f, y = 0.32f + rnd() * 0.25f;
+        int n = 4 + int(rnd() * 2.99f);
+        float lw = 0.4f / n;
+        for (int i = 0; i < n; ++i) {
+            Letter l;
+            l.c = {x + (i + 0.5f) * lw, y + (rnd() - 0.5f) * 0.08f};
+            l.h = {lw * (0.42f + rnd() * 0.12f), 0.15f + rnd() * 0.08f};
+            l.rot = (rnd() - 0.5f) * 0.5f;
+            l.round = 0.02f + rnd() * 0.03f;
+            pc.ls.push_back(l);
+        }
+        pieces.push_back(pc);
+    }
+    // distância (em u, com v corrigido para a proporção 2:1) até a peça; dentro < 0
+    auto sdf = [&](const Piece& pc, glm::vec2 p) {
+        float d = 1e9f;
+        for (const Letter& l : pc.ls) {
+            glm::vec2 q = p - l.c;
+            float c = std::cos(l.rot), s2 = std::sin(l.rot);
+            q = {c * q.x + s2 * q.y, -s2 * q.x + c * q.y};
+            glm::vec2 dq = glm::abs(q) - l.h + l.round;
+            float box = glm::length(glm::max(dq, 0.f)) + std::min(std::max(dq.x, dq.y), 0.f) - l.round;
+            // buraco no meio de algumas letras (O, A, D...)
+            glm::vec2 hq = glm::abs(q) - l.h * glm::vec2(0.35f, 0.3f);
+            float hole = glm::length(glm::max(hq, 0.f)) + std::min(std::max(hq.x, hq.y), 0.f);
+            d = std::min(d, std::max(box, -hole));
+        }
+        return d;
+    };
+    im.each([&](int, int, int i, float u, float v) {
+        glm::vec2 p(u, v * 0.5f);
+        for (const Piece& pc : pieces) {
+            float d = sdf(pc, p);
+            float dsh = sdf(pc, p - glm::vec2(0.008f, 0.008f));  // sombra 3D
+            if (dsh < 0.f && d > 0.f) { im.col[i] = glm::mix(im.col[i], rgb(25, 25, 30), 0.85f); im.rough[i] = 0.6f; }
+            if (d < 0.006f && d > -0.002f) { im.col[i] = rgb(15, 15, 18); im.rough[i] = 0.55f; }
+            else if (d <= -0.002f) {
+                float t = std::clamp((p.y - 0.12f) * 3.2f, 0.f, 1.f);
+                glm::vec3 c = glm::mix(pc.a, pc.b, t) * (0.93f + 0.1f * tileNoise(u, v, 40.f, 2, 317));
+                if (d > -0.007f) c = glm::mix(c, glm::vec3(1.f), 0.6f);  // brilho na borda
+                im.col[i] = c; im.rough[i] = 0.5f;
+            }
+        }
+        // escorridos de tinta embaixo das peças
+        int col = int(u * 180.f);
+        if (hashf(col, 1, 331) > 0.86f) {
+            const Piece& pc = pieces[u < 0.5f ? 0 : 1];
+            float top = 0.f;
+            for (const Letter& l : pc.ls) if (std::abs(u - l.c.x) < l.h.x) top = std::max(top, (l.c.y + l.h.y) * 2.f);
+            float len = 0.05f + hashf(col, 2, 331) * 0.2f;
+            float fx = u * 180.f - col;
+            if (top > 0.f && v > top && v < top + len && std::abs(fx - 0.5f) < 0.18f) im.col[i] = glm::mix(im.col[i], pc.a * 0.8f, 0.85f);
+        }
+        // pichação: traços finos pretos
+        for (int k = 0; k < 6; ++k) {
+            float cx = hashf(k, 3, 341), cy = 0.08f + hashf(k, 4, 341) * 0.84f, len = 0.08f + hashf(k, 5, 341) * 0.1f;
+            float x = (u - cx) / len;
+            if (x < 0.f || x > 1.f) continue;
+            float y = cy + 0.035f * std::sin(x * (14.f + k * 3.f)) + 0.02f * std::sin(x * 41.f + k);
+            if (std::abs(v - y) < 0.006f) { im.col[i] = rgb(20, 20, 24); im.rough[i] = 0.6f; }
+        }
+    });
+    return finish(im, true, 1.5f);
+}
+
+// Alambrado: arame galvanizado em losangos (6 cm), o resto transparente (alfa 0). Tile 1 x 1 m.
+TexData genChainLink() {
+    Img im(256, 256);
+    std::vector<float> a(im.w * im.h, 0.f);
+    im.each([&](int, int, int i, float u, float v) {
+        const float n = 16.f, t = 0.075f;
+        float d1 = (u + v) * n, d2 = (u - v) * n;
+        float e1 = std::abs(d1 - std::round(d1)), e2 = std::abs(d2 - std::round(d2));
+        float e = std::min(e1, e2);
+        im.col[i] = rgb(150, 155, 160) * (0.85f + 0.3f * (1.f - e / t));
+        im.metal[i] = 0.8f; im.rough[i] = 0.45f;
+        a[i] = e < t ? 1.f : 0.f;
+    });
+    TexData tx = finish(im, false);
+    for (int i = 0; i < im.w * im.h; ++i) tx.albedo[i * 4 + 3] = to8(a[i]);
+    return tx;
+}
+
+// Telha ondulada de fibrocimento: cinza com ondas (normal), manchas de limo e sujeira. Tile 2 x 2 m.
+TexData genCorrugated() {
+    Img im(512, 512);
+    im.each([&](int, int, int i, float u, float v) {
+        float wave = std::sin(u * 6.2831853f * 11.f);
+        float n = tileNoise(u, v, 6.f, 4, 351), m = tileNoise(u, v, 24.f, 2, 353);
+        glm::vec3 c = rgb(168, 166, 158) * (0.85f + 0.2f * n);
+        float lichen = std::clamp((n - 0.55f) * 3.f, 0.f, 1.f);
+        c = glm::mix(c, rgb(70, 72, 60), lichen * 0.6f);
+        c *= 0.9f + 0.1f * wave * 0.5f + 0.05f * m;
+        im.col[i] = c; im.rough[i] = 0.85f;
+        im.height[i] = wave * 0.5f;
+    });
+    return finish(im, true, 4.f);
+}
+
 // Prédio de tijolo vermelho: tijolo do kit, laje de concreto, janela com sala iluminada e cortina
 TexData genFacadeBrick() {
     Pic brick = loadPic("tijolo_vermelho_alb.jpg"), bn = loadPic("tijolo_vermelho_nrm.jpg");
@@ -485,6 +603,9 @@ TexData generate(Mat m) {
         case Mat::Dirt: { if (TexData t; fromFiles(t, "terra")) return t; return genSolid(rgb(110, 85, 60), 0.95f, 0.f, 231, 0.3f); }
         case Mat::Stone: { if (TexData t; fromFiles(t, "pedra")) return t; return genSolid(rgb(140, 135, 125), 0.9f, 0.f, 241, 0.4f); }
         case Mat::Ceramic: return genCeramic();
+        case Mat::Graffiti: return genGraffiti();
+        case Mat::ChainLink: return genChainLink();
+        case Mat::Corrugated: return genCorrugated();
         default: return genSolid(rgb(200, 200, 200), 0.8f, 0.f, 1, 0.f);
     }
 }
