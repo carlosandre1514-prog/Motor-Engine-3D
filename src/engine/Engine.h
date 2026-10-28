@@ -414,7 +414,7 @@ int matIndexByName(const std::string& name);
 void clearWorld(Engine* e);
 void updateWorld(Engine* e);           // streaming do mundo infinito
 float mapHeight(Engine* e, float x, float z);
-Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos);
+Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos, int floors = 0);  // floors 0 = sorteado
 void drawMapOverlay(Engine* e, const glm::mat4& vp);
 void mapOverview(Engine* e);           // câmera do alto enquadrando o mapa
 // ---- planeta (Planet.cpp)

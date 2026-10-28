@@ -576,6 +576,71 @@ int main(int argc, char** argv) {
         }
     };
     if (std::getenv("SO_MAO")) { supportHand(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
+    // construção livre: andares empilhados, paredes com porta/janela, escadas, varanda, pisos
+    auto modules = [&]() {
+        std::printf("[28] construção por andares\n");
+        engine_new_scene(e);
+        auto add = [&](const std::string& spec) {
+            int id = engine_add_spec(e, spec.c_str());
+            if (id < 0) { std::printf("  [ERRO] %s: %s\n", spec.c_str(), engine_last_error(e)); ++g_fail; }
+            return id;
+        };
+        int t = add(R"({"tipo":"modulo","pos":[0,0,0],"largura":5,"profundidade":5,"paredes":["porta","lisa","janela","janela"],"material":"tijolo","piso":"ceramica","escada":"interna","varanda":true})");
+        int a2 = add(R"({"tipo":"modulo","sobre":)" + std::to_string(t) + R"(,"largura":5,"profundidade":5,"paredes":["janela","janela","lisa","porta"],"material":"reboco","cor_parede":"#e8b04a","escada":"externa","varanda":true})");
+        add(R"({"tipo":"modulo","sobre":)" + std::to_string(a2) + R"(,"largura":5,"profundidade":5,"paredes":["aberta","aberta","aberta","aberta"],"altura":0.1,"laje":false,"mureta":false,"peca":"laje"})");
+        int b = add(R"({"tipo":"modulo","pos":[9,0,0],"largura":4,"profundidade":4,"paredes":["porta","janela","lisa","lisa"],"material":"tijolo_vermelho","piso":"madeira","mureta":true})");
+        (void)b;
+        add(R"({"tipo":"modulo","peca":"piso","pos":[0,0,7],"largura":6,"profundidade":3,"piso":"pedra"})");
+        add(R"({"tipo":"modulo","peca":"piso","pos":[7,0,7],"largura":6,"profundidade":3,"piso":"calcada"})");
+        add(R"({"tipo":"modulo","peca":"parede","pos":[-6,0,4],"largura":3,"parede":"janela","material":"concreto"})");
+        // como o app manda (todas as chaves); empilhar com outro tamanho usa o tamanho de baixo
+        int u = add(R"({"tipo":"modulo","pos":[-14,0,6],"largura":4.0,"profundidade":4.0,"altura":2.8,"paredes":["porta","janela","lisa","janela"],"material":"reboco","cor_parede":"#8fb9d8","piso":"marmore","laje":true,"mureta":false,"varanda":true,"escada":"externa"})");
+        add(R"({"tipo":"modulo","largura":9.0,"profundidade":9.0,"altura":2.8,"paredes":["janela","janela","lisa","janela"],"material":"tijolo","cor_parede":"#ffffff","piso":"ceramica","laje":true,"mureta":true,"varanda":true,"escada":"nenhuma","sobre":)" + std::to_string(u) + "}");
+        for (const char* pc : {"varanda", "escada", "telhado", "laje"})
+            add(std::string(R"({"tipo":"modulo","peca":")") + pc + R"(","pos":[)" + std::to_string(-26 + 6 * int(std::string("telv").find(pc[0]))) + R"(,0,14],"largura":4.0,"profundidade":4.0,"altura":2.8,"parede":"lisa","material":"tijolo","cor_parede":"#f2ebdd","piso":"pedra"})");
+        add(R"({"tipo":"construcao","modelo":"barraco","andares":1,"pos":[-7,0,-6],"semente":5})");
+        add(R"({"tipo":"construcao","modelo":"barraco","andares":4,"pos":[-12,0,-6],"semente":5})");
+        engine_select(e, -1);
+        for (int v = 0; v < 3; ++v) {
+            engine_set_camera(e, 1.f, 3.f, 1.f, 0.6f + v * 1.4f, 0.35f, 17.f);
+            frames(e, 3);
+            char fn[64];
+            std::snprintf(fn, sizeof(fn), "28_construcao_%d.png", v);
+            save(out, fn);
+        }
+        engine_set_camera(e, -16.f, 1.f, 10.f, 0.4f, 0.4f, 20.f);
+        frames(e, 3);
+        save(out, "28_pecas.png");
+        // cômodo sem laje visto de cima: escada interna, piso de cerâmica, porta e janelas
+        add(R"({"tipo":"modulo","pos":[0,0,-12],"largura":5,"profundidade":5,"paredes":["porta","janela","janela","lisa"],"piso":"ceramica","escada":"interna","laje":false})");
+        engine_set_camera(e, 0.f, 1.f, -12.f, 0.5f, 1.1f, 9.f);
+        frames(e, 3);
+        save(out, "28_escada_cima.png");
+        // dentro do térreo: escada interna e abertura na laje
+        engine_set_camera(e, 0.f, 1.6f, 0.f, 2.6f, 0.25f, 2.2f);
+        frames(e, 3);
+        save(out, "28_dentro.png");
+        // o personagem sobe a escada interna até o segundo andar
+        int ch = engine_create_random_character(e, 7, 1);
+        float p[3], r[3], sc[3];
+        engine_get_transform(e, ch, p, r, sc);
+        p[0] = 1.9f; p[1] = 0.3f; p[2] = 2.1f; r[0] = r[2] = 0.f; r[1] = 180.f;  // olhando para o fundo
+        engine_set_transform(e, ch, p, r, sc);
+        engine_set_play(e, 1);
+        frames(e, 20);
+        engine_player_input(e, 0.f, 1.f, 0);  // anda para a frente (a escada sobe para o fundo, -Z)
+        for (int k = 0; k < 150; ++k) {
+            frames(e, 1);
+            if (k % 30 == 0) { engine_get_transform(e, ch, p, r, sc); std::printf("  %.2f %.2f %.2f\n", p[0], p[1], p[2]); }
+        }
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_get_transform(e, ch, p, r, sc);
+        save(out, "28_escada_play.png");
+        std::printf("  depois da escada: y = %.2f (segundo andar a partir de %.2f)\n", p[1], 0.15f + 2.8f + 0.15f);
+        if (p[1] < 2.5f) { std::printf("  [ERRO] não subiu a escada interna\n"); ++g_fail; }
+        engine_set_play(e, 0);
+    };
+    if (std::getenv("SO_CONSTRUCAO")) { modules(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ARMAS")) { weapons(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_DESEMPENHO")) { perf(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_KIT")) { kit(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
@@ -1238,6 +1303,7 @@ int main(int argc, char** argv) {
     globePlay();
     kit();
     weapons();
+    modules();
     supportHand();
 
     engine_destroy(e);

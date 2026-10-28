@@ -120,6 +120,27 @@ void buildSkyscraper(Geo& g, Rng& r, float w, float d, int floors);
 // Prédio escolar (2 andares) com faixa colorida; comprimento ao longo de X
 void buildSchoolWing(Geo& g, float len, float depth, int floors, glm::vec4 wall, glm::vec4 band);
 
+// Construção montada pelo usuário, andar por andar. Origem: centro da base, frente para +Z.
+enum ModuleWall { MW_Plain, MW_Door, MW_Window, MW_Open };
+enum ModulePiece { MP_Floor, MP_Wall, MP_Slab, MP_Porch, MP_StairsOut, MP_Roof };
+struct ModuleSpec {
+    float w = 4.f, d = 4.f, h = 2.8f;                        // largura (X), profundidade (Z), pé-direito
+    int walls[4] = {MW_Door, MW_Plain, MW_Window, MW_Window};  // frente (+Z), fundo (-Z), esquerda (+X), direita (-X)
+    Mat wallMat = Mat::Brick;
+    glm::vec4 wallColor{1.f};
+    Mat floorMat = Mat::Ceramic;
+    bool floor = true;      // piso próprio (andar de cima: não, a laje de baixo é o piso)
+    bool slab = true;       // laje em cima (teto / piso do próximo andar)
+    bool parapet = false;   // mureta em volta da laje (terraço)
+    int stairs = 0;         // 0 nenhuma, 1 interna (abre a laje), 2 externa pela lateral direita
+    bool porch = false;     // varanda coberta na frente (no chão) ou sacada (andar de cima)
+};
+// Altura do topo do módulo (onde o próximo andar começa)
+float moduleTop(const ModuleSpec& s);
+void buildModule(Geo& g, const ModuleSpec& s);
+// Peças avulsas do mesmo jeito (parede de largura w, piso, laje, varanda, escada externa, telhado)
+void buildModulePiece(Geo& g, int piece, const ModuleSpec& s, int wallKind);
+
 // Objetos de cenário
 void buildTree(MeshBuilder& painted, Rng& r, int kind, bool lowPoly = false);   // 0 copa redonda, 1 pinheiro, 2 palmeira
 void buildCar(Geo& g, Rng& r);

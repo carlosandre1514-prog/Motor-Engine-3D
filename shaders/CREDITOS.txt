@@ -23,7 +23,7 @@ Downtown City MegaKit (prédios, ruas, peças e texturas da cidade)
   Autor: Quaternius — https://quaternius.com
   Licença: CC0 1.0 (domínio público). Crédito não obrigatório, mas agradecemos.
 
-Texturas do chão (grama, campo, floresta, chão batido, areia, terra arada, seixos)
+Texturas do chão (grama, campo, floresta, chão batido, areia, terra arada, seixos) e piso de pedra (dry_river_pebbles)
   Poly Haven — https://polyhaven.com — Licença: CC0 (domínio público).
 
 Água (shader "ocean")

@@ -913,17 +913,22 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
     if (e->mapKind == MAP_Planet) planetGlobeEnter(e);
 }
 
-Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos) {
+Scene::Handle createBuilding(Engine* e, int kind, uint32_t seed, glm::vec3 pos, int floors) {
     Rng r(seed);
     Geo g;
     g.place(glm::vec3(0.f), 0.f);
     const char* name = "Construcao";
     switch (kind) {
-        case 0: buildHouse(g, r, r.range(7.f, 10.f), r.range(8.f, 11.f), 1, housePaint(r), r.chance(0.6f)); name = "Casa"; break;
-        case 1: buildHouse(g, r, r.range(8.f, 11.f), r.range(9.f, 12.f), 2, housePaint(r), true); name = "Sobrado"; break;
-        case 2: buildBarraco(g, r, r.range(3.5f, 5.f), r.range(3.5f, 5.f), r.irange(1, 3), r.chance(0.5f), favelaPaint(r), 0.f); name = "Barraco"; break;
-        case 3: buildApartment(g, r, r.range(15.f, 21.f), r.range(13.f, 18.f), r.irange(4, 12), buildingPaint(r)); name = "Predio"; break;
-        case 4: buildSkyscraper(g, r, r.range(24.f, 34.f), r.range(22.f, 30.f), r.irange(25, 55)); name = "Arranha-ceu"; break;
+        case 0: buildHouse(g, r, r.range(7.f, 10.f), r.range(8.f, 11.f), floors > 0 ? std::min(floors, 3) : 1, housePaint(r), r.chance(0.6f)); name = "Casa"; break;
+        case 1: buildHouse(g, r, r.range(8.f, 11.f), r.range(9.f, 12.f), floors > 0 ? std::min(floors, 3) : 2, housePaint(r), true); name = "Sobrado"; break;
+        case 2: {
+            int f = r.irange(1, 3);  // sorteia sempre (mantém o resto do sorteio igual em projetos antigos)
+            buildBarraco(g, r, r.range(3.5f, 5.f), r.range(3.5f, 5.f), floors > 0 ? std::min(floors, 6) : f, r.chance(0.5f), favelaPaint(r), 0.f);
+            name = "Barraco";
+            break;
+        }
+        case 3: { int f = r.irange(4, 12); buildApartment(g, r, r.range(15.f, 21.f), r.range(13.f, 18.f), floors > 0 ? floors : f, buildingPaint(r)); name = "Predio"; break; }
+        case 4: { int f = r.irange(25, 55); buildSkyscraper(g, r, r.range(24.f, 34.f), r.range(22.f, 30.f), floors > 0 ? floors : f); name = "Arranha-ceu"; break; }
         case 5: buildSchoolWing(g, 40.f, 12.f, 2, srgb(245, 232, 205), srgb(40, 90, 170)); name = "Escola"; break;
         case 6: case 7: case 8:
             buildTree(g[Mat::Painted], r, kind - 6);

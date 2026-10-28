@@ -110,7 +110,8 @@ int matOf(const std::string& s) {
                        {"quadra", int(Mat::Court)}, {"agua", int(Mat::Water)}, {"terreno", int(Mat::Terrain)},
                        {"pintura", int(Mat::Painted)}, {"liso", int(Mat::Painted)}, {"vidro", int(Mat::Glass)},
                        {"tijolo_vermelho", int(Mat::RedBrick)}, {"fachada_tijolo", int(Mat::FacadeBrick)}, {"ardosia", int(Mat::Slate)},
-                       {"marmore", int(Mat::Marble)}, {"terra", int(Mat::Dirt)}});
+                       {"marmore", int(Mat::Marble)}, {"terra", int(Mat::Dirt)}, {"pedra", int(Mat::Stone)},
+                       {"ceramica", int(Mat::Ceramic)}, {"lajota", int(Mat::Ceramic)}});
     return k;
 }
 
@@ -573,6 +574,83 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         Scene::Handle h = e->objects.empty() ? Scene::Handle{} : e->objects.back();
         return finish(e, h, spec, false);
     }
+    if (tipo == "modulo" || tipo == "andar") {
+        // Construção montada pelo usuário: andar/cômodo configurável ou peça avulsa (parede, piso, laje, varanda...)
+        ModuleSpec ms;
+        ms.w = std::clamp(num(spec, "largura", 4.f), 1.f, 40.f);
+        ms.d = std::clamp(num(spec, "profundidade", 4.f), 1.f, 40.f);
+        ms.h = std::clamp(num(spec, "altura", 2.8f), 1.8f, 8.f);
+        auto wallKindOf = [&](const std::string& s) {
+            return lookup(s, {{"lisa", MW_Plain}, {"porta", MW_Door}, {"janela", MW_Window}, {"aberta", MW_Open}, {"sem", MW_Open}}, MW_Plain);
+        };
+        if (auto it = spec.find("paredes"); it != spec.end() && it->is_array())
+            for (int k = 0; k < 4 && k < int(it->size()); ++k) if ((*it)[k].is_string()) ms.walls[k] = wallKindOf((*it)[k].get<std::string>());
+        // "material" sozinho pintaria o objeto inteiro (piso e laje junto): nos módulos vale só para as paredes
+        if (auto it = spec.find("material"); it != spec.end()) { spec["material_parede"] = *it; spec.erase(it); }
+        int wm = matOf(str(spec, "material_parede", "tijolo"));
+        ms.wallMat = wm >= 0 ? Mat(wm) : Mat::Brick;
+        glm::vec3 wc;
+        if (auto it = spec.find("cor_parede"); it != spec.end() && colorOf(*it, wc)) ms.wallColor = linear(wc);
+        int fm = matOf(str(spec, "piso", "ceramica"));
+        ms.floorMat = fm >= 0 ? Mat(fm) : Mat::Ceramic;
+        ms.slab = flag(spec, "laje", true);
+        ms.parapet = flag(spec, "mureta", false);
+        ms.porch = flag(spec, "varanda", false);
+        std::string esc = norm(str(spec, "escada", "nenhuma"));
+        ms.stairs = esc.find("intern") != std::string::npos ? 1 : esc.find("extern") != std::string::npos ? 2 : 0;
+        // empilhar: em cima do objeto escolhido (mesma posição e giro); andar de cima não tem piso próprio
+        if (auto it = spec.find("sobre"); it != spec.end() && it->is_number()) {
+            GameObject* base = rootOf(e, objectById(e, it->get<int>()));
+            AABB b;
+            e->scene.updateTransforms();
+            if (base && subtreeBounds(e, *base, b)) {
+                float top = b.max.y;
+                // andar montado: topo da laje (a grade da varanda, a mureta e os corrimãos ficam acima e não contam)
+                if (base->recipe >= 0 && base->recipe < int(e->recipes.size())) {
+                    json r = json::parse(e->recipes[base->recipe], nullptr, false);
+                    if (r.is_object() && str(r, "tipo") == "modulo" && norm(str(r, "peca", "andar")) == "andar") {
+                        ModuleSpec bs;
+                        bs.h = std::clamp(num(r, "altura", 2.8f), 1.8f, 8.f);
+                        bs.floor = flag(r, "tem_piso", true);
+                        bs.slab = flag(r, "laje", true);
+                        top = base->transform.position.y + moduleTop(bs);
+                        // mesmo tamanho do andar de baixo
+                        ms.w = std::clamp(num(r, "largura", 4.f), 1.f, 40.f);
+                        ms.d = std::clamp(num(r, "profundidade", 4.f), 1.f, 40.f);
+                        spec["largura"] = ms.w;
+                        spec["profundidade"] = ms.d;
+                    }
+                }
+                pos = glm::vec3(base->transform.position.x, top, base->transform.position.z);
+                hasPos = true;
+                glm::vec3 f = base->transform.rotation * glm::vec3(0, 0, 1);
+                yaw = std::atan2(f.x, f.z);
+                spec["rot_y"] = glm::degrees(yaw);
+                if (!spec.contains("tem_piso")) spec["tem_piso"] = false;
+            }
+            spec.erase("sobre");
+        }
+        ms.floor = flag(spec, "tem_piso", true);
+        std::string peca = norm(str(spec, "peca", "andar"));
+        int piece = lookup(peca, {{"parede", MP_Wall}, {"piso", MP_Floor}, {"laje", MP_Slab}, {"varanda", MP_Porch},
+                                  {"escada", MP_StairsOut}, {"telhado", MP_Roof}}, -1);
+        Geo g;
+        g.place(glm::vec3(0.f), 0.f);
+        const char* name = "Andar";
+        if (piece < 0) buildModule(g, ms);
+        else {
+            buildModulePiece(g, piece, ms, wallKindOf(str(spec, "parede", "lisa")));
+            static const char* names[] = {"Piso", "Parede", "Laje", "Varanda", "Escada externa", "Telhado"};
+            name = names[piece];
+        }
+        if (!hasPos) pos.y = mapHeight(e, pos.x, pos.z);
+        Scene::Handle h = spawnGeo(e, g, name, true, pos, 0.f);
+        GameObject* go = e->scene.get(h);
+        if (!go) return fail("não consegui criar a construção");
+        if (yaw != 0.f) go->transform.setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
+        spec["tipo"] = "modulo";
+        return finish(e, h, spec, false);
+    }
     if (tipo == "construcao" || tipo == "predio" || tipo == "casa" || tipo == "arvore" || tipo == "natureza") {
         std::string m = str(spec, "modelo", tipo == "construcao" || tipo == "natureza" ? "casa" : tipo.c_str());
         int kind = buildingOf(m);
@@ -581,7 +659,7 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         if (!seed) { seed = uint32_t(e->fxRng.next() & 0x7fffffff) | 1u; spec["semente"] = seed; }
         spec["modelo"] = buildingName(kind);
         spec["tipo"] = "construcao";
-        Scene::Handle h = createBuilding(e, kind, seed, pos);
+        Scene::Handle h = createBuilding(e, kind, seed, pos, inum(spec, "andares", 0));
         if (GameObject* g = e->scene.get(h); g && hasPos) g->transform.setPosition(pos);
         if (GameObject* g = e->scene.get(h); g && yaw != 0.f) g->transform.setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
         return finish(e, h, spec, false);

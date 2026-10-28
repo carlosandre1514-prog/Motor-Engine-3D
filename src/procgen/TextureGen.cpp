@@ -12,7 +12,7 @@ const char* matName(Mat m) {
     static const char* names[] = {"Reboco", "Fachada casa", "Fachada prédio", "Vidro de escritório", "Tijolo", "Tijolo com janela",
                                   "Telha", "Concreto", "Asfalto", "Rua", "Calçada", "Grama", "Madeira", "Metal", "Metal escuro",
                                   "Plástico", "Quadra", "Água", "Terreno", "Pintura lisa", "Vidro", "Tijolo vermelho",
-                                  "Fachada de tijolo", "Ardósia", "Mármore", "Terra"};
+                                  "Fachada de tijolo", "Ardósia", "Mármore", "Terra", "Pedra", "Cerâmica"};
     return names[int(m)];
 }
 
@@ -415,6 +415,20 @@ TexData genCourt() {
     return finish(im, false);
 }
 
+// Piso cerâmico: lajotas bege de 40 cm (5 x 5 no tile de 2 m) com rejunte
+TexData genCeramic() {
+    Img im(512, 512);
+    im.each([&](int, int, int i, float u, float v) {
+        float x = u * 5.f, y = v * 5.f, fx = x - std::floor(x), fy = y - std::floor(y);
+        bool joint = fx < 0.02f || fy < 0.02f;
+        float var = hashf(int(x), int(y), 251), n = tileNoise(u, v, 20, 2, 252);
+        im.col[i] = joint ? rgb(150, 145, 135) : glm::mix(rgb(214, 196, 168), rgb(228, 212, 186), var) * (0.96f + 0.06f * n);
+        im.rough[i] = joint ? 0.9f : 0.35f;
+        im.height[i] = joint ? -0.6f : 0.f;
+    });
+    return finish(im, true, 2.f);
+}
+
 // Prédio de tijolo vermelho: tijolo do kit, laje de concreto, janela com sala iluminada e cortina
 TexData genFacadeBrick() {
     Pic brick = loadPic("tijolo_vermelho_alb.jpg"), bn = loadPic("tijolo_vermelho_nrm.jpg");
@@ -469,6 +483,8 @@ TexData generate(Mat m) {
         case Mat::Slate: { if (TexData t; fromFiles(t, "ardosia")) return t; return genRoofTile(); }
         case Mat::Marble: { if (TexData t; fromFiles(t, "marmore")) return t; return genSolid(rgb(215, 200, 170), 0.3f, 0.f, 221, 0.1f); }
         case Mat::Dirt: { if (TexData t; fromFiles(t, "terra")) return t; return genSolid(rgb(110, 85, 60), 0.95f, 0.f, 231, 0.3f); }
+        case Mat::Stone: { if (TexData t; fromFiles(t, "pedra")) return t; return genSolid(rgb(140, 135, 125), 0.9f, 0.f, 241, 0.4f); }
+        case Mat::Ceramic: return genCeramic();
         default: return genSolid(rgb(200, 200, 200), 0.8f, 0.f, 1, 0.f);
     }
 }

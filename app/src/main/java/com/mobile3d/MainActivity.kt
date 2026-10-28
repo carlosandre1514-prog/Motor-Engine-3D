@@ -518,14 +518,7 @@ class MainActivity : Activity() {
                 2 -> list("Efeito", effects) { k ->
                     list("Elemento / cor do efeito", elements) { el -> gl { NativeBridge.nativeCreateEffect(k, el) } }
                 }
-                3 -> {
-                    val kinds = intArrayOf(0, 1, 2, 3, 4, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
-                    list("Construção e peças", arrayOf("Casa", "Sobrado", "Barraco (favela)", "Prédio de apartamentos", "Arranha-céu",
-                        "Prédio escolar", "Muro", "🛣 Rua (pista)", "✚ Cruzamento", "Calçada", "Escada", "Rampa", "Piso / laje",
-                        "Parede", "Cerca", "Banco de praça", "Caixa d'água")) { k ->
-                        gl { NativeBridge.nativeCreateBuilding(kinds[k], seed()) }
-                    }
-                }
+                3 -> constructionMenu()
                 4 -> kitMenu()
                 5 -> list("Natureza e objetos", arrayOf("Árvore", "Pinheiro", "Palmeira", "Carro", "Poste")) { k ->
                     gl { NativeBridge.nativeCreateBuilding(6 + k, seed()) }
@@ -535,6 +528,143 @@ class MainActivity : Activity() {
                 }
             }
         }.show()
+    }
+
+    // ---------------- construção livre (andar por andar) ----------------
+    private val wallKinds = arrayOf("Lisa", "Com porta", "Com janela", "Sem parede")
+    private val wallKeys = arrayOf("lisa", "porta", "janela", "aberta")
+    private val wallMats = arrayOf("Tijolo" to "tijolo", "Tijolo vermelho" to "tijolo_vermelho", "Reboco (pintado)" to "reboco",
+                                   "Concreto" to "concreto", "Madeira" to "madeira", "Pedra" to "pedra", "Fachada de tijolo" to "fachada_tijolo")
+    private val floorMats = arrayOf("Cerâmica" to "ceramica", "Pedra" to "pedra", "Calçada" to "calcada", "Asfalto" to "asfalto",
+                                    "Concreto" to "concreto", "Madeira" to "madeira", "Mármore" to "marmore", "Terra" to "terra",
+                                    "Grama" to "grama", "Ardósia" to "ardosia")
+    private val wallPaints = intArrayOf(0xFFF2EBDD.toInt(), 0xFFE8B04A.toInt(), 0xFF8FB9D8.toInt(), 0xFFB7D39A.toInt(),
+                                        0xFFE59A8C.toInt(), 0xFFFFFFFF.toInt(), 0xFF9C9C9C.toInt())
+
+    // Último andar montado (o "Empilhar" repete o mesmo jeito em cima do selecionado)
+    private data class FloorChoice(var w: Float = 5f, var d: Float = 5f, var h: Float = 2.8f, val walls: IntArray = intArrayOf(1, 2, 0, 2),
+                                   var wallMat: Int = 0, var paint: Int = 0, var floorMat: Int = 0, var slab: Boolean = true,
+                                   var parapet: Boolean = false, var stairs: Int = 0, var porch: Boolean = false)
+    private var lastFloor = FloorChoice()
+
+    private fun floorSpec(f: FloorChoice, onTopOf: Int): String {
+        val sb = StringBuilder("{\"tipo\":\"modulo\"")
+        sb.append(String.format(Locale.US, ",\"largura\":%.1f,\"profundidade\":%.1f,\"altura\":%.1f", f.w, f.d, f.h))
+        sb.append(",\"paredes\":[").append(f.walls.joinToString(",") { "\"${wallKeys[it]}\"" }).append("]")
+        sb.append(",\"material\":\"${wallMats[f.wallMat].second}\",\"cor_parede\":${hex(wallPaints[f.paint])}")
+        sb.append(",\"piso\":\"${floorMats[f.floorMat].second}\",\"laje\":${f.slab},\"mureta\":${f.parapet},\"varanda\":${f.porch}")
+        sb.append(",\"escada\":\"${arrayOf("nenhuma", "interna", "externa")[f.stairs]}\"")
+        if (onTopOf >= 0) sb.append(",\"sobre\":$onTopOf")
+        return sb.append("}").toString()
+    }
+
+    private fun addSpecToast(spec: String, ok: String) = gl {
+        if (NativeBridge.addSpec(spec) < 0) toast("Não deu: " + NativeBridge.nativeLastError())
+        else { toast(ok); saveIfChanged() }
+    }
+
+    private fun constructionMenu() {
+        val items = arrayOf("🧱 Montar andar / cômodo (paredes, porta, janela, escada, varanda)…",
+                            "⬆ Empilhar um andar em cima do selecionado…",
+                            "🏠 Casa / sobrado / barraco / prédio (escolher quantos andares)…",
+                            "🪨 Piso avulso (pedra, calçada, asfalto, cerâmica…)…",
+                            "▮ Parede avulsa (lisa, com porta, com janela)…",
+                            "⛱ Varanda coberta avulsa…", "🪜 Escada externa (lateral) avulsa…", "▬ Laje avulsa…", "⌂ Telhado avulso…",
+                            "Outras peças (rua, calçada, muro, rampa, cerca, banco…)")
+        list("Construção", items) { which ->
+            when (which) {
+                0 -> floorDialog(-1)
+                1 -> {
+                    val sel = NativeBridge.nativeSelected()
+                    if (sel < 0) toast("Selecione primeiro o andar de baixo (toque nele)")
+                    else floorDialog(sel)
+                }
+                2 -> {
+                    val models = arrayOf("Casa" to "casa", "Sobrado" to "sobrado", "Barraco (favela)" to "barraco",
+                                         "Prédio de apartamentos" to "predio", "Arranha-céu" to "arranha_ceu", "Prédio escolar" to "escola")
+                    list("Construção pronta", models.map { it.first }.toTypedArray()) { m ->
+                        val max = when (m) { 0 -> 3; 1 -> 4; 2 -> 6; 5 -> 4; else -> 30 }
+                        val counts = (1..max).map { if (it == 1) "1 andar (térreo)" else "$it andares" }.toTypedArray()
+                        list("Quantos andares?", counts) { n ->
+                            addSpecToast("{\"tipo\":\"construcao\",\"modelo\":\"${models[m].second}\",\"andares\":${n + 1},\"semente\":${seed()}}",
+                                         "${models[m].first} com ${counts[n]} criado")
+                        }
+                    }
+                }
+                3 -> pieceDialog("piso")
+                4 -> pieceDialog("parede")
+                5 -> pieceDialog("varanda")
+                6 -> pieceDialog("escada")
+                7 -> pieceDialog("laje")
+                8 -> pieceDialog("telhado")
+                else -> {
+                    val kinds = intArrayOf(11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
+                    list("Outras peças", arrayOf("Muro", "🛣 Rua (pista)", "✚ Cruzamento", "Calçada", "Escada", "Rampa", "Piso / laje",
+                        "Parede", "Cerca", "Banco de praça", "Caixa d'água")) { k ->
+                        gl { NativeBridge.nativeCreateBuilding(kinds[k], seed()) }
+                    }
+                }
+            }
+        }
+    }
+
+    // Andar/cômodo: tamanho, as 4 paredes, materiais, piso, laje, escada e varanda. onTopOf >= 0: empilha em cima desse objeto
+    private fun floorDialog(onTopOf: Int) {
+        val f = lastFloor.copy(walls = lastFloor.walls.copyOf())
+        if (onTopOf >= 0) { f.walls[0] = 2; f.stairs = 0 }  // em cima: frente com janela por padrão
+        val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        if (onTopOf < 0) {
+            p.addView(slider("Largura (m)", 2f, 16f, f.w) { f.w = it })
+            p.addView(slider("Profundidade (m)", 2f, 16f, f.d) { f.d = it })
+        } else p.addView(label("Mesmo tamanho e giro do andar de baixo"))
+        p.addView(slider("Pé-direito (m)", 2.2f, 5f, f.h) { f.h = it })
+        val sides = arrayOf("Parede da frente", "Parede do fundo", "Parede da esquerda", "Parede da direita")
+        for (i in 0..3) p.addView(choice(sides[i], wallKinds, f.walls[i]) { f.walls[i] = it })
+        p.addView(choice("Material da parede", wallMats.map { it.first }.toTypedArray(), f.wallMat) { f.wallMat = it })
+        p.addView(colorRow("Cor da pintura (reboco/concreto)", wallPaints, f.paint) { f.paint = it })
+        if (onTopOf < 0) p.addView(choice("Piso", floorMats.map { it.first }.toTypedArray(), f.floorMat) { f.floorMat = it })
+        p.addView(choice("Escada", arrayOf("Nenhuma", "Interna (sobe por dentro)", "Externa (lateral, por fora)"), f.stairs) { f.stairs = it })
+        val slab = CheckBox(this).apply { text = "Laje em cima (dá para empilhar outro andar)"; setTextColor(Color.WHITE); isChecked = f.slab }
+        val parapet = CheckBox(this).apply { text = "Mureta no terraço (laje)"; setTextColor(Color.WHITE); isChecked = f.parapet }
+        val porch = CheckBox(this).apply {
+            text = if (onTopOf < 0) "Varanda coberta na frente" else "Sacada com grade na frente"; setTextColor(Color.WHITE); isChecked = f.porch
+        }
+        p.addView(slab); p.addView(parapet); p.addView(porch)
+        dialog().setTitle(if (onTopOf < 0) "Montar andar / cômodo" else "Empilhar andar")
+            .setView(ScrollView(this).apply { addView(p) })
+            .setPositiveButton(if (onTopOf < 0) "Criar" else "Empilhar") { _, _ ->
+                f.slab = slab.isChecked; f.parapet = parapet.isChecked; f.porch = porch.isChecked
+                lastFloor = f
+                addSpecToast(floorSpec(f, onTopOf), if (onTopOf < 0) "Andar criado. Para subir: selecione e use ⬆ Empilhar" else "Andar empilhado")
+            }.setNegativeButton("Cancelar", null).show()
+    }
+
+    // Peças avulsas (cada uma vira um objeto que dá para mover, girar e apagar)
+    private fun pieceDialog(piece: String) {
+        var w = if (piece == "parede") 3f else 5f
+        var d = if (piece == "piso") 5f else 4f
+        var h = 2.8f
+        var wall = 0; var wallMat = 0; var paint = 0; var floorMat = 0
+        val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        p.addView(slider(if (piece == "parede") "Comprimento (m)" else "Largura (m)", 1f, 20f, w) { w = it })
+        if (piece != "parede") p.addView(slider("Profundidade (m)", 1f, 20f, d) { d = it })
+        if (piece == "parede" || piece == "varanda" || piece == "escada") p.addView(slider("Altura (m)", 2.2f, 5f, h) { h = it })
+        if (piece == "parede") {
+            p.addView(choice("Tipo de parede", wallKinds.sliceArray(0..2), wall) { wall = it })
+            p.addView(choice("Material", wallMats.map { it.first }.toTypedArray(), wallMat) { wallMat = it })
+            p.addView(colorRow("Cor da pintura (reboco/concreto)", wallPaints, paint) { paint = it })
+        }
+        if (piece == "piso" || piece == "varanda") p.addView(choice("Material do piso", floorMats.map { it.first }.toTypedArray(), floorMat) { floorMat = it })
+        val names = mapOf("piso" to "Piso", "parede" to "Parede", "varanda" to "Varanda coberta", "escada" to "Escada externa",
+                          "laje" to "Laje", "telhado" to "Telhado")
+        dialog().setTitle(names[piece])
+            .setView(ScrollView(this).apply { addView(p) })
+            .setPositiveButton("Criar") { _, _ ->
+                val spec = String.format(Locale.US, "{\"tipo\":\"modulo\",\"peca\":\"%s\",\"largura\":%.1f,\"profundidade\":%.1f,\"altura\":%.1f," +
+                    "\"parede\":\"%s\",\"material\":\"%s\",\"cor_parede\":%s,\"piso\":\"%s\"}",
+                    piece, w, d, h, wallKeys[wall], wallMats[wallMat].second, hex(wallPaints[paint]), floorMats[floorMat].second)
+                addSpecToast(spec, "${names[piece]} criado no foco da câmera")
+            }.setNegativeButton("Cancelar", null).show()
     }
 
     // ---------------- armas ----------------

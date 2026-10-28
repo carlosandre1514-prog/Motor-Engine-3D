@@ -33,6 +33,8 @@ enum class Mat : uint8_t {
     Slate,         // telhado de ardósia (tile 2 x 2 m)
     Marble,        // piso de mármore (tile 2 x 2 m)
     Dirt,          // terra batida (tile 3 x 3 m)
+    Stone,         // piso de pedras (tile 2 x 2 m)
+    Ceramic,       // piso cerâmico em lajotas de 40 cm (tile 2 x 2 m)
     Count
 };
 
