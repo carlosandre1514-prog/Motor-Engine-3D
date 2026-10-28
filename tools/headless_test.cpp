@@ -1168,6 +1168,100 @@ int main(int argc, char** argv) {
         std::printf(g_fail ? "FALHOU\n" : "OK\n");
         return g_fail ? 1 : 0;
     }
+    // Primeira pessoa com braços: personagem segurando a arma, câmera nos olhos (na mão e mirando)
+    if (std::getenv("SO_FPS")) {
+        using nlohmann::json;
+        auto envf = [](const char* k, float d) { const char* v = std::getenv(k); return v ? float(std::atof(v)) : d; };
+        float mx = envf("MAPA_X", 0.f), mz = envf("MAPA_Z", 30.f), rotY = envf("ROT_Y", 180.f);
+        float y0 = 0.f;
+        if (std::getenv("FAVELA")) {
+            engine_tool_call(e, "carregar_mapa", R"({"tipo":"favela","semente":5,"com_jogador":false})");
+            engine_tool_call(e, "definir_ambiente", R"({"hora":15.5})");
+            json h = json::parse(std::string(engine_tool_call(e, "altura_terreno", json{{"pontos", {{mx, mz}}}}.dump().c_str())));
+            y0 = h["alturas"][0].get<float>();
+        } else { engine_new_scene(e); mx = mz = 0.f; }
+        int ch = std::getenv("SOLDADO")
+            ? engine_add_spec(e, json{{"tipo", "modelo"}, {"arquivo", "kit:personagens/soldado"}, {"personagem", true}, {"pos", {mx, y0, mz}}, {"rot_y", rotY}}.dump().c_str())
+            : engine_add_spec(e, json{{"tipo", "personagem"}, {"semente", 3}, {"pos", {mx, y0, mz}}, {"rot_y", rotY},
+                                        {"arma", std::getenv("ARMA") ? std::getenv("ARMA") : "m4a1"},
+                                        {"aparencia", {{"camisa", "#5d6872"}, {"manga_comprida", true}}}}.dump().c_str());
+        if (ch < 0) { std::printf("[ERRO] %s\n", engine_last_error(e)); return 1; }
+        if (std::getenv("SOLDADO")) engine_add_spec(e, json{{"tipo", "arma"}, {"arma", "m4a1"}, {"portador", ch}}.dump().c_str());
+        engine_select(e, ch);
+        engine_set_anim_preview(e, 1);
+        float r = glm::radians(rotY), fx = std::sin(r), fz = std::cos(r);
+        for (int clip : {5, 8}) {
+            engine_set_animation(e, clip);
+            frames(e, 20);
+            engine_select(e, -1);
+            const bool aim = clip == 8;
+            float ey = envf(aim ? "OLHO_Y_MIRA" : "OLHO_Y", 1.62f), ez = envf(aim ? "OLHO_Z_MIRA" : "OLHO_Z", 0.16f), ex = envf(aim ? "OLHO_X_MIRA" : "OLHO_X", 0.f);
+            float px = mx + fx * ez + fz * ex, pz = mz + fz * ez - fx * ex, py = y0 + ey, cyaw = r + 3.14159f + envf("YAW_ADD", 0.f);
+            // soldado: olho na cabeça (osso), olhando para onde a arma está
+            int head = -1, gun = -1;
+            for (int i = 0; i < engine_object_count(e); ++i) {
+                std::string n = engine_object_name(e, i);
+                if (n == "mixamorig:Head") head = i;
+                if (n == "Fuzil") gun = i;
+            }
+            if (head >= 0 && gun >= 0) {
+                float hp[3], gp[3];
+                engine_get_world_pos(e, head, hp);
+                engine_get_world_pos(e, gun, gp);
+                glm::vec3 f(gp[0] - hp[0], 0.f, gp[2] - hp[2]);
+                f = glm::normalize(f);
+                glm::vec3 side(-f.z, 0.f, f.x);
+                glm::vec3 eye = glm::vec3(hp[0], hp[1], hp[2]) + glm::vec3(0, envf("OLHO_ALTO", 0.08f), 0) + f * envf("OLHO_FRENTE", 0.1f) + side * envf("OLHO_LADO", 0.f);
+                px = eye.x; py = eye.y; pz = eye.z;
+                cyaw = std::atan2(-f.x, -f.z) + envf("YAW_ADD", 0.f);
+                std::printf("  cabeça %.2f %.2f %.2f arma %.2f %.2f %.2f\n", hp[0], hp[1], hp[2], gp[0], gp[1], gp[2]);
+            }
+            engine_set_camera(e, px, py, pz, cyaw, envf(aim ? "PITCH_MIRA" : "PITCH", 0.f), 0.02f);
+            engine_set_near(e, envf("PERTO", 0.22f));
+            frames(e, 2, 0.f);
+            save(out, aim ? "fp_mirando.png" : "fp_na_mao.png");
+            engine_set_near(e, 0.f);
+            engine_set_camera(e, mx, y0 + 1.3f, mz, r + 3.14159f + 2.2f, 0.15f, 2.4f);  // de fora, para conferir a pose
+            frames(e, 1, 0.f);
+            save(out, aim ? "fp_mirando_fora.png" : "fp_na_mao_fora.png");
+            engine_select(e, ch);
+        }
+        engine_destroy(e);
+        std::printf("OK\n");
+        return 0;
+    }
+    // Arma solta vista como na primeira pessoa (posição baixa e mirando): GIRO="x,y,z" CAM="yaw,pitch,dist,alvo_y"
+    if (const char* list = std::getenv("SO_VISTA_ARMA")) {
+        using nlohmann::json;
+        engine_new_scene(e);
+        engine_set_grid(e, 0);
+        engine_tool_call(e, "definir_ambiente", R"({"hora":13,"neblina":0})");
+        // cada item: nome:arma:rx,ry,rz:yaw,pitch,dist,ty[:textura]
+        std::string all = list;
+        size_t pos = 0;
+        while (pos < all.size()) {
+            size_t end = all.find(';', pos);
+            if (end == std::string::npos) end = all.size();
+            std::string item = all.substr(pos, end - pos);
+            pos = end + 1;
+            char name[64], gun[32], tex[256] = "";
+            float rx, ry, rz, yaw, pitch, dist, ty;
+            if (std::sscanf(item.c_str(), "%63[^:]:%31[^:]:%f,%f,%f:%f,%f,%f,%f:%255s", name, gun, &rx, &ry, &rz, &yaw, &pitch, &dist, &ty, tex) < 9) continue;
+            json spec = {{"tipo", "arma"}, {"arma", gun}, {"pos", {0, 1.0, 0}}, {"rot", {rx, ry, rz}}};
+            if (tex[0]) spec["textura"] = tex;
+            int id = engine_add_spec(e, spec.dump().c_str());
+            engine_select(e, -1);
+            engine_set_camera(e, 0.f, 1.f + ty, 0.f, yaw, pitch, dist);
+            frames(e, 3);
+            save(out, (std::string(name) + ".png").c_str());
+            engine_tool_call(e, "remover_objetos", json{{"ids", {id}}}.dump().c_str());
+            frames(e, 2);
+            save(out, (std::string(name) + "_fundo.png").c_str());
+        }
+        engine_destroy(e);
+        std::printf("OK\n");
+        return 0;
+    }
     if (std::getenv("SO_TIMES")) { times(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_FAVELA")) { favela(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ESCADAS")) { stairs(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }

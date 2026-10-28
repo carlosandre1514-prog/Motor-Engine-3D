@@ -118,6 +118,7 @@ void engine_frame(Engine* e, float dt) {
     // Câmera: near/far e distância de sombra acompanham o zoom e o tamanho do mapa
     float d = e->editorCam.distance;
     e->camera.nearZ = std::clamp(d * 0.01f, 0.05f, 5.f);
+    if (e->nearOverride > 0.f) e->camera.nearZ = e->nearOverride;
     e->camera.farZ = std::max(e->mapKind >= 0 ? 900.f : 200.f, d * 40.f);
     // jogando: vê até uma distância (o resto nem é enviado para a placa de vídeo); leve vê menos
     const float viewDist = !e->playing ? 1e9f : e->quality == 0 ? 170.f : e->quality == 1 ? 320.f : 700.f;
@@ -674,6 +675,15 @@ int engine_set_object_texture(Engine* e, const char* path) {
 }
 
 // ---------- jogador ----------
+int engine_get_world_pos(Engine* e, int id, float* p3) {
+    GameObject* g = e ? eng::objectById(e, id) : nullptr;
+    if (!g || !p3) return 0;
+    e->scene.updateTransforms();
+    glm::vec3 w = glm::vec3(g->transform.world()[3]);
+    for (int i = 0; i < 3; ++i) p3[i] = w[i];
+    return 1;
+}
+void engine_set_near(Engine* e, float n) { if (e) e->nearOverride = std::max(0.f, n); }
 int engine_player_id(Engine* e) {
     if (!e || e->player < 0 || e->player >= int(e->characters.size())) return -1;
     eng::GameObject* g = e->scene.get(e->characters[e->player].root);

@@ -124,6 +124,8 @@ int     engine_set_object_texture(Engine*, const char* image_path);   // PNG/JPG
 
 // ---- Jogador (Play)
 int     engine_has_player(Engine*);
+int     engine_get_world_pos(Engine*, int id, float* pos3);     // posição no mundo (osso, peça presa)
+void    engine_set_near(Engine*, float near_m);                 // plano próximo fixo (0 = automático)
 int     engine_player_id(Engine*);                              // id do objeto do jogador (no Play pode ser a cópia em jogo) ou -1
 void    engine_set_player(Engine*);                             // personagem selecionado vira o jogador
 void    engine_player_input(Engine*, float x, float y, int run); // joystick -1..1 (y para frente)

@@ -310,6 +310,7 @@ struct Engine {
     GameRules rules;
     GameState game;
     TeamMatch match;
+    float nearOverride = 0.f;  // > 0: plano de corte próximo fixo (primeira pessoa: não desenha a própria cabeça)
     std::string toolResult;             // resposta da última chamada de ferramenta (IA)
     std::vector<std::unique_ptr<ClipStore>> clipStores;
     AnimEditState animEdit;
