@@ -1101,6 +1101,73 @@ int main(int argc, char** argv) {
         for (auto& o : scene["objetos"]) if (o.contains("time")) ++chars;
         std::printf("  personagens com time no projeto: %d\n", chars);
     };
+    // Prévia das skins de arma (loja): cada arma do kit com cada textura de skin, renderizada pelo motor
+    if (const char* dir = std::getenv("SO_SKINS")) {
+        using nlohmann::json;
+        engine_new_scene(e);
+        engine_tool_call(e, "definir_ambiente", R"({"hora":13,"grade":false,"neblina":0})");
+        engine_set_grid(e, 0);
+        engine_select(e, -1);
+        engine_set_camera(e, 0.f, 1.02f, 0.f, 1.5708f + 0.18f, 0.12f, 1.05f);
+        frames(e, 3);
+        save(out, "skin_fundo.png");  // fundo sem arma: a diferença vira a transparência da prévia
+        const char* guns[] = {"m4a1", "m4colt", "ak47", "ak74", "ak74_tatica"};
+        const char* skins[] = {"", "dourado", "selva", "deserto", "urbana", "neon", "favela", "dragao"};
+        for (const char* g : guns)
+            for (const char* sk : skins) {
+                json spec = {{"tipo", "arma"}, {"arma", g}, {"pos", {0, 1.0, 0}}};
+                if (*sk) spec["textura"] = std::string(dir) + "/" + sk + ".png";
+                int id = engine_add_spec(e, spec.dump().c_str());
+                if (id < 0) { std::printf("  [ERRO] %s %s: %s\n", g, sk, engine_last_error(e)); ++g_fail; continue; }
+                engine_select(e, -1);
+                engine_set_camera(e, 0.f, 1.02f, 0.f, 1.5708f + 0.18f, 0.12f, 1.05f);
+                frames(e, 3);
+                std::string name = std::string("skin_") + g + "_" + (*sk ? sk : "padrao") + ".png";
+                save(out, name.c_str());
+                engine_tool_call(e, "remover_objetos", json{{"ids", {id}}}.dump().c_str());
+            }
+        for (const char* g : {"pistola", "escopeta", "sniper"}) {  // armas feitas pelo motor (sem arquivo)
+            int id = engine_add_spec(e, json{{"tipo", "arma"}, {"arma", g}, {"pos", {0, 1.0, 0}}}.dump().c_str());
+            engine_select(e, -1);
+            engine_set_camera(e, 0.f, 1.02f, 0.f, 1.5708f + 0.18f, 0.12f, std::string(g) == "pistola" ? 0.5f : 1.05f);
+            frames(e, 3);
+            save(out, (std::string("skin_") + g + "_padrao.png").c_str());
+            engine_tool_call(e, "remover_objetos", json{{"ids", {id}}}.dump().c_str());
+        }
+        // primeira pessoa: a arma vista de trás (como nas mãos) e a favela na altura dos olhos
+        for (int k = 0; k < 2; ++k) {
+            engine_set_camera(e, 0.f, 1.02f, 0.f, 3.14159f - (k ? 0.75f : 0.5f), 0.17f, 0.62f);
+            frames(e, 3);
+            save(out, ("fps_fundo_" + std::to_string(k) + ".png").c_str());
+        }
+        for (const char* g : {"m4a1", "ak47"}) {
+            int id = engine_add_spec(e, json{{"tipo", "arma"}, {"arma", g}, {"pos", {0, 1.0, 0}}}.dump().c_str());
+            engine_select(e, -1);
+            for (int k = 0; k < 2; ++k) {
+                float yaw = 3.14159f - (k ? 0.75f : 0.5f);
+                engine_set_camera(e, 0.f, 1.02f, 0.f, yaw, 0.17f, 0.62f);
+                frames(e, 3);
+                std::string name = std::string("fps_") + g + "_" + std::to_string(k) + ".png";
+                save(out, name.c_str());
+            }
+            engine_tool_call(e, "remover_objetos", json{{"ids", {id}}}.dump().c_str());
+        }
+        engine_tool_call(e, "carregar_mapa", R"({"tipo":"favela","semente":5,"com_jogador":false})");
+        engine_tool_call(e, "definir_ambiente", R"({"hora":15.5})");
+        struct V { float x, z, yaw, pitch; } views[] = {{0.f, 30.f, 0.f, 0.03f}, {-14.f, 6.f, 0.4f, 0.05f}, {2.f, -34.f, 3.14159f, 0.02f}, {-30.f, 26.f, -0.9f, 0.02f}};
+        int n = 0;
+        for (auto& v : views) {
+            json h = json::parse(std::string(engine_tool_call(e, "altura_terreno", json{{"pontos", {{v.x, v.z}}}}.dump().c_str())));
+            float y = h["alturas"][0].is_number() ? h["alturas"][0].get<float>() : 10.f;
+            engine_set_camera(e, v.x, y + 1.65f, v.z, v.yaw, v.pitch, 0.05f);
+            frames(e, 4);
+            std::string name = "fps_favela_" + std::to_string(n++) + ".png";
+            save(out, name.c_str());
+        }
+        engine_destroy(e);
+        std::printf(g_fail ? "FALHOU\n" : "OK\n");
+        return g_fail ? 1 : 0;
+    }
     if (std::getenv("SO_TIMES")) { times(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_FAVELA")) { favela(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ESCADAS")) { stairs(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
