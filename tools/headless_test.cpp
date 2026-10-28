@@ -5,6 +5,7 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <functional>
@@ -871,6 +872,37 @@ int main(int argc, char** argv) {
             if (w2 < 3) { std::printf("  [ERRO] não subiu pela entrada norte\n"); ++g_fail; }
             engine_set_play(e, 0);
         }
+        // desempenho jogando (correndo pelas escadarias) em cada qualidade
+        for (int q : {1, 0}) {
+            engine_set_quality(e, q);
+            float p[3], r[3], sc[3];
+            engine_get_transform(e, pl, p, r, sc);
+            p[0] = 0.f; p[2] = 40.f; p[1] = hAt(0.f, 40.f) + 0.3f;
+            engine_set_transform(e, pl, p, r, sc);
+            engine_set_play(e, 1);
+            frames(e, 10);
+            float tot = 0.f, worst = 0.f;
+            const glm::vec2 path[] = {{0, 22}, {-14, 10}, {-14, -14}};
+            size_t w3 = 0;
+            for (int k = 0; k < 150; ++k) {
+                engine_get_transform(e, pl, p, r, sc);
+                while (w3 < 3 && glm::length(glm::vec2(p[0], p[2]) - path[w3]) < 1.2f) ++w3;
+                glm::vec2 d = w3 < 3 ? glm::normalize(path[w3] - glm::vec2(p[0], p[2])) : glm::vec2(0.f);
+                engine_set_camera(e, p[0], p[1] + 1.f, p[2], std::atan2(-d.x, -d.y), 0.3f, 5.5f);
+                engine_player_input(e, 0.f, glm::length(d) > 0 ? 1.f : 0.f, 1);
+                auto t0 = std::chrono::steady_clock::now();
+                engine_frame(e, 1.f / 30.f);
+                glFinish();
+                float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                tot += ms; worst = std::max(worst, ms);
+            }
+            engine_player_input(e, 0.f, 0.f, 0);
+            std::printf("  qualidade %d jogando: quadro %.1f ms (pior %.1f)\n", q, tot / 150.f, worst);
+            stats(e, q ? "jogando_q1" : "jogando_q0");
+            save(out, q ? "31_jogando_q1.png" : "31_jogando_q0.png");
+            engine_set_play(e, 0);
+        }
+        engine_set_quality(e, 1);
         // chuva forte no Play: gotas, respingos, céu fechado, trovão
         engine_select(e, pl);
         engine_create_weapon_ex(e, 1, "kit:armas/ak47", 0, 1.f, 0);
@@ -935,6 +967,141 @@ int main(int argc, char** argv) {
         engine_destroy(e);
         return 0;
     }
+    // Polícia x Bandidos no mapa da favela: monta o projeto pelas ferramentas (o mesmo exemplo do app) e joga
+    auto teamProject = [&]() {
+        using nlohmann::json;
+        engine_tool_call(e, "carregar_mapa", R"({"tipo":"favela","semente":5,"com_jogador":true})");
+        auto hAt = [&](float x, float z) {
+            json r = json::parse(std::string(engine_tool_call(e, "altura_terreno", json{{"pontos", {{x, z}}}}.dump().c_str())));
+            return r["alturas"][0].is_number() ? r["alturas"][0].get<float>() : 0.f;
+        };
+        auto P = [&](float x, float z) { return json::array({x, hAt(x, z), z}); };
+        json objs = json::array();
+        // fora da favela (rua de baixo, na frente dos prédios): base e as lojas da polícia
+        objs.push_back({{"tipo", "base"}, {"time", "policia"}, {"pos", P(0.f, 106.f)}});
+        objs.push_back({{"tipo", "base"}, {"time", "policia"}, {"pos", P(-44.f, 106.f)}});
+        objs.push_back({{"tipo", "loja"}, {"loja", "armas"}, {"time", "policia"}, {"pos", P(-22.f, 107.5f)}, {"rot_y", 180}});
+        objs.push_back({{"tipo", "loja"}, {"loja", "roupas"}, {"time", "policia"}, {"pos", P(22.f, 107.5f)}, {"rot_y", 180}});
+        // dentro da favela: base no campinho, armas na área baixa, roupas na praça
+        objs.push_back({{"tipo", "base"}, {"time", "bandidos"}, {"pos", P(-8.f, -44.f)}});
+        objs.push_back({{"tipo", "base"}, {"time", "bandidos"}, {"pos", P(13.f, -37.f)}});
+        objs.push_back({{"tipo", "loja"}, {"loja", "armas"}, {"time", "bandidos"}, {"pos", P(52.f, 28.f)}, {"rot_y", -90}});
+        objs.push_back({{"tipo", "loja"}, {"loja", "roupas"}, {"time", "bandidos"}, {"pos", P(-42.f, 32.f)}, {"rot_y", 90}});
+        const char* pol[] = {"Sgt. Rocha", "Cb. Lima", "Sd. Nunes", "Ten. Costa", "Sd. Alves"};
+        const char* pa[] = {"m4a1", "m4colt", "pistola", "escopeta", "m4a1"};
+        const char* ban[] = {"Magrão", "Baixinho", "Cabeça", "Zóio", "Bigode"};
+        const char* ba[] = {"ak47", "ak74", "pistola", "escopeta", "ak47"};
+        for (int i = 0; i < 5; ++i) {
+            objs.push_back({{"tipo", "personagem"}, {"time", "policia"}, {"nome", pol[i]}, {"arma", pa[i]}, {"roupa", i % 4},
+                            {"pos", P(-6.f + i * 3.f, 104.f)}, {"rot_y", 180}});
+            objs.push_back({{"tipo", "personagem"}, {"time", "bandidos"}, {"nome", ban[i]}, {"arma", ba[i]}, {"roupa", i % 4},
+                            {"pos", P(-4.f + i * 3.f, -38.f)}, {"rot_y", 0}});
+        }
+        json res = json::parse(std::string(engine_tool_call(e, "criar_objetos", json{{"objetos", objs}}.dump().c_str())));
+        if (res.contains("erros")) { std::printf("  [ERRO] Polícia x Bandidos: %s\n", res["erros"].dump().c_str()); ++g_fail; }
+        engine_tool_call(e, "definir_regras", json{{"objetivo", "times"}, {"quantidade", 25}, {"tempo", 600}, {"titulo", "Polícia x Bandidos"},
+                                                  {"descricao", "5 contra 5 na favela. Abates dão $300: compre armas e roupas nas lojas do seu time. Vence quem fizer 25 abates."}}.dump().c_str());
+        engine_tool_call(e, "definir_ambiente", R"({"hora":16.5})");
+        engine_set_project_name(e, "Polícia x Bandidos");
+        return std::string(engine_export_project(e));
+    };
+    auto times = [&]() {
+        using nlohmann::json;
+        std::printf("[32] Polícia x Bandidos\n");
+        std::string proj = teamProject();
+        std::string dir = out + "/exemplos";
+        mkdir(dir.c_str(), 0755);
+        if (FILE* f = std::fopen((dir + "/5_policia_x_bandidos.json").c_str(), "wb")) { std::fwrite(proj.data(), 1, proj.size(), f); std::fclose(f); }
+        if (!engine_team_mode(e)) { std::printf("  [ERRO] objetivo times não ficou ativo\n"); ++g_fail; }
+        int before = engine_object_count(e);
+        // lojas e bases de cima
+        engine_select(e, -1);
+        for (auto v : {std::array<float, 6>{0.f, 6.f, 104.f, 3.4f, 0.35f, 22.f}, std::array<float, 6>{-8.f, 0.f, -44.f, 0.5f, 0.4f, 24.f},
+                       std::array<float, 6>{52.f, 0.f, 28.f, -1.2f, 0.25f, 9.f}, std::array<float, 6>{-42.f, 0.f, 32.f, 1.9f, 0.25f, 9.f}}) {
+            static int n = 0;
+            json h = json::parse(std::string(engine_tool_call(e, "altura_terreno", json{{"pontos", {{v[0], v[2]}}}}.dump().c_str())));
+            engine_set_camera(e, v[0], (h["alturas"][0].is_number() ? h["alturas"][0].get<float>() : 10.f) + 1.5f, v[2], v[3], v[4], v[5]);
+            frames(e, 3);
+            char nm[48]; std::snprintf(nm, sizeof(nm), "32_lojas_%d.png", n++);
+            save(out, nm);
+        }
+        engine_set_quality(e, 0);
+        engine_team_choose(e, 0);  // jogador na polícia
+        engine_set_play(e, 1);
+        frames(e, 3);
+        std::printf("  %s\n", engine_game_text(e, 1));
+        save(out, "32_inicio.png");
+        // jogador: vai até a loja de armas da polícia
+        json scene = json::parse(std::string(engine_tool_call(e, "ver_cena", "{}")));
+        int pid = engine_player_id(e);
+        float p[3], r[3], sc[3];
+        if (pid < 0 || !engine_get_transform(e, pid, p, r, sc)) {
+            std::printf("  [ERRO] sem jogador na partida (has_player %d)\n", engine_has_player(e)); ++g_fail;
+            return;
+        }
+        std::printf("  jogador (id %d) nasceu em %.1f %.1f %.1f\n", pid, p[0], p[1], p[2]);
+        p[0] = -22.f; p[2] = 107.5f - 2.f; p[1] += 0.3f;
+        engine_set_transform(e, pid, p, r, sc);
+        frames(e, 10);
+        std::string label = engine_interact_label(e);
+        std::printf("  na loja: botão '%s'\n", label.c_str());
+        if (label.find("armas") == std::string::npos || !engine_interact(e)) { std::printf("  [ERRO] loja de armas não abriu\n"); ++g_fail; }
+        else {
+            json shop = json::parse(std::string(engine_shop_json(e)));
+            std::printf("  %s: $%d, %zu itens\n", shop["loja"].get<std::string>().c_str(), shop["dinheiro"].get<int>(), shop["itens"].size());
+            int m4 = -1;
+            for (auto& it : shop["itens"]) if (it["nome"] == "M4A1") m4 = it["id"];
+            for (auto& it : shop["itens"]) if (it["nome"] == "AK-47") { std::printf("  [ERRO] AK-47 na loja da polícia\n"); ++g_fail; }
+            std::printf("  comprar M4A1: %s\n", engine_shop_buy(e, m4));
+            engine_shop_close(e);
+        }
+        // loja de fardas: compra a PM camuflada ($500) e troca a roupa
+        p[0] = 22.f; engine_set_transform(e, pid, p, r, sc);
+        frames(e, 10);
+        if (engine_interact(e)) {
+            json shop = json::parse(std::string(engine_shop_json(e)));
+            std::string msg = engine_shop_buy(e, 101);
+            std::printf("  comprar farda: %s\n", msg.c_str());
+            if (msg.find("Comprou") == std::string::npos) { std::printf("  [ERRO] não comprou a farda\n"); ++g_fail; }
+            engine_shop_close(e);
+            frames(e, 5);
+            save(out, "32_farda_nova.png");
+        } else { std::printf("  [ERRO] loja de fardas não abriu\n"); ++g_fail; }
+        // loja dos bandidos não abre para policial
+        p[0] = 52.f - 2.f; p[2] = 28.f; p[1] = 0.f;
+        json h = json::parse(std::string(engine_tool_call(e, "altura_terreno", json{{"pontos", {{p[0], p[2]}}}}.dump().c_str())));
+        p[1] = (h["alturas"][0].is_number() ? h["alturas"][0].get<float>() : 12.f) + 0.3f;
+        pid = engine_player_id(e);
+        engine_set_transform(e, pid, p, r, sc);
+        frames(e, 10);
+        std::printf("  na loja dos bandidos: '%s'\n", engine_interact_label(e));
+        if (engine_interact(e)) { std::printf("  [ERRO] policial abriu a loja dos bandidos\n"); ++g_fail; engine_shop_close(e); }
+        // a partida corre sozinha (robôs se caçam pelas escadarias)
+        auto t0 = std::chrono::steady_clock::now();
+        int s0 = 0, s1 = 0;
+        for (int sec = 0; sec < 120; ++sec) {
+            frames(e, 20, 0.05f);
+            std::sscanf(engine_game_text(e, 0), "%*s Polícia %d x %d", &s0, &s1);
+            if (sec % 15 == 14) {
+                std::string st = engine_game_text(e, 0), msg = engine_game_text(e, 1);
+                std::printf("  %3d s: %s | %s\n", sec + 1, st.c_str(), msg.c_str());
+                char nm[48]; std::snprintf(nm, sizeof(nm), "32_partida_%03d.png", sec + 1);
+                save(out, nm);
+            }
+        }
+        float secs = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("  placar após 2 min: polícia %d x %d bandidos (simulado em %.0f s)\n", s0, s1, secs);
+        if (s0 + s1 == 0) { std::printf("  [ERRO] ninguém abateu ninguém em 2 minutos\n"); ++g_fail; }
+        engine_set_play(e, 0);
+        frames(e, 2);
+        int after = engine_object_count(e);
+        std::printf("  objetos antes %d, depois do Stop %d\n", before, after);
+        scene = json::parse(std::string(engine_tool_call(e, "ver_cena", "{}")));
+        int chars = 0;
+        for (auto& o : scene["objetos"]) if (o.contains("time")) ++chars;
+        std::printf("  personagens com time no projeto: %d\n", chars);
+    };
+    if (std::getenv("SO_TIMES")) { times(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_FAVELA")) { favela(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ESCADAS")) { stairs(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ABERTURAS")) { openings(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
@@ -1413,6 +1580,17 @@ int main(int argc, char** argv) {
             std::printf("  %s: %zu bytes, vida %.0f, objetivo '%s'\n", x.nome, proj.size(), st[1], engine_game_text(e, 0));
             engine_set_play(e, 0);
         }
+    }
+
+    {  // 5º exemplo: Polícia x Bandidos na favela (a partida é testada em SO_TIMES)
+        std::string proj = teamProject();
+        if (FILE* f = std::fopen((out + "/exemplos/5_policia_x_bandidos.json").c_str(), "wb")) { std::fwrite(proj.data(), 1, proj.size(), f); std::fclose(f); }
+        engine_team_choose(e, 1);
+        engine_set_play(e, 1);
+        frames(e, 60, 0.05f);
+        std::printf("  Polícia x Bandidos: %zu bytes, %s\n", proj.size(), engine_game_text(e, 0));
+        save(out, "15_5_policia_x_bandidos.png");
+        engine_set_play(e, 0);
     }
 
     // ---- [16] exportar .glb e abrir de novo (personagem animado + cidade inteira)

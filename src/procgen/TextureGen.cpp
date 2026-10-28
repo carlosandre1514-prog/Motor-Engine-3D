@@ -682,7 +682,7 @@ void disc(Layer& L, float cx, float cy, float r) {
 }
 
 struct MuralDef { const char* name; const char* text; const char* text2; const char* font; glm::vec3 a, b, line; int deco; int style; };
-const MuralDef kMurals[kMuralCount] = {
+const MuralDef kMurals[kMuralCount + kSignCount] = {
     {"Favela venceu", "FAVELA VENCEU", "", "RubikWetPaint.ttf", {1.f, 0.85f, 0.1f}, {0.1f, 0.75f, 0.25f}, {0.02f, 0.02f, 0.03f}, 0, 0},
     {"Paz e amor", "PAZ E AMOR", "", "Bangers.ttf", {0.3f, 0.9f, 1.f}, {0.1f, 0.35f, 0.9f}, {0.02f, 0.02f, 0.05f}, 1, 0},
     {"O crime é nós", "O CRIME É NÓS", "", "PermanentMarker.ttf", {0.04f, 0.04f, 0.05f}, {0.04f, 0.04f, 0.05f}, {0.8f, 0.08f, 0.08f}, 0, 1},
@@ -691,11 +691,17 @@ const MuralDef kMurals[kMuralCount] = {
     {"Fé em Deus", "FÉ EM DEUS", "", "RubikWetPaint.ttf", {1.f, 0.55f, 0.15f}, {0.95f, 0.2f, 0.55f}, {0.02f, 0.02f, 0.03f}, 0, 0},
     {"Pichações", "NÓS POR NÓS", "", "PermanentMarker.ttf", {0.05f, 0.05f, 0.06f}, {0.05f, 0.05f, 0.06f}, {0.f, 0.f, 0.f}, 0, 2},
     {"Comunidade", "COMUNIDADE", "", "Bangers.ttf", {0.75f, 0.35f, 1.f}, {1.f, 0.3f, 0.6f}, {0.02f, 0.02f, 0.03f}, 0, 0},
+    // placas das lojas (estilo 3: placa pintada, letra branca)
+    {"Loja de armas", "LOJA DE ARMAS", "", "Bangers.ttf", {1.f, 1.f, 1.f}, {0.08f, 0.16f, 0.42f}, {0.02f, 0.04f, 0.12f}, 0, 3},
+    {"Fardas", "FARDAS", "", "Bangers.ttf", {1.f, 1.f, 1.f}, {0.1f, 0.12f, 0.16f}, {0.02f, 0.02f, 0.04f}, 0, 3},
+    {"Armas", "ARMAS", "", "RubikWetPaint.ttf", {1.f, 0.85f, 0.1f}, {0.95f, 0.3f, 0.05f}, {0.02f, 0.02f, 0.03f}, 0, 0},
+    {"Roupas", "ROUPAS", "", "RubikWetPaint.ttf", {0.4f, 1.f, 0.5f}, {0.1f, 0.6f, 0.95f}, {0.02f, 0.02f, 0.03f}, 0, 0},
 };
+constexpr int kAtlasCells = kMuralCount + kSignCount;
 
 TexData genMurals() {
     const int CW = 1024, CH = 512;
-    Img im(CW * 2, CH * 4);
+    Img im(CW * 2, CH * (kAtlasCells / 2));
     std::vector<float> alpha(im.w * im.h, 0.f);
     std::string loaded[3];
     Font fonts[3];
@@ -717,6 +723,21 @@ TexData genMurals() {
             alpha[i] = std::max(alpha[i], a);
             im.rough[i] = 0.55f;
         };
+        if (M.style == 3) {  // placa de loja: fundo pintado com moldura, letras brancas com sombra
+            Layer T(CW, CH);
+            drawText(T, F, M.text, 512.f, 256.f, 900.f, 300.f, 0.f, 800 + k);
+            std::vector<float> d = distOutside(T);
+            for (int y = 0; y < CH; ++y)
+                for (int x = 0; x < CW; ++x) {
+                    bool frame = x < 24 || y < 24 || x >= CW - 24 || y >= CH - 24;
+                    glm::vec3 c = frame ? glm::vec3(0.85f, 0.85f, 0.88f) : M.b * (0.9f + 0.15f * tileNoise(float(x) / CW, float(y) / CH, 6.f, 2, 810));
+                    int xs = x - 8, ys = y - 8;
+                    if (!frame && xs >= 0 && ys >= 0 && d[ys * CW + xs] < 6.f) c = M.line;
+                    if (!frame && d[y * CW + x] < 0.5f) c = M.a;
+                    put(x, y, c, 1.f);
+                }
+            return;
+        }
         if (M.style == 2) {  // parede de pichação: várias tags finas
             const char* tags[] = {"NÓS POR NÓS", "MORRO", "VILA", "PAZ", "ZN", "QUEBRADA", "LOKO", "FAVELA"};
             const glm::vec3 cols[] = {{0.05f, 0.05f, 0.06f}, {0.8f, 0.1f, 0.1f}, {0.1f, 0.3f, 0.9f}, {0.05f, 0.05f, 0.06f}};
@@ -784,7 +805,7 @@ TexData genMurals() {
         }
     };
     std::vector<std::thread> th;
-    for (int k = 0; k < kMuralCount; ++k) th.emplace_back(job, k);
+    for (int k = 0; k < kAtlasCells; ++k) th.emplace_back(job, k);
     for (auto& t : th) t.join();
     // metade da resolução (1024 x 1024): leve na memória do celular e ainda nítido na parede
     Img half(im.w / 2, im.h / 2);
@@ -875,11 +896,12 @@ void setMaterialTextureDir(const char* dir) {
     for (TexData& t : gCache) t = TexData{};  // regenera com as imagens novas
 }
 
-const char* muralName(int i) { return i >= 0 && i < kMuralCount ? kMurals[i].name : ""; }
+const char* muralName(int i) { return i >= 0 && i < kAtlasCells ? kMurals[i].name : ""; }
 glm::vec4 muralUV(int i) {
-    i = std::clamp(i, 0, kMuralCount - 1);
-    float u0 = (i % 2) * 0.5f, v0 = (i / 2) * 0.25f;
-    return {u0, v0, u0 + 0.5f, v0 + 0.25f};
+    i = std::clamp(i, 0, kAtlasCells - 1);
+    const float rows = kAtlasCells / 2;
+    float u0 = (i % 2) * 0.5f, v0 = (i / 2) / rows;
+    return {u0, v0, u0 + 0.5f, v0 + 1.f / rows};
 }
 
 // Cache em disco (shaders/cache): da 2ª abertura em diante as texturas não são geradas de novo.

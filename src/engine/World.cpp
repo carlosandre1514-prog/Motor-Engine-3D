@@ -1972,4 +1972,73 @@ void spawnPrototype(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, flo
     spawnProto(e, p, pos, yaw, scale, out, colliders);
 }
 
+// Grafo de caminhos da favela para os robôs: escadarias, patamares, a rua de acesso e a rua em volta do morro
+void favelaNavGraph(Engine* e, std::vector<glm::vec3>& nodes, std::vector<std::vector<int>>& adj) {
+    nodes.clear(); adj.clear();
+    auto node = [&](glm::vec2 p) {
+        for (size_t i = 0; i < nodes.size(); ++i)
+            if (glm::length(glm::vec2(nodes[i].x, nodes[i].z) - p) < 2.5f) return int(i);
+        nodes.push_back({p.x, mapHeight(e, p.x, p.y), p.y});
+        adj.emplace_back();
+        return int(nodes.size()) - 1;
+    };
+    auto link = [&](int a, int b) {
+        if (a == b) return;
+        if (std::find(adj[a].begin(), adj[a].end(), b) == adj[a].end()) { adj[a].push_back(b); adj[b].push_back(a); }
+    };
+    auto chain = [&](const std::vector<glm::vec2>& pts) {
+        int prev = -1;
+        for (size_t i = 0; i + 1 < pts.size(); ++i) {
+            int n = std::max(1, int(glm::length(pts[i + 1] - pts[i]) / 5.f));
+            for (int k = 0; k <= n; ++k) {
+                if (i > 0 && k == 0) continue;
+                int cur = node(glm::mix(pts[i], pts[i + 1], float(k) / float(n)));
+                if (prev >= 0) link(prev, cur);
+                prev = cur;
+            }
+        }
+    };
+    for (const auto& rt : favelaRoutes()) chain(rt);
+    chain({{0.f, 49.f}, {0.f, 96.f}});  // rua de acesso principal
+    // rua em volta do morro
+    std::vector<glm::vec2> ring;
+    for (int i = 0; i <= 64; ++i) {
+        float a = float(i) / 64.f * 6.2831853f, c = std::cos(a), sn = std::sin(a);
+        float r = 1.56f / std::pow(std::pow(std::abs(c) / 64.f, 4.f) + std::pow(std::abs(sn) / 62.f, 4.f), 0.25f);
+        ring.push_back({c * r, sn * r});
+    }
+    chain(ring);
+    // patamares: o centro liga nas escadarias que chegam nele
+    const FavelaPad* pads = favelaPads(e->mapSeed);
+    const size_t routeNodes = nodes.size();
+    for (int k = 0; k < FP_Count; ++k) {
+        int c = node(pads[k].c);
+        for (size_t i = 0; i < routeNodes; ++i)
+            if (padDist(pads[k], nodes[i].x, nodes[i].z) < 3.f) link(c, int(i));
+    }
+    // pontas soltas (fim de escadaria na rua): liga no nó mais perto
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (adj[i].size() > 1) continue;
+        int best = -1; float bd = 9.f;
+        for (size_t j = 0; j < nodes.size(); ++j) {
+            if (j == i || std::find(adj[i].begin(), adj[i].end(), int(j)) != adj[i].end()) continue;
+            float d = glm::length(glm::vec2(nodes[j].x - nodes[i].x, nodes[j].z - nodes[i].z));
+            if (d < bd) { bd = d; best = int(j); }
+        }
+        if (best >= 0) link(int(i), best);
+    }
+    // bases dos times: entram no grafo ligadas ao nó mais perto
+    std::vector<glm::vec3> pts;
+    for (int t = 0; t < 2; ++t) { pts.push_back(e->match.base[t]); for (const glm::vec3& sp : e->match.spawns[t]) pts.push_back(sp); }
+    for (const glm::vec3& b : pts) {
+        int best = -1; float bd = 1e9f;
+        for (size_t j = 0; j < nodes.size(); ++j) {
+            float d = glm::length(glm::vec2(nodes[j].x - b.x, nodes[j].z - b.z));
+            if (d < bd) { bd = d; best = int(j); }
+        }
+        int bn = node({b.x, b.z});
+        if (best >= 0) link(bn, best);
+    }
+}
+
 }  // namespace eng

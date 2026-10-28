@@ -124,8 +124,9 @@ class Assistant(
             tool("remover_objetos", "Apaga objetos pelos ids.",
                 mapOf("ids" to mapOf("type" to "array", "items" to mapOf("type" to "integer"))), listOf("ids")),
             tool("definir_regras", "Regras do jogo. objetivo: livre, sobreviver (até o tempo acabar), coletar (quantidade ou todos), " +
-                "chegar (ao objeto objetivo), eliminar (inimigos: quantidade ou todos) ou pontos (quantidade). tempo em segundos (0 = sem limite).",
-                mapOf("objetivo" to mapOf("type" to "string", "enum" to listOf("livre", "sobreviver", "coletar", "chegar", "eliminar", "pontos")),
+                "chegar (ao objeto objetivo), eliminar (inimigos: quantidade ou todos), pontos (quantidade) ou times (Polícia x Bandidos: personagens com \"time\", " +
+                "robôs nas vagas; vence quem fizer a quantidade de abates). tempo em segundos (0 = sem limite).",
+                mapOf("objetivo" to mapOf("type" to "string", "enum" to listOf("livre", "sobreviver", "coletar", "chegar", "eliminar", "pontos", "times")),
                       "quantidade" to mapOf("type" to "integer"), "tempo" to mapOf("type" to "number"),
                       "vida_jogador" to mapOf("type" to "number"), "titulo" to mapOf("type" to "string"),
                       "descricao" to mapOf("type" to "string"))),
@@ -162,6 +163,9 @@ madeira, metal, metal_escuro, plastico, vidro, agua, pintura), comportamentos (l
 - {"tipo":"planta","modelo":"arvore_1|arvore_2|arvore_3|arvore_4|arvore_5|arvores_dupla|arvores_trio|arbusto_1|arbusto_2|arbusto_3|arbusto_redondo_1|arbusto_redondo_2|capim_1|capim_2|capim_3|capim_florido|forracao_1|forracao_2|forracao_3|floreira_1|floreira_2|floreira_3","escala":2}  (plantas realistas)
 - {"tipo":"imagem","mural":0,"largura":3,"pos":[x,y,z],"rot_y":0}  (pichação na parede: 0 Favela venceu, 1 Paz e amor, 2 O crime é nós, 3 Rei Pelé 10, 4 Neymar Jr 10, 5 Fé em Deus, 6 pichos, 7 Comunidade; ou "arquivo":"/caminho/imagem.png" em vez de "mural"; sem "pos" cola onde o centro da tela aponta)
 - {"tipo":"abertura","estilo":"porta|vao|janela|corte","largura":1.0,"altura":2.1,"pos":[x,y,z],"rot_y":0,"espessura":0.2}  (corta porta/janela/vão em parede ou muro já existente; sem "pos" usa o ponto no centro da tela)
+- {"tipo":"loja","loja":"armas|roupas","time":"policia|bandidos","pos":[x,y,z],"rot_y":0}  (barraca da partida de times: o jogador do time compra armas ou roupas no balcão; frente para +Z girado por rot_y)
+- {"tipo":"base","time":"policia|bandidos","pos":[x,y,z]}  (ponto de renascimento do time; ponha 2 ou mais: renasce num ponto sem inimigo perto; com todos tomados, os bandidos renascem num canto da favela sem polícia)
+- personagens da partida de times: {"tipo":"personagem","time":"policia|bandidos","arma":"pistola|m4a1|ak47...","roupa":0..4,"nome":"..."}
 - {"tipo":"personagem","jogador":true,"arma":"pistola|fuzil|escopeta|sniper|faca|taco","aparencia":"aleatorio" ou
    {"altura":1.75,"corpo":"magro|normal|forte","pele":"clara|morena|parda|negra","camisa":cor,"calca":cor,"tenis":cor,
     "cabelo":cor,"estilo_cabelo":"careca|curto|comprido|bone","manga_comprida":false}}

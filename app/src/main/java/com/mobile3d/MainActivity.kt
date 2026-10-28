@@ -57,6 +57,7 @@ class EngineSnapshot {
     @Volatile var message = ""
     @Volatile var interact = ""
     @Volatile var region = ""
+    @Volatile var teamMode = false
 }
 
 class MainActivity : Activity() {
@@ -146,6 +147,14 @@ class MainActivity : Activity() {
     }
 
     private fun setupUi(shaderDir: String) {
+        // 1ª vez: celular com até ~4 GB de RAM (ex.: Galaxy A14) começa no modo leve
+        if (!prefs.contains("qualidade")) {
+            val mi = android.app.ActivityManager.MemoryInfo()
+            (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
+            prefs.edit().putInt("qualidade", if (mi.totalMem < 5_000_000_000L) 0 else 1).apply()
+        }
+        // o motor lê isto ao abrir (texturas menores e terreno simples no modo leve)
+        try { File(shaderDir, "qualidade.txt").writeText(prefs.getInt("qualidade", 1).toString()) } catch (_: Exception) {}
         view = EngineView(this, shaderDir)
         view.afterFrame = { frame ->
             sound.playEvents(NativeBridge.nativePollSounds())  // tiros, recarga, trovão...
@@ -513,25 +522,38 @@ class MainActivity : Activity() {
     private fun applySavedQuality() {
         val q = prefs.getInt("qualidade", 1)
         when (q) {
-            0 -> view.applyQuality(0.6f, 30, 0)
-            1 -> view.applyQuality(0.8f, 60, 1)
+            0 -> view.applyQuality(0.5f, 30, 0)   // leve: celulares de entrada (Galaxy A14 e parecidos)
+            1 -> view.applyQuality(0.75f, 45, 1)
             else -> view.applyQuality(1f, 60, 2)
         }
     }
 
     private fun qualityDialog() {
-        val items = arrayOf("🐢→⚡ Desempenho: mais leve (resolução 60%, 30 FPS, sem sombras, vê menos longe)",
-                            "⚖ Equilibrada (resolução 80%, 60 FPS) — recomendada",
-                            "✨ Alta (resolução cheia, sombras longe)")
+        val items = arrayOf("⚡ Leve — celulares de 4 GB (ex.: Galaxy A14): resolução 50%, 30 FPS, sem sombras, texturas menores, vê até 170 m",
+                            "⚖ Equilibrada (resolução 75%, 45 FPS, sombras perto)",
+                            "✨ Alta (resolução cheia, 60 FPS, sombras longe)")
         dialog().setTitle("Qualidade gráfica").setSingleChoiceItems(items, prefs.getInt("qualidade", 1)) { d, which ->
+            val before = prefs.getInt("qualidade", 1)
             prefs.edit().putInt("qualidade", which).apply()
+            try { File(filesDir, "shaders/qualidade.txt").writeText(which.toString()) } catch (_: Exception) {}
             applySavedQuality()
             d.dismiss()
-            toast("Qualidade: " + arrayOf("desempenho", "equilibrada", "alta")[which])
+            toast("Qualidade: " + arrayOf("leve", "equilibrada", "alta")[which] +
+                  if ((before == 0) != (which == 0)) " (as texturas mudam quando abrir o app de novo)" else "")
         }.show()
     }
 
+    // Polícia x Bandidos: no Play o jogador escolhe o lado (o outro time e as vagas vazias ficam com robôs)
     private fun togglePlay() {
+        if (snap.playing || !snap.teamMode) { doTogglePlay(); return }
+        dialog().setTitle("Escolha seu lado")
+            .setItems(arrayOf("🚓 Polícia (base na rua de baixo)", "🔫 Bandidos (base no campinho)")) { _, which ->
+                gl { NativeBridge.nativeTeamChoose(which) }
+                doTogglePlay()
+            }.show()
+    }
+
+    private fun doTogglePlay() {
         val play = !snap.playing
         snap.playing = play
         stick = floatArrayOf(0f, 0f)
@@ -1370,7 +1392,9 @@ class MainActivity : Activity() {
         val items = arrayOf("🎯 Objetivo e regras…", "👾 Inimigo com AK-47", "👾 Inimigo com M4A1", "👾 Inimigo com AK-74",
                             "👊 Inimigo desarmado", "🌀 Portal que cria inimigos", "🪙 Moeda", "💎 Cristal (50 pontos)", "❤ Vida (cura)",
                             "🏁 Ponto de chegada", "🔥 Zona de dano (fogo)", "☠ Zona de veneno", "🛢 Barril explosivo",
-                            "📦 Caixa quebrável", "⚙ Comportamento do objeto selecionado…")
+                            "📦 Caixa quebrável", "⚙ Comportamento do objeto selecionado…",
+                            "🚓 Policial (robô do time)", "🔫 Bandido (robô do time)", "🏳 Base da Polícia", "🏴 Base dos Bandidos",
+                            "🛒 Loja de armas da Polícia", "👮 Loja de fardas da Polícia", "🛒 Loja de armas dos Bandidos", "👕 Loja de roupas dos Bandidos")
         dialog().setTitle("Jogo").setItems(items) { _, which ->
             val spec = when (which) {
                 1 -> "{\"tipo\":\"inimigo\",\"arma\":\"ak47\",\"dano\":8}"
@@ -1386,6 +1410,14 @@ class MainActivity : Activity() {
                 11 -> "{\"tipo\":\"zona_dano\",\"elemento\":\"veneno\",\"dano\":10,\"raio\":3}"
                 12 -> "{\"tipo\":\"forma\",\"forma\":\"capsula\",\"nome\":\"Barril\",\"cor\":\"vermelho\",\"escala\":[0.7,0.6,0.7],\"comportamentos\":[\"explosivo\"]}"
                 13 -> "{\"tipo\":\"forma\",\"forma\":\"cubo\",\"nome\":\"Caixa\",\"material\":\"madeira\",\"escala\":0.8,\"comportamentos\":[\"destrutivel\"]}"
+                15 -> "{\"tipo\":\"personagem\",\"time\":\"policia\",\"arma\":\"m4a1\",\"nome\":\"Policial\",\"aparencia\":{\"camisa\":\"#5d6872\",\"calca\":\"#353b44\",\"estilo_cabelo\":\"bone\"}}"
+                16 -> "{\"tipo\":\"personagem\",\"time\":\"bandidos\",\"arma\":\"ak47\",\"nome\":\"Bandido\"}"
+                17 -> "{\"tipo\":\"base\",\"time\":\"policia\"}"
+                18 -> "{\"tipo\":\"base\",\"time\":\"bandidos\"}"
+                19 -> "{\"tipo\":\"loja\",\"loja\":\"armas\",\"time\":\"policia\"}"
+                20 -> "{\"tipo\":\"loja\",\"loja\":\"roupas\",\"time\":\"policia\"}"
+                21 -> "{\"tipo\":\"loja\",\"loja\":\"armas\",\"time\":\"bandidos\"}"
+                22 -> "{\"tipo\":\"loja\",\"loja\":\"roupas\",\"time\":\"bandidos\"}"
                 else -> null
             }
             when {
@@ -1400,8 +1432,9 @@ class MainActivity : Activity() {
     }
 
     private fun rulesDialog() {
-        val goals = arrayOf("livre", "coletar", "eliminar", "chegar", "sobreviver", "pontos")
-        val labels = arrayOf("Livre (sem fim)", "Coletar itens", "Eliminar inimigos", "Chegar ao ponto", "Sobreviver (tempo)", "Fazer pontos")
+        val goals = arrayOf("livre", "coletar", "eliminar", "chegar", "sobreviver", "pontos", "times")
+        val labels = arrayOf("Livre (sem fim)", "Coletar itens", "Eliminar inimigos", "Chegar ao ponto", "Sobreviver (tempo)", "Fazer pontos",
+                             "🚓 Polícia x Bandidos 🔫 (abates)")
         var goal = 0
         val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
         p.addView(choice("Objetivo", labels, 0) { goal = it })
@@ -1413,7 +1446,7 @@ class MainActivity : Activity() {
         val time = field("Tempo limite em segundos (0 = sem)", "0")
         val life = field("Vida do jogador", "100")
         val titleF = field("Título do jogo (opcional)", "", numeric = false)
-        p.addView(label("Quantidade (coletar/eliminar/pontos; 0 = todos)")); p.addView(qty)
+        p.addView(label("Quantidade (coletar/eliminar/pontos/abates; 0 = todos, times: 25)")); p.addView(qty)
         p.addView(label("Tempo limite em segundos (0 = sem limite)")); p.addView(time)
         p.addView(label("Vida do jogador")); p.addView(life)
         p.addView(label("Título (aparece ao jogar)")); p.addView(titleF)
@@ -1476,7 +1509,14 @@ class MainActivity : Activity() {
             addView(row)
         }
         f.addView(endPanel, FrameLayout.LayoutParams(dp(320), -2, Gravity.CENTER))
-        actionBtn = button("", accent = true) { gl { NativeBridge.nativeInteract() } }.apply {
+        actionBtn = button("", accent = true) {
+            gl {
+                if (NativeBridge.nativeInteract()) {
+                    val j = String(NativeBridge.nativeShopJson(), Charsets.UTF_8)
+                    if (j.isNotEmpty()) runOnUiThread { showShop(j) }
+                }
+            }
+        }.apply {
             visibility = View.GONE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setPadding(dp(18), dp(12), dp(18), dp(12))
@@ -1532,6 +1572,36 @@ class MainActivity : Activity() {
         col.addView(magic); col.addView(aimBtn); col.addView(fireBtn); col.addView(jump); col.addView(runBtn)
         f.addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(20); bottomMargin = dp(20) })
         return f.apply { isClickable = false }
+    }
+
+    // Loja da partida: lista de armas ou roupas do time, com preço; tocar compra (ou equipa o que já tem)
+    private fun showShop(json: String) {
+        val j = try { JSONObject(json) } catch (_: Exception) { return }
+        val items = j.optJSONArray("itens") ?: return
+        val money = j.optInt("dinheiro")
+        val labels = Array(items.length()) { i ->
+            val it = items.getJSONObject(i)
+            val state = when {
+                it.optBoolean("usando") -> "  ✔ usando"
+                it.optBoolean("tem") -> if (it.optInt("preco") == 0) "  (grátis)" else "  (já é sua)"
+                else -> "  $" + it.optInt("preco")
+            }
+            it.optString("nome") + state
+        }
+        var buying = false
+        dialog().setTitle(j.optString("loja") + "   💰 $" + money)
+            .setItems(labels) { _, which ->
+                buying = true
+                val id = items.getJSONObject(which).optInt("id")
+                gl {
+                    val r = String(NativeBridge.nativeShopBuy(id), Charsets.UTF_8)
+                    val again = String(NativeBridge.nativeShopJson(), Charsets.UTF_8)
+                    runOnUiThread { toast(r); if (again.isNotEmpty()) showShop(again) }
+                }
+            }
+            .setNegativeButton("Fechar", null)
+            .setOnDismissListener { if (!buying) gl { NativeBridge.nativeShopClose() } }
+            .show()
     }
 
     private fun restartGame() {
@@ -2146,6 +2216,7 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
                 snapshot.hasPlayer = NativeBridge.nativeHasPlayer()
                 snapshot.playerWeapon = NativeBridge.nativePlayerWeapon()
                 snapshot.region = String(NativeBridge.nativeRegionName(), Charsets.UTF_8)
+                snapshot.teamMode = NativeBridge.nativeTeamMode()
                 if (snapshot.playing) {
                     val g = FloatArray(8)
                     NativeBridge.nativeGameStatus(g)

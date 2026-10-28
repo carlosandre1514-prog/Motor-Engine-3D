@@ -119,8 +119,29 @@ void ensureBasics(Engine* e) {
     // Biblioteca procedural (texturas geradas uma vez e reenviadas à GPU a cada cena); usa as imagens de shaders/materials
     setMaterialTextureDir((e->renderer.shaderDir() + "/materials").c_str());
     pregenerateTextures();  // todos os núcleos; da 2ª abertura em diante vem do cache
+    // celular fraco: metade da resolução (1/4 da memória de vídeo)
+    auto half = [](const std::vector<uint8_t>& src, int w, int h) {
+        std::vector<uint8_t> out(size_t(w / 2) * (h / 2) * 4);
+        for (int y = 0; y < h / 2; ++y)
+            for (int x = 0; x < w / 2; ++x)
+                for (int c = 0; c < 4; ++c) {
+                    int a = src[((2 * y) * w + 2 * x) * 4 + c], b = src[((2 * y) * w + 2 * x + 1) * 4 + c];
+                    int d = src[((2 * y + 1) * w + 2 * x) * 4 + c], f = src[((2 * y + 1) * w + 2 * x + 1) * 4 + c];
+                    out[(size_t(y) * (w / 2) + x) * 4 + c] = uint8_t((a + b + d + f + 2) / 4);
+                }
+        return out;
+    };
     for (int k = 0; k < int(Mat::Count); ++k) {
-        const TexData& t = proceduralTexture(Mat(k));
+        const TexData& t0 = proceduralTexture(Mat(k));
+        TexData small;
+        const bool shrink = e->lowTextures && t0.w >= 256 && t0.h >= 256;
+        if (shrink) {
+            small.w = t0.w / 2; small.h = t0.h / 2;
+            small.albedo = half(t0.albedo, t0.w, t0.h);
+            small.orm = half(t0.orm, t0.w, t0.h);
+            if (!t0.normal.empty()) small.normal = half(t0.normal, t0.w, t0.h);
+        }
+        const TexData& t = shrink ? small : t0;
         MatParams mp = matParams(Mat(k));
         Material m;
         m.albedo = tx.fromPixels(t.albedo.data(), t.w, t.h, 4, true);
@@ -146,7 +167,7 @@ void ensureBasics(Engine* e) {
         if (Mat(k) == Mat::Terrain) {
             // terreno padrão: camadas de textura reais (shaders/terrain); a ordem é a mesma do pbr.frag
             static const char* kLayers[] = {"grama", "campo", "floresta", "chao", "areia", "terra", "seixos"};
-            if (e->renderer.loadTerrainLayers(kLayers, 7)) { m.mode = 3; m.roughness = 0.95f; }
+            if (!e->lowTextures && e->renderer.loadTerrainLayers(kLayers, 7)) { m.mode = 3; m.roughness = 0.95f; }  // fraco: terreno simples
         }
         e->mats[k] = e->renderer.createMaterial(m);
     }
@@ -869,6 +890,7 @@ std::string interactLabel(Engine* e, int* which) {
     GameObject* pg = e->scene.get(e->characters[e->player].root);
     if (!pg) return "";
     glm::vec3 p = pg->transform.position;
+    if (std::string shop = shopLabel(e); !shop.empty()) { if (which) *which = -2; return shop; }  // loja da partida de times
     for (size_t i = 0; i < e->teles.size(); ++i) {
         const TeleRT& t = e->teles[i];
         GameObject* r = e->scene.get(t.root);
@@ -886,6 +908,7 @@ std::string interactLabel(Engine* e, int* which) {
 }
 
 bool interact(Engine* e) {
+    if (e->match.active && shopInteract(e)) return true;
     int which = -1;
     if (interactLabel(e, &which).empty() || which < 0) return false;
     const TeleRT& t = e->teles[which / 2];
@@ -976,7 +999,7 @@ void updatePlayer(Engine* e, float dt) {
     GameObject* go = e->scene.get(c.root);
     if (!go || !go->rigidBody || !go->rigidBody->body) return;
     btRigidBody* b = go->rigidBody->body;
-    bool alive = e->game.state == 0;  // derrota/vitória: o jogador para
+    bool alive = e->game.state == 0 && !c.dying;  // derrota/vitória (ou abatido na partida de times): o jogador para
     if (e->game.state == 2 && !c.dying) playDeath(c);
 
     float yaw = e->editorCam.yaw;

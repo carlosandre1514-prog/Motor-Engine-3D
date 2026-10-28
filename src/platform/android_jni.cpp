@@ -237,6 +237,11 @@ JNI_FN(void, nativeAnimEditSelect)(JNIEnv*, jclass, jint b) { if (g_engine) engi
 JNI_FN(jint, nativeAnimEditSelected)(JNIEnv*, jclass) { return g_engine ? engine_anim_edit_selected(g_engine) : -1; }
 JNI_FN(jbyteArray, nativeInteractLabel)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_interact_label(g_engine) : ""); }
 JNI_FN(jboolean, nativeInteract)(JNIEnv*, jclass) { return g_engine && engine_interact(g_engine); }
+JNI_FN(jboolean, nativeTeamMode)(JNIEnv*, jclass) { return g_engine && engine_team_mode(g_engine); }
+JNI_FN(void, nativeTeamChoose)(JNIEnv*, jclass, jint team) { if (g_engine) engine_team_choose(g_engine, team); }
+JNI_FN(jbyteArray, nativeShopJson)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_shop_json(g_engine) : ""); }
+JNI_FN(jbyteArray, nativeShopBuy)(JNIEnv* env, jclass, jint item) { return toBytes(env, g_engine ? engine_shop_buy(g_engine, item) : ""); }
+JNI_FN(void, nativeShopClose)(JNIEnv*, jclass) { if (g_engine) engine_shop_close(g_engine); }
 JNI_FN(void, nativePlayerAim)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_player_aim(g_engine, on ? 1 : 0); }
 JNI_FN(void, nativeAnimEditGet)(JNIEnv* env, jclass, jint b, jfloatArray out3) {
     if (!g_engine || env->GetArrayLength(out3) < 3) return;

@@ -47,7 +47,8 @@ enum class Mat : uint8_t {
 const char* matName(Mat m);
 
 // Murais do atlas Mat::Mural: textos e coordenadas de textura de cada um
-constexpr int kMuralCount = 8;
+constexpr int kMuralCount = 8;   // pichações (0..7); depois vêm as placas das lojas
+constexpr int kSignBase = 8, kSignCount = 4;  // 8 LOJA DE ARMAS, 9 FARDAS (polícia), 10 ARMAS, 11 ROUPAS (favela)
 const char* muralName(int i);
 glm::vec4 muralUV(int i);  // u0, v0, u1, v1 (v0 = topo)
 

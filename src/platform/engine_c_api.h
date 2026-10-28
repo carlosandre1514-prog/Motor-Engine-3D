@@ -69,6 +69,11 @@ int     engine_anim_edit_selected(Engine*);                     // osso escolhid
 void    engine_player_aim(Engine*, int on);                     // jogador mirando (botão segurado)
 const char* engine_interact_label(Engine*);                     // texto do botão de ação perto do jogador ("" = nada)
 int     engine_interact(Engine*);                               // usa (ex.: elevador para o terraço)
+int     engine_team_mode(Engine*);                              // 1: objetivo "times" (Polícia x Bandidos)
+void    engine_team_choose(Engine*, int team);                  // antes do Play: 0 polícia, 1 bandidos, -1 o do projeto
+const char* engine_shop_json(Engine*);                          // loja aberta (JSON com itens) ou ""
+const char* engine_shop_buy(Engine*, int item);                 // compra/equipa; devolve a mensagem
+void    engine_shop_close(Engine*);
 void    engine_anim_edit_get(Engine*, int bone, float* euler3);
 void    engine_anim_edit_set(Engine*, int bone, const float* euler3);
 void    engine_anim_edit_reset_pose(Engine*);
@@ -119,6 +124,7 @@ int     engine_set_object_texture(Engine*, const char* image_path);   // PNG/JPG
 
 // ---- Jogador (Play)
 int     engine_has_player(Engine*);
+int     engine_player_id(Engine*);                              // id do objeto do jogador (no Play pode ser a cópia em jogo) ou -1
 void    engine_set_player(Engine*);                             // personagem selecionado vira o jogador
 void    engine_player_input(Engine*, float x, float y, int run); // joystick -1..1 (y para frente)
 const char* engine_poll_sounds(Engine*);                        // sons pedidos: "nome\tvolume\tpan" por linha (e limpa a fila)

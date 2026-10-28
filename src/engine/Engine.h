@@ -122,6 +122,42 @@ struct GameState {
     std::vector<RigidBody*> disabledBodies;
     std::string message;                          // aviso curto (ex.: "Vitória!")
 };
+// Partida de times (Polícia x Bandidos): cada lutador é um personagem criado no Play (cópia do que está no projeto)
+struct Fighter {
+    Scene::Handle root;            // personagem em jogo
+    Scene::Handle original;        // o do projeto (escondido durante o Play)
+    std::string name;
+    int team = 0;                  // 0 polícia, 1 bandido
+    bool bot = true, dead = false;
+    float hp = 100.f, deadTime = 0.f;
+    int kills = 0, deaths = 0, money = 800;
+    int skin = 0;                  // roupa (índice na lista do time)
+    std::string weapon = "pistola";
+    std::vector<int> owned;        // armas/roupas compradas (ids da loja)
+    // robô
+    std::vector<int> path;
+    size_t pathPos = 0;
+    int target = -1;
+    float think = 0.f, fireTimer = 0.f, stuckTimer = 0.f, strafe = 1.f, strafeTimer = 0.f;
+    int burst = 0;
+    glm::vec3 lastPos{0.f}, goal{0.f};
+};
+struct ShopRT { Scene::Handle obj; int kind = 0; int team = 0; };  // kind 0 armas, 1 roupas
+struct TeamMatch {
+    bool active = false;
+    std::vector<Fighter> f;
+    int score[2] = {0, 0};
+    glm::vec3 base[2]{};                  // centro dos pontos de renascimento de cada time
+    std::vector<glm::vec3> spawns[2];     // cada "base" do time é um ponto de renascimento
+    std::vector<glm::vec3> nav;                // pontos de caminho (escadarias, rua de baixo, patamares)
+    std::vector<std::vector<int>> navAdj;
+    std::vector<ShopRT> shops;
+    int playerTeam = -1;                       // escolhido no app antes do Play (-1: o do personagem)
+    int openShop = -1;                         // loja aberta pelo jogador
+    int attacker = -1;                         // quem está atirando agora (crédito do abate)
+    float feedTimer = 0.f;
+};
+
 // Animações criadas no editor (ou carregadas do projeto) acrescentadas à lista de um Animator
 struct ClipStore {
     Animator* anim = nullptr;
@@ -273,6 +309,7 @@ struct Engine {
     MeshId doorMesh = kInvalidId;
     GameRules rules;
     GameState game;
+    TeamMatch match;
     std::string toolResult;             // resposta da última chamada de ferramenta (IA)
     std::vector<std::unique_ptr<ClipStore>> clipStores;
     AnimEditState animEdit;
@@ -299,6 +336,7 @@ struct Engine {
     // perfil do último quadro (ms): mundo (carregar pedaços), montar a lista de desenho, render (CPU do GL)
     float profWorld = 0.f, profSubmit = 0.f, profRender = 0.f;
     int quality = 2;  // 0 desempenho (sem sombra, vê menos longe), 1 equilibrado, 2 alta
+    bool lowTextures = false;  // celular fraco (qualidade.txt = 0 ao abrir): texturas na metade e terreno simples
     int statFrames = 0;
 };
 
@@ -431,6 +469,16 @@ void spawnPrototype(Engine* e, const Prototype& p, glm::vec3 pos, float yaw, flo
                 std::vector<BoxCollider>* colliders);
 int loadModelFile(Engine* e, const char* path); // .glb/.gltf/.fbx -> id da raiz (-1 = erro em lastError)
 std::string gameStatusText(Engine* e);
+// Partida de times: escolha do lado, lojas (o app mostra a lista e compra), caminhos dos robôs
+void teamChoose(Engine* e, int team);
+std::string shopLabel(Engine* e);            // botão perto de uma loja ("" = nenhuma)
+bool shopInteract(Engine* e);
+std::string shopJson(Engine* e);             // loja aberta: itens, preços, dinheiro ("" = nenhuma)
+std::string shopBuy(Engine* e, int item);
+void shopClose(Engine* e);
+int playerFighter(Engine* e);
+// Caminhos da favela para os robôs (escadarias, patamares, rua em volta)
+void favelaNavGraph(Engine* e, std::vector<glm::vec3>& nodes, std::vector<std::vector<int>>& adj);
 // Exporta para .glb: rootId >= 0 = só esse objeto (na origem), -1 = cena inteira (Export.cpp)
 bool exportGlb(Engine* e, int rootId, const std::string& path, std::string* err);         // texto do objetivo para o HUD
 

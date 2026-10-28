@@ -961,6 +961,72 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         if (GameObject* g = e->scene.get(h)) recipeSet(e, *g, "cor", spec.contains("cor") ? spec["cor"].dump() : "null");
         return id;
     }
+    if (tipo == "loja" || tipo == "base") {
+        // Partida Polícia x Bandidos: barraca de loja (armas/roupas do time) ou base onde o time nasce
+        std::string ts = norm(str(spec, "time", "policia"));
+        int team = ts.rfind("band", 0) == 0 ? 1 : 0;
+        spec["time"] = team ? "bandidos" : "policia";
+        const glm::vec4 teamCol = team ? glm::vec4(0.72f, 0.16f, 0.14f, 1.f) : glm::vec4(0.16f, 0.3f, 0.66f, 1.f);
+        if (!hasPos) pos.y = mapHeight(e, pos.x, pos.z);
+        Geo g;
+        g.place(glm::vec3(0.f), 0.f);
+        const char* name;
+        if (tipo == "loja") {
+            int kind = norm(str(spec, "loja", "armas")) == "roupas" ? 1 : 0;
+            spec["loja"] = kind ? "roupas" : "armas";
+            MeshBuilder& w = g[Mat::Plaster];
+            w.color = glm::mix(teamCol, glm::vec4(0.9f, 0.88f, 0.84f, 1.f), 0.55f);
+            w.uvTile = {1.f, 1.f};
+            w.box({-1.6f, 0.f, -1.1f}, {3.2f, 2.7f, 0.15f});   // fundo
+            w.box({-1.6f, 0.f, -1.1f}, {0.15f, 2.7f, 1.9f});   // lados
+            w.box({1.45f, 0.f, -1.1f}, {0.15f, 2.7f, 1.9f});
+            g.collider({-1.6f, 0.f, -1.1f}, {3.2f, 2.7f, 0.15f});
+            g.collider({-1.6f, 0.f, -1.1f}, {0.15f, 2.7f, 1.9f});
+            g.collider({1.45f, 0.f, -1.1f}, {0.15f, 2.7f, 1.9f});
+            MeshBuilder& wood = g[Mat::Wood];
+            wood.uvTile = {1.f, 1.f};
+            wood.box({-1.45f, 0.f, 0.45f}, {2.9f, 1.05f, 0.35f});  // balcão
+            g.collider({-1.45f, 0.f, 0.45f}, {2.9f, 1.05f, 0.35f});
+            wood.box({-1.45f, 1.5f, -0.95f}, {2.9f, 0.06f, 0.3f});  // prateleira
+            MeshBuilder& roof = g[Mat::Corrugated];
+            roof.uvTile = {1.f, 1.f};
+            roof.color = teamCol;
+            roof.box({-1.75f, 2.7f, -1.25f}, {3.5f, 0.06f, 2.95f});  // toldo
+            // placa em cima do toldo, virada para a frente
+            glm::vec4 uv = muralUV(kSignBase + team * 2 + kind);
+            glm::vec2 q[4] = {{uv.x, uv.w}, {uv.z, uv.w}, {uv.z, uv.y}, {uv.x, uv.y}};
+            g[Mat::Mural].quad({-1.3f, 2.78f, 1.72f}, {1.3f, 2.78f, 1.72f}, {1.3f, 4.08f, 1.72f}, {-1.3f, 4.08f, 1.72f}, q);
+            g[Mat::Wood].box({-1.4f, 2.76f, 1.62f}, {2.8f, 1.36f, 0.08f});  // tábua da placa
+            // mercadoria na parede: armas (cinza escuro) ou roupas (coloridas)
+            for (int k = 0; k < 4; ++k) {
+                float x = -1.1f + k * 0.72f;
+                if (kind == 0) g[Mat::GunMetal].box({x, 1.75f, -0.95f}, {0.55f, 0.12f, 0.06f});
+                else {
+                    MeshBuilder& c = g[Mat::Plaster];
+                    static const glm::vec4 cols[2][4] = {{{0.35f, 0.38f, 0.42f, 1}, {0.34f, 0.38f, 0.24f, 1}, {0.08f, 0.09f, 0.1f, 1}, {0.12f, 0.15f, 0.22f, 1}},
+                                                         {{0.95f, 0.8f, 0.1f, 1}, {0.9f, 0.9f, 0.9f, 1}, {0.7f, 0.08f, 0.1f, 1}, {0.22f, 0.24f, 0.28f, 1}}};
+                    c.color = cols[team][k];
+                    c.box({x, 1.6f, -0.95f}, {0.5f, 0.65f, 0.05f});
+                }
+            }
+            name = kind ? (team ? "Loja de roupas (bandidos)" : "Loja de fardas (polícia)") : (team ? "Loja de armas (bandidos)" : "Loja de armas (polícia)");
+        } else {
+            MeshBuilder& c = g[Mat::Concrete];
+            c.uvTile = {1.f, 1.f};
+            c.box({-0.6f, 0.f, -0.6f}, {1.2f, 0.3f, 1.2f});
+            g.collider({-0.6f, 0.f, -0.6f}, {1.2f, 0.3f, 1.2f});
+            g[Mat::Metal].cylinder({0.f, 0.3f, 0.f}, {0.f, 6.f, 0.f}, 0.05f, 0.04f, 8);
+            g.collider({-0.06f, 0.3f, -0.06f}, {0.12f, 5.7f, 0.12f});
+            MeshBuilder& fl = g[Mat::Plaster];
+            fl.color = teamCol;
+            fl.box({0.05f, 4.9f, -0.02f}, {1.5f, 1.f, 0.04f});
+            name = team ? "Base dos Bandidos" : "Base da Polícia";
+        }
+        Scene::Handle h = spawnGeo(e, g, name, true, pos, yaw);
+        if (!e->scene.get(h)) return fail("não consegui criar");
+        spec["tipo"] = tipo;
+        return finish(e, h, spec, false);
+    }
     if (tipo == "modelo") {
         std::string file = str(spec, "arquivo");
         if (file.empty()) return fail("modelo sem \"arquivo\"");
@@ -980,7 +1046,7 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         return finish(e, Scene::handleOf(*g), spec, false);
     }
     return fail("tipo desconhecido: \"" + str(spec, "tipo") + "\" (use forma, chao, construcao, personagem, inimigo, arma, efeito, "
-                "coletavel, objetivo, spawner, zona_dano, luz ou modelo)");
+                "coletavel, objetivo, spawner, zona_dano, luz, loja, base ou modelo)");
 }
 
 // ---------------- hora do dia ----------------
@@ -1289,10 +1355,10 @@ std::string toolCall(Engine* e, const std::string& name, const std::string& inpu
         R.vidaJogador = std::max(1.f, num(in, "vida_jogador", R.vidaJogador));
         if (in.contains("titulo")) R.titulo = str(in, "titulo");
         if (in.contains("descricao")) R.descricao = str(in, "descricao");
-        static const char* valid[] = {"livre", "sobreviver", "coletar", "chegar", "eliminar", "pontos"};
+        static const char* valid[] = {"livre", "sobreviver", "coletar", "chegar", "eliminar", "pontos", "times"};
         bool ok = false;
         for (const char* v : valid) ok |= R.objetivo == v;
-        if (!ok) { R.objetivo = "livre"; return errJson("objetivo inválido (livre, sobreviver, coletar, chegar, eliminar, pontos)"); }
+        if (!ok) { R.objetivo = "livre"; return errJson("objetivo inválido (livre, sobreviver, coletar, chegar, eliminar, pontos, times)"); }
         ++e->revision;
         return json{{"ok", true}}.dump();
     }

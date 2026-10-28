@@ -82,7 +82,7 @@ void weatherUpdate(Engine* e, float dt) {
     }
     const glm::vec3 wind(1.2f, 0.f, 0.6f);
     const float speed = 16.f;
-    int n = int(e->rain * 1500.f * dt + e->fxRng.f());
+    int n = int(e->rain * (e->quality == 0 ? 600.f : 1500.f) * dt + e->fxRng.f());
     for (int k = 0; k < n; ++k) {
         float a = e->fxRng.range(0.f, 6.2831853f), r = std::sqrt(e->fxRng.f()) * 14.f;
         glm::vec3 p(c.x + std::cos(a) * r, c.y + e->fxRng.range(4.f, 9.f), c.z + std::sin(a) * r);

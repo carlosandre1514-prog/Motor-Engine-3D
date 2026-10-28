@@ -62,6 +62,12 @@ Engine* engine_create(const char* shader_dir) {
     if (!e->renderer.init(shader_dir)) { delete e; return nullptr; }
     if (e->particles.init(e->renderer)) e->renderer.particles = &e->particles;
     e->objects.reserve(Scene::kMaxObjects);
+    // qualidade escolhida no app (gravada antes de abrir): 0 = celular fraco
+    if (FILE* f = std::fopen((std::string(shader_dir) + "/qualidade.txt").c_str(), "r")) {
+        int q = 1;
+        if (std::fscanf(f, "%d", &q) == 1) { e->quality = std::clamp(q, 0, 2); e->lowTextures = q == 0; }
+        std::fclose(f);
+    }
     eng::loadMocapLibrary(std::string(shader_dir) + "/anim");  // animações capturadas (antes de criar personagens)
     eng::ensureBasics(e);
     return e;
@@ -113,11 +119,14 @@ void engine_frame(Engine* e, float dt) {
     float d = e->editorCam.distance;
     e->camera.nearZ = std::clamp(d * 0.01f, 0.05f, 5.f);
     e->camera.farZ = std::max(e->mapKind >= 0 ? 900.f : 200.f, d * 40.f);
+    // jogando: vê até uma distância (o resto nem é enviado para a placa de vídeo); leve vê menos
+    const float viewDist = !e->playing ? 1e9f : e->quality == 0 ? 170.f : e->quality == 1 ? 320.f : 700.f;
+    if (e->playing) e->camera.farZ = std::min(e->camera.farZ, viewDist * 1.2f);
     // sombras: só perto (de longe ninguém nota e custam o mapa inteiro desenhado de novo 3 vezes)
     e->renderer.shadowDistance = std::clamp(d * 3.5f, e->playing ? 40.f : 12.f, e->quality >= 2 ? 160.f : 100.f);
     eng::DirectionalLight sun = e->sun;
     sun.castShadows = sun.castShadows && e->quality > 0 && (e->playing || d < 350.f) && !e->globeMode;
-    const float lodScale = e->quality == 0 ? 0.65f : e->quality == 1 ? 0.85f : 1.f;  // detalhes somem mais cedo
+    const float lodScale = e->quality == 0 ? 0.5f : e->quality == 1 ? 0.85f : 1.f;  // detalhes somem mais cedo
     e->editorCam.apply(e->camera);
     e->scene.updateTransforms();
     eng::updateAttachments(e);
@@ -133,14 +142,20 @@ void engine_frame(Engine* e, float dt) {
         if (!mr) return;
         const glm::mat4* palette;
         glm::mat4 m = eng::renderMatrix(e, go, &palette);
-        if (mr->lodNear > 0.f || mr->lodFar < 1e29f) {  // LOD por distância ao centro do mesh
+        if (mr->lodNear > 0.f || mr->lodFar < 1e29f || (e->playing && !palette)) {  // LOD por distância ao centro do mesh
             const eng::Mesh* mesh = e->renderer.mesh(mr->mesh);
             if (!mesh) return;
             glm::vec3 c = glm::vec3(m * glm::vec4((mesh->bounds.min + mesh->bounds.max) * 0.5f, 1.f));
             glm::vec3 d = c - camPos;
             float d2 = glm::dot(d, d);
-            float lf = mr->lodFar * lodScale;
-            if (d2 < mr->lodNear * mr->lodNear || d2 >= lf * lf) return;
+            float lf = mr->lodFar * lodScale, ln = mr->lodNear * lodScale;  // perto e longe na mesma escala (sem buraco)
+            if (d2 < ln * ln || d2 >= lf * lf) return;
+            if (e->playing) {  // além da distância de visão: nem desenha
+                glm::vec3 half = (mesh->bounds.max - mesh->bounds.min) * 0.5f;
+                float rad = glm::length(half) * std::max({glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])), glm::length(glm::vec3(m[2]))});
+                float dist = std::sqrt(d2) - rad;
+                if (dist > viewDist) return;
+            }
         }
         e->renderer.submit(go, m, palette);
     });
@@ -177,11 +192,12 @@ void engine_frame(Engine* e, float dt) {
 
     // luzes: as da cena + as mais relevantes dos efeitos (fogo, magia, explosões)
     eng::PointLight lights[eng::kMaxPointLights];
-    int nLights = eng::gatherLights(e, lights, eng::kMaxPointLights);
+    int nLights = eng::gatherLights(e, lights, e->quality == 0 ? 3 : eng::kMaxPointLights);  // leve: menos luzes no shader
     auto tr = std::chrono::steady_clock::now();
     eng::Environment env = e->env;
     float fog = e->renderer.fogDensity;
     eng::weatherLook(e, env, sun, fog);  // chuva: céu fechado, neblina, clarão dos raios
+    if (e->playing && e->quality == 0) fog = std::max(fog, 0.0075f);  // leve: neblina esconde onde a visão acaba
     const float keepFog = e->renderer.fogDensity;
     e->renderer.fogDensity = fog;
     e->renderer.render(e->camera, sun, env, lights, nLights);
@@ -493,6 +509,12 @@ int engine_anim_edit_selected(Engine* e) { return e ? eng::animEditSelected(e) :
 void engine_player_aim(Engine* e, int on) { if (e) e->aimInput = on != 0; }
 const char* engine_interact_label(Engine* e) { if (!e) return ""; e->toolResult = eng::interactLabel(e); return e->toolResult.c_str(); }
 int engine_interact(Engine* e) { return e && eng::interact(e); }
+// Partida Polícia x Bandidos
+int engine_team_mode(Engine* e) { return e && e->rules.objetivo == "times"; }
+void engine_team_choose(Engine* e, int team) { if (e) eng::teamChoose(e, team); }
+const char* engine_shop_json(Engine* e) { if (!e) return ""; e->toolResult = eng::shopJson(e); return e->toolResult.c_str(); }
+const char* engine_shop_buy(Engine* e, int item) { if (!e) return ""; e->toolResult = eng::shopBuy(e, item); return e->toolResult.c_str(); }
+void engine_shop_close(Engine* e) { if (e) eng::shopClose(e); }
 void engine_anim_edit_get(Engine* e, int bone, float* euler3) { if (e && euler3) eng::animEditGet(e, bone, euler3); }
 void engine_anim_edit_set(Engine* e, int bone, const float* euler3) { if (e && euler3) eng::animEditSet(e, bone, euler3); }
 void engine_anim_edit_reset_pose(Engine* e) { if (e) eng::animEditResetPose(e); }
@@ -652,6 +674,11 @@ int engine_set_object_texture(Engine* e, const char* path) {
 }
 
 // ---------- jogador ----------
+int engine_player_id(Engine* e) {
+    if (!e || e->player < 0 || e->player >= int(e->characters.size())) return -1;
+    eng::GameObject* g = e->scene.get(e->characters[e->player].root);
+    return g ? g->id : -1;
+}
 int engine_has_player(Engine* e) {
     return e && e->player >= 0 && e->player < int(e->characters.size()) && e->scene.get(e->characters[e->player].root);
 }

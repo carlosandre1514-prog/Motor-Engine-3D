@@ -1,0 +1,274 @@
+{
+ "ambiente": {
+  "chuva": "automatica",
+  "ciclo_min": 10.0,
+  "exposicao": 1.0,
+  "grade": true,
+  "hora": 16.5,
+  "neblina": 0.0017999999690800905,
+  "sol": 3.2
+ },
+ "camera": {
+  "alvo": [
+   0.0,
+   7.922,
+   0.0
+  ],
+  "distancia": 200.6,
+  "pitch": 0.75,
+  "yaw": 3.642
+ },
+ "formato": "motor3d-projeto",
+ "mapa": {
+  "semente": 5,
+  "tipo": "favela"
+ },
+ "nome": "Polícia x Bandidos",
+ "objetos": [
+  {
+   "aparencia": "aleatorio",
+   "jogador": true,
+   "nome": "Jogador",
+   "pos": [
+    0.0,
+    10.3,
+    52.0
+   ],
+   "rot_y": 180.0,
+   "semente": 38,
+   "tipo": "personagem"
+  },
+  {
+   "nome": "Base da Polícia",
+   "pos": [
+    0.0,
+    4.2,
+    106.0
+   ],
+   "time": "policia",
+   "tipo": "base"
+  },
+  {
+   "nome": "Base da Polícia",
+   "pos": [
+    -44.0,
+    4.2,
+    106.0
+   ],
+   "time": "policia",
+   "tipo": "base"
+  },
+  {
+   "loja": "armas",
+   "nome": "Loja de armas (polícia)",
+   "pos": [
+    -22.0,
+    4.2,
+    107.5
+   ],
+   "rot_y": 180.0,
+   "time": "policia",
+   "tipo": "loja"
+  },
+  {
+   "loja": "roupas",
+   "nome": "Loja de fardas (polícia)",
+   "pos": [
+    22.0,
+    4.2,
+    107.5
+   ],
+   "rot_y": 180.0,
+   "time": "policia",
+   "tipo": "loja"
+  },
+  {
+   "nome": "Base dos Bandidos",
+   "pos": [
+    -8.0,
+    23.5,
+    -44.0
+   ],
+   "time": "bandidos",
+   "tipo": "base"
+  },
+  {
+   "nome": "Base dos Bandidos",
+   "pos": [
+    13.0,
+    23.5,
+    -37.0
+   ],
+   "time": "bandidos",
+   "tipo": "base"
+  },
+  {
+   "loja": "armas",
+   "nome": "Loja de armas (bandidos)",
+   "pos": [
+    52.0,
+    8.5,
+    28.0
+   ],
+   "rot_y": -90.0,
+   "time": "bandidos",
+   "tipo": "loja"
+  },
+  {
+   "loja": "roupas",
+   "nome": "Loja de roupas (bandidos)",
+   "pos": [
+    -42.0,
+    11.5,
+    32.0
+   ],
+   "rot_y": 90.0,
+   "time": "bandidos",
+   "tipo": "loja"
+  },
+  {
+   "arma": "fuzil",
+   "nome": "Sgt. Rocha",
+   "pos": [
+    -6.0,
+    4.2,
+    104.0
+   ],
+   "rot_y": 180.0,
+   "roupa": 0,
+   "semente": 1197066665,
+   "time": "policia",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "fuzil",
+   "nome": "Magrão",
+   "pos": [
+    -4.0,
+    23.5,
+    -38.0
+   ],
+   "roupa": 0,
+   "semente": 543748413,
+   "time": "bandidos",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "fuzil",
+   "nome": "Cb. Lima",
+   "pos": [
+    -3.0,
+    4.2,
+    104.0
+   ],
+   "rot_y": 180.0,
+   "roupa": 1,
+   "semente": 1043777091,
+   "time": "policia",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "fuzil",
+   "nome": "Baixinho",
+   "pos": [
+    -1.0,
+    23.5,
+    -38.0
+   ],
+   "roupa": 1,
+   "semente": 794703543,
+   "time": "bandidos",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "pistola",
+   "nome": "Sd. Nunes",
+   "pos": [
+    0.0,
+    4.2,
+    104.0
+   ],
+   "rot_y": 180.0,
+   "roupa": 2,
+   "semente": 894146441,
+   "time": "policia",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "pistola",
+   "nome": "Cabeça",
+   "pos": [
+    2.0,
+    23.5,
+    -38.0
+   ],
+   "roupa": 2,
+   "semente": 969072955,
+   "time": "bandidos",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "escopeta",
+   "nome": "Ten. Costa",
+   "pos": [
+    3.0,
+    4.2,
+    104.0
+   ],
+   "rot_y": 180.0,
+   "roupa": 3,
+   "semente": 1990508933,
+   "time": "policia",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "escopeta",
+   "nome": "Zóio",
+   "pos": [
+    5.0,
+    23.5,
+    -38.0
+   ],
+   "roupa": 3,
+   "semente": 1218133545,
+   "time": "bandidos",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "fuzil",
+   "nome": "Sd. Alves",
+   "pos": [
+    6.0,
+    4.2,
+    104.0
+   ],
+   "rot_y": 180.0,
+   "roupa": 0,
+   "semente": 770559991,
+   "time": "policia",
+   "tipo": "personagem"
+  },
+  {
+   "arma": "fuzil",
+   "nome": "Bigode",
+   "pos": [
+    8.0,
+    23.5,
+    -38.0
+   ],
+   "roupa": 0,
+   "semente": 1962086309,
+   "time": "bandidos",
+   "tipo": "personagem"
+  }
+ ],
+ "regras": {
+  "descricao": "5 contra 5 na favela. Abates dão $300: compre armas e roupas nas lojas do seu time. Vence quem fizer 25 abates.",
+  "objetivo": "times",
+  "quantidade": 25,
+  "tempo": 600.0,
+  "titulo": "Polícia x Bandidos",
+  "vida_jogador": 100.0
+ },
+ "versao": 1
+}
