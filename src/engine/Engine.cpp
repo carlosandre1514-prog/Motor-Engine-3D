@@ -681,14 +681,51 @@ void updateSupportHands(Engine* e, float dt) {
         bool want = armed && !c.dying && c.reloadTimer <= 0.f;
         c.supportW = want ? std::min(1.f, c.supportW + dt * 6.f) : std::max(0.f, c.supportW - dt * 6.f);
         if (c.supportW <= 0.f) continue;
-        int up, fo, ha;
-        if (const Retarget* rt = a->retarget) { up = rt->targetOf[CJ_LUpper]; fo = rt->targetOf[CJ_LFore]; ha = rt->targetOf[CJ_LHand]; }
-        else if (a->skeleton->jointCount == CJ_Total) { up = CJ_LUpper; fo = CJ_LFore; ha = CJ_LHand; }
+        int up, fo, ha, rfo, rha;
+        if (const Retarget* rt = a->retarget) {
+            up = rt->targetOf[CJ_LUpper]; fo = rt->targetOf[CJ_LFore]; ha = rt->targetOf[CJ_LHand];
+            rfo = rt->targetOf[CJ_RFore]; rha = rt->targetOf[CJ_RHand];
+        } else if (a->skeleton->jointCount == CJ_Total) { up = CJ_LUpper; fo = CJ_LFore; ha = CJ_LHand; rfo = CJ_RFore; rha = CJ_RHand; }
         else continue;  // esqueleto sem humanoide reconhecido
-        if (up < 0 || fo < 0 || ha < 0) continue;
+        if (up < 0 || fo < 0 || ha < 0 || rfo < 0 || rha < 0) continue;
+        glm::mat4 space = a->space ? a->space->world() : glm::mat4(1.f);
+        auto world = [&](int j) { return glm::vec3(space * a->global[j][3]); };
+        // A animação foi feita com as duas mãos na arma: a arma vai da palma direita (cabo) na direção da palma
+        // esquerda (guarda-mão), com o topo para cima. Cada arma se acomoda pelo próprio cabo e guarda-mão.
+        const float palm = 0.075f * c.height / 1.75f;
+        auto palmOf = [&](int fore, int hand) {
+            glm::vec3 wr = world(hand), el = world(fore);
+            return wr + (glm::length(wr - el) > 1e-4f ? glm::normalize(wr - el) : glm::vec3(0.f)) * palm;
+        };
+        glm::vec3 R = palmOf(rfo, rha), L = palmOf(fo, ha);
+        GameObject* body = e->scene.get(c.root);
+        glm::vec3 fwd = body ? body->transform.rotation * glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 0.f, 1.f);
+        // Animação com as duas mãos na arma (mãos a ~55 cm, a esquerda à frente): a arma segue a linha das mãos.
+        // Animação de carregar com uma mão só (mãos afastadas ou a esquerda atrás): segura em "pronto baixo",
+        // cano para a frente e para baixo, atravessado no corpo; a mão esquerda vai ao guarda-mão pelo IK.
+        const float scale = c.height / 1.75f, hands = glm::length(L - R);
+        glm::vec3 left = body ? body->transform.rotation * glm::vec3(1.f, 0.f, 0.f) : glm::vec3(1.f, 0.f, 0.f);
+        bool twoHanded = hands > 0.12f * scale && hands < 0.64f * scale && glm::dot((L - R) / hands, fwd) > 0.15f;
+        glm::vec3 d = twoHanded ? (L - R) / hands : glm::normalize(fwd * 0.8f - glm::vec3(0.f, 0.55f, 0.f) + left * 0.3f);
+        {
+            glm::vec3 axis = glm::normalize(c.support);  // do cabo ao guarda-mão, no espaço da arma
+            glm::vec3 upHint = glm::vec3(0.f, 1.f, 0.f);
+            if (std::abs(glm::dot(d, upHint)) > 0.97f) upHint = glm::vec3(space * glm::vec4(0.f, 0.f, 1.f, 0.f));
+            auto basis = [](glm::vec3 x, glm::vec3 y) {
+                x = glm::normalize(x);
+                glm::vec3 z = glm::normalize(glm::cross(x, y));
+                return glm::mat3(x, glm::cross(z, x), z);
+            };
+            glm::quat q = glm::normalize(glm::quat_cast(basis(d, upHint) * glm::transpose(basis(axis, glm::vec3(0.f, 1.f, 0.f)))));
+            glm::quat cur = w->transform.rotation;
+            if (glm::dot(cur, q) < 0.f) q = -q;
+            w->transform.position = glm::mix(w->transform.position, R, c.supportW);
+            w->transform.rotation = glm::normalize(glm::slerp(cur, q, c.supportW));
+            w->transform.markDirty();
+            if (!w->transform.parent) w->transform.updateWorld(glm::mat4(1.f), false);
+        }
         // pulso fica um pouco atrás, por baixo e do lado esquerdo do ponto onde a palma segura
         glm::vec3 grip = c.support + glm::vec3(0.03f, -0.045f, -0.05f) * (c.height / 1.75f);
-        glm::mat4 space = a->space ? a->space->world() : glm::mat4(1.f);
         glm::vec3 t = glm::vec3(glm::inverse(space) * w->transform.world() * glm::vec4(grip, 1.f));
         glm::vec3 now = glm::vec3(a->global[ha][3]);
         twoBoneIK(*a, up, fo, ha, glm::mix(now, t, c.supportW));

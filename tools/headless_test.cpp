@@ -544,15 +544,17 @@ int main(int argc, char** argv) {
         engine_new_scene(e);
         int ch = engine_create_random_character(e, 3, 1);
         engine_select(e, ch);
-        engine_create_weapon_ex(e, 1, "kit:armas/m4a1", 0, 1.f, 0);
+        const char* arma = std::getenv("ARMA_TESTE") ? std::getenv("ARMA_TESTE") : "kit:armas/m4a1";
+        if (!std::getenv("SEM_ARMA")) engine_create_weapon_ex(e, 1, arma, 0, 1.f, 0);
         engine_select(e, ch);
         engine_set_anim_preview(e, 1);
-        const int clips[] = {5, 6, 7, 8, 9, 22, 23, 24, 25};
-        for (int k = 0; k < 9; ++k) {
+        std::vector<int> clips = {5, 6, 7, 8, 9, 22, 23, 24, 25};
+        if (std::getenv("TODAS_ANIMS")) { clips.clear(); for (int k = 0; k < 48; ++k) clips.push_back(k); }
+        for (size_t k = 0; k < clips.size(); ++k) {
             engine_set_animation(e, clips[k]);
             frames(e, 12);
             for (int v = 0; v < 2; ++v) {
-                engine_set_camera(e, 0.25f, 1.25f, 0.2f, v ? -0.6f : 0.6f, 0.25f, 1.9f);
+                engine_set_camera(e, 0.f, 1.15f, 0.f, std::getenv("FRENTE") ? (v ? 3.14159f : 0.f) : (v ? -1.5707963f : 1.5707963f), 0.12f, 2.f);
                 frames(e, 1, 0.f);
                 char fn[64];
                 std::snprintf(fn, sizeof(fn), "27_mao_%02d_%d.png", clips[k], v);

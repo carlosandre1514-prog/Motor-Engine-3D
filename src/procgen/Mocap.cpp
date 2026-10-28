@@ -114,10 +114,13 @@ bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& e
         if (dirPair(CJ_Chest, CJ_Head, r1, s1) && dirPair(CJ_RUpper, CJ_LUpper, r2, s2)) A[CJ_Chest] = alignTwo(r1, r2, s1, s2);
         else A[CJ_Chest] = A[CJ_Hips];
     }
+    // cada osso parte do alinhamento do pai e só corrige a direção: a torção (giro no próprio eixo) vem da
+    // cadeia toda, senão o pulso ficava girado e a arma apontava para o lado errado
     auto one = [&](int j, int child) {
         glm::vec3 r, s;
-        if (dirPair(j, child, r, s)) A[j] = alignOne(r, s);
-        else A[j] = A[ref.parent[j] >= 0 ? ref.parent[j] : 0];
+        glm::quat pa = A[ref.parent[j] >= 0 ? ref.parent[j] : 0];
+        if (dirPair(j, child, r, s)) A[j] = glm::normalize(alignOne(pa * r, s) * pa);
+        else A[j] = pa;
     };
     one(CJ_Spine, CJ_Chest);
     one(CJ_Neck, CJ_Head);
@@ -126,7 +129,12 @@ bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& e
         int up = side ? CJ_RUpper : CJ_LUpper, fo = side ? CJ_RFore : CJ_LFore, ha = side ? CJ_RHand : CJ_LHand;
         int th = side ? CJ_RThigh : CJ_LThigh, sh = side ? CJ_RShin : CJ_LShin, ft = side ? CJ_RFoot : CJ_LFoot;
         int f0 = side ? CJ_RThumb1 : CJ_LThumb1;
-        one(up, fo); one(fo, ha); one(ha, f0 + 4);  // mão: em direção ao dedo médio
+        one(up, fo); one(fo, ha);
+        {   // mão: dedos (médio) e polegar definem o giro inteiro (palma para o lado certo)
+            glm::vec3 r1, s1, r2, s2;
+            if (dirPair(ha, f0 + 4, r1, s1) && dirPair(f0 + 6, f0 + 2, r2, s2)) A[ha] = alignTwo(r1, r2, s1, s2);
+            else one(ha, f0 + 4);
+        }
         one(th, sh); one(sh, ft);
         A[ft] = A[sh];
         for (int f = 0; f < 5; ++f) {
