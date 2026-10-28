@@ -350,7 +350,7 @@ void spawnFighterBody(Engine* e, Fighter& f, glm::vec3 pos, float yaw) {
         if (n) gear.push_back(std::string(p, n));
         p += n + (q ? 1 : 0);
     }
-    json spec = {{"tipo", "modelo"}, {"arquivo", "kit:personagens/base"}, {"personagem", true}, {"visual", sk.visual}, {"equipamento", gear}};
+    json spec = {{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/roupas/") + sk.visual}, {"personagem", true}, {"equipamento", gear}};
     spec["pos"] = {pos.x, pos.y, pos.z};
     spec["rot_y"] = glm::degrees(yaw);
     spec["nome"] = f.name;

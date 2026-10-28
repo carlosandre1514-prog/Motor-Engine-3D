@@ -127,7 +127,7 @@
    "tipo": "loja"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/pm",
    "equipamento": [
     "colete_pm",
     "cinto_tatico"
@@ -142,11 +142,10 @@
    "rot_y": 180.0,
    "roupa": 0,
    "time": "policia",
-   "tipo": "modelo",
-   "visual": "pm"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/camisa_time",
    "equipamento": [
     "bone_tras_branco",
     "corrente_ouro",
@@ -161,11 +160,10 @@
    ],
    "roupa": 0,
    "time": "bandidos",
-   "tipo": "modelo",
-   "visual": "camisa_time"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/pm_camuflada",
    "equipamento": [
     "colete_pm",
     "cinto_tatico",
@@ -181,11 +179,10 @@
    "rot_y": 180.0,
    "roupa": 1,
    "time": "policia",
-   "tipo": "modelo",
-   "visual": "pm_camuflada"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/regata",
    "equipamento": [
     "bone_tras_vermelho",
     "corrente_ouro_grossa",
@@ -201,11 +198,10 @@
    ],
    "roupa": 1,
    "time": "bandidos",
-   "tipo": "modelo",
-   "visual": "regata"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/civil",
    "equipamento": [
     "colete_civil",
     "cinto_tatico"
@@ -220,11 +216,10 @@
    "rot_y": 180.0,
    "roupa": 2,
    "time": "policia",
-   "tipo": "modelo",
-   "visual": "civil"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/moletom",
    "equipamento": [
     "bone_tras_preto",
     "relogio_ouro",
@@ -239,11 +234,10 @@
    ],
    "roupa": 2,
    "time": "bandidos",
-   "tipo": "modelo",
-   "visual": "moletom"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/bope",
    "equipamento": [
     "colete_bope",
     "cinto_tatico",
@@ -259,11 +253,10 @@
    "rot_y": 180.0,
    "roupa": 3,
    "time": "policia",
-   "tipo": "modelo",
-   "visual": "bope"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/vermelho_preto",
    "equipamento": [
     "bone_tras_preto",
     "corrente_ouro",
@@ -278,11 +271,10 @@
    ],
    "roupa": 3,
    "time": "bandidos",
-   "tipo": "modelo",
-   "visual": "vermelho_preto"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/pm",
    "equipamento": [
     "colete_pm",
     "cinto_tatico"
@@ -297,11 +289,10 @@
    "rot_y": 180.0,
    "roupa": 0,
    "time": "policia",
-   "tipo": "modelo",
-   "visual": "pm"
+   "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/base",
+   "arquivo": "kit:personagens/roupas/camisa_time",
    "equipamento": [
     "bone_tras_branco",
     "corrente_ouro",
@@ -316,8 +307,7 @@
    ],
    "roupa": 0,
    "time": "bandidos",
-   "tipo": "modelo",
-   "visual": "camisa_time"
+   "tipo": "modelo"
   }
  ],
  "regras": {

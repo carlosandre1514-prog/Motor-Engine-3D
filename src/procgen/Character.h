@@ -20,7 +20,7 @@ enum CharJointExtra { CJ_Neck = CJ_Count,
 // Depois delas: morte, recarregar, mirando com fuzil andar de costas e de lado (esquerda/direita), atirar e pular.
 enum CharClip { CC_Idle, CC_Walk, CC_Run, CC_Dance, CC_Wave,
                 CC_Rifle, CC_Pistol = CC_Rifle + 5, CC_Melee = CC_Pistol + 5,
-                CC_Death = CC_Melee + 5, CC_Reload, CC_RifleBack, CC_RifleLeft, CC_RifleRight, CC_RifleFire, CC_Jump, CC_Count };
+                CC_Death = CC_Melee + 5, CC_Reload, CC_RifleBack, CC_RifleLeft, CC_RifleRight, CC_RifleFire, CC_Jump, CC_CrouchWalk, CC_Count };
 // Papel de cada animação (para a biblioteca de captura de movimento: shaders/anim/biblioteca.txt)
 const char* clipSlot(int charClip);
 enum ArmedPose { AP_Idle, AP_Walk, AP_Run, AP_Aim, AP_AimWalk };

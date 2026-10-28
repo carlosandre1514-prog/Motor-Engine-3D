@@ -48,6 +48,7 @@ Plantas (shaders/kit/vegetacao): árvores, arbustos, capins, forrações e flore
   Convertido e simplificado por tools/converter_vegetacao.py (3 níveis de detalhe, cores por vértice).
 
 Personagem base (kit/personagens/base.glb): modelo masculino do Adobe Fuse com esqueleto Mixamo, enviado pelo
-dono do projeto. Convertido com tools/personagem_fbx (malha reduzida, rosto mantido, sem os cílios). As roupas
-(kit/personagens/visual) foram pintadas por tools/gerar_roupas.py e o equipamento (kit/personagens/equip: colete,
+dono do projeto. Convertido com tools/personagem_fbx (malha reduzida, rosto mantido, sem os cílios). As roupas 3D
+(kit/personagens/roupas: casca de tecido por cima do corpo, a pele coberta sai) saem de tools/gerar_roupas.py
+(cores e máscara das peças) + tools/personagem_fbx --roupa; as texturas em kit/personagens/visual e o equipamento (kit/personagens/equip: colete,
 cinto com carregadores e radinho, capacete, boné, corrente, relógio, brincos) feito por tools/gerar_equipamento.py.

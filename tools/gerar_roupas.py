@@ -61,6 +61,10 @@ def hexc(h):
     h = h.lstrip('#')
     return np.array([int(h[i:i + 2], 16) for i in (0, 2, 4)], np.float32) / 255.0
 
+# o que não é roupa (tatuagem, chinelo) e se tem bota: para a máscara das peças 3D
+SKIN_MARK = np.zeros((N, N), bool)
+STATE = {'bota': False}
+
 def paint(img, mask, color, weave=0.06, shading=1.0):
     """Tecido: cor * sombreado do corpo + textura fina do pano."""
     c = hexc(color) if isinstance(color, str) else color
@@ -128,6 +132,7 @@ def tattoo_arms(img, which='both', density=1.0, seed=3):
     ph = r.random(4) * 6
     f = np.sin(t * 38 + np.sin(ang * 3 + ph[0]) * 2.2 + ph[1]) + np.sin(ang * 2 + t * 22 + ph[2]) * 0.8
     ink = arm & (f > 1.15 - 0.25 * density) & (AX > 0.24) & (AX < 0.66)
+    SKIN_MARK[ink] = True
     col = np.array([0.12, 0.14, 0.18], np.float32)
     img[ink] = img[ink] * 0.35 + col * 0.65
 
@@ -197,6 +202,7 @@ def belt(img, color='#141414', y=None):
     paint(img, m, color, shading=0.5)
 
 def shoes(img, color, sole='#f2f2f2', boot=False):
+    STATE['bota'] = STATE['bota'] or boot
     m = boots() if boot else feet_m
     paint(img, m, color)
     s = m & (Y < 0.025)
@@ -206,6 +212,7 @@ def gloves(img, color='#151515'):
     paint(img, hands_m | (arm_m & (AX > wrist_x - 0.04)), color, weave=0.1)
 
 def flipflop(img):
+    SKIN_MARK[feet_m] = True
     m = feet_m & (Y < 0.018)
     paint(img, m, '#2f6fd6')
     strap = feet_m & (np.abs(X - np.sign(X) * 0.1) < 0.012) & (Y < 0.06) & (Z > 0.0)
@@ -338,9 +345,28 @@ def pad_islands(img, px=8):
         have = nxt
     return out
 
+def garment_mask(img):
+    """Peças 3D (R = classe * 40): 1 camisa, 2 calça/bermuda, 3 bota/tênis, 4 luva, 5 balaclava."""
+    painted = HAS & (np.abs(img - skin).sum(-1) > 0.03) & ~SKIN_MARK
+    cls = np.zeros((N, N), np.uint8)
+    trunk = (REG == R_TORSO) | (REG == R_HIPS)
+    cls[painted & ((trunk & (Y > hip_y + 0.055)) | (REG == R_UPPER) | (REG == R_FORE) | ((REG == R_NECK) & (Y < neck_y)))] = 1
+    cls[painted & ((trunk & (Y <= hip_y + 0.055)) | (REG == R_THIGH) | (REG == R_SHIN))] = 2
+    low = (REG == R_FOOT) | ((REG == R_SHIN) & (Y < ankle_y + (0.17 if STATE['bota'] else 0.0)))
+    cls[painted & low] = 3
+    cls[painted & (REG == R_HAND)] = 4
+    cls[painted & (arm_m & (AX > wrist_x - 0.04)) & (cls == 0)] = 4
+    cls[painted & ((REG == R_HEAD) | ((REG == R_NECK) & (Y >= neck_y)))] = 5
+    out = np.zeros((N, N, 4), np.uint8)
+    out[..., 0] = cls * 40; out[..., 3] = 255
+    return out
+
 for name, fn in VISUAIS.items():
     img = skin.copy()
+    SKIN_MARK[:] = False
+    STATE['bota'] = False
     fn(img)
+    Image.fromarray(garment_mask(img)).save(os.path.join(out_dir, name + '_pecas.png'))
     img = pad_islands(img)
     out = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
     if side != N:

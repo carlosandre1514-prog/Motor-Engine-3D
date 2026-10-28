@@ -999,9 +999,9 @@ int main(int argc, char** argv) {
                                {"colete_bope", "cinto_tatico", "capacete_preto"}};
             const json bg[] = {{"bone_tras_branco", "corrente_ouro", "cinto_tatico_marrom"}, {"bone_tras_vermelho", "corrente_ouro_grossa", "relogio_ouro", "cinto_tatico_marrom"},
                                {"bone_tras_preto", "relogio_ouro", "cinto_tatico_marrom"}, {"bone_tras_preto", "corrente_ouro", "cinto_tatico_marrom"}};
-            objs.push_back({{"tipo", "modelo"}, {"arquivo", "kit:personagens/base"}, {"personagem", true}, {"visual", pv[i % 4]}, {"equipamento", pg[i % 4]},
+            objs.push_back({{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/roupas/") + pv[i % 4]}, {"personagem", true}, {"equipamento", pg[i % 4]},
                             {"time", "policia"}, {"nome", pol[i]}, {"arma", pa[i]}, {"roupa", i % 4}, {"pos", P(-6.f + i * 3.f, 104.f)}, {"rot_y", 180}});
-            objs.push_back({{"tipo", "modelo"}, {"arquivo", "kit:personagens/base"}, {"personagem", true}, {"visual", bv[i % 4]}, {"equipamento", bg[i % 4]},
+            objs.push_back({{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/roupas/") + bv[i % 4]}, {"personagem", true}, {"equipamento", bg[i % 4]},
                             {"time", "bandidos"}, {"nome", ban[i]}, {"arma", ba[i]}, {"roupa", i % 4}, {"pos", P(-4.f + i * 3.f, -38.f)}, {"rot_y", 0}});
         }
         json res = json::parse(std::string(engine_tool_call(e, "criar_objetos", json{{"objetos", objs}}.dump().c_str())));
@@ -1293,7 +1293,7 @@ int main(int argc, char** argv) {
                 json all = json::parse(eqs);
                 if (i < all.size()) spec["equipamento"] = all[i];
             }
-            if (files[i].rfind("kit:", 0) == 0) { spec.erase("textura"); spec["visual"] = files[i].substr(4); }
+            if (files[i].rfind("kit:", 0) == 0) { spec.erase("textura"); spec["arquivo"] = "kit:personagens/roupas/" + files[i].substr(4); }
             int id = engine_add_spec(e, spec.dump().c_str());
             if (id < 0) std::printf("  [ERRO] %s\n", engine_last_error(e));
         }
@@ -1310,6 +1310,43 @@ int main(int argc, char** argv) {
         engine_set_camera(e, 0.f, 1.45f, 0.f, 0.f, 0.05f, std::max(1.6f, dist * 0.45f));
         frames(e, 2, 0.f);
         save(out, "elenco_rosto.png");
+        engine_destroy(e);
+        std::printf("OK\n");
+        return 0;
+    }
+    // Postura com o fuzil em Play: pronto (parado) e mirando, vistas de lado/frente/de perto
+    if (std::getenv("SO_MIRA")) {
+        using nlohmann::json;
+        engine_new_scene(e);
+        engine_set_grid(e, 0);
+        std::string arq = std::getenv("BASE") ? std::getenv("BASE") : std::string("kit:personagens/roupas/") + (std::getenv("VISUAL") ? std::getenv("VISUAL") : "pm");
+        int id = engine_add_spec(e, json{{"tipo", "modelo"}, {"arquivo", arq}, {"personagem", true}, {"jogador", true}, {"pos", {0, 0, 0}}}.dump().c_str());
+        if (id < 0) { std::printf("[ERRO] %s\n", engine_last_error(e)); return 1; }
+        engine_select(e, id);
+        engine_set_player(e);
+        engine_create_weapon_ex(e, 1, std::getenv("ARMA_TESTE") ? std::getenv("ARMA_TESTE") : "kit:armas/m4a1", 0, 1.f, 0);
+        engine_select(e, -1);
+        engine_set_play(e, 1);
+        for (int st = 0; st < 4; ++st) {
+            const int aim = st & 1, crouch = st >> 1;
+            engine_player_aim(e, aim);
+            engine_player_crouch(e, crouch);
+            frames(e, 40);
+            const char* names[] = {"pronto", "mirando", "agachado", "agachado_mirando"};
+            const char* nm = names[st];
+            float pp[3], pr[3], ps[3];
+            engine_get_transform(e, engine_player_id(e), pp, pr, ps);
+            float ry = glm::radians(pr[1]);
+            if (std::abs(pr[0]) > 90.f) ry = 3.14159f - ry;  // euler com X e Z = 180
+            struct V { const char* s; float yaw, pitch, dist, ty; } vs[] = {{"lado", ry - 1.5708f, 0.05f, 2.0f, 1.3f}, {"frente", ry + 0.5f, 0.05f, 2.2f, 1.25f},
+                                                                           {"perto", ry - 1.1f, 0.06f, 0.85f, 1.48f}, {"costas", ry + 3.14159f - 0.5f, 0.1f, 1.1f, 1.5f},
+                                                                           {"frente_esq", ry + 0.9f, 0.15f, 1.3f, 1.3f}, {"frente_dir", ry - 0.6f, 0.15f, 1.3f, 1.3f}};
+            for (auto& v : vs) {
+                engine_set_camera(e, pp[0], pp[1] + v.ty, pp[2], v.yaw, v.pitch, v.dist);
+                frames(e, 1, 0.f);
+                save(out, (std::string("mira_") + nm + "_" + v.s + ".png").c_str());
+            }
+        }
         engine_destroy(e);
         std::printf("OK\n");
         return 0;

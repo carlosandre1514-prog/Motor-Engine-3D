@@ -59,6 +59,7 @@ object NativeBridge {
     @JvmStatic external fun nativeSetPlayer()
     @JvmStatic external fun nativePlayerInput(x: Float, y: Float, run: Boolean)
     @JvmStatic external fun nativePlayerJump()
+    @JvmStatic external fun nativePlayerCrouch(on: Boolean)
     @JvmStatic external fun nativePlayerFire()
     @JvmStatic external fun nativePlayerWeapon(): Int
 

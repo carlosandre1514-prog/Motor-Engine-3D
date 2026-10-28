@@ -506,6 +506,7 @@ void buildCharacter(const CharacterParams& p, LoadedModel& out, MeshBuilder& b) 
     slot(CC_RifleRight, "Lado direito (fuzil)", 1.05f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_AimWalk); });
     slot(CC_RifleFire, "Atirando (fuzil)", 1.f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_Aim); });
     slot(CC_Jump, "Pulando", 0.9f, [&](ClipWriter& w) { idle(w, J); });
+    slot(CC_CrouchWalk, "Agachado andando (fuzil)", 1.05f, [&](ClipWriter& w) { armedClip(w, J, CC_Rifle, AP_Walk); });
     // o resto da biblioteca (sem papel) entra no fim da lista
     for (const MocapClip& m : lib) if (m.slot.empty() || m.slot == "-") mocap(m, m.name.c_str());
 }
@@ -515,7 +516,8 @@ const char* clipSlot(int cc) {
                                           "fuzil_parado", "fuzil_andando", "fuzil_correndo", "fuzil_mirando", "fuzil_andando_mirando",
                                           "pistola_parado", "pistola_andando", "pistola_correndo", "pistola_mirando", "pistola_andando_mirando",
                                           "faca_parado", "faca_andando", "faca_correndo", "faca_golpe", "faca_golpe_andando",
-                                          "morte", "recarregar", "fuzil_costas", "fuzil_esquerda", "fuzil_direita", "fuzil_atirando", "pulo"};
+                                          "morte", "recarregar", "fuzil_costas", "fuzil_esquerda", "fuzil_direita", "fuzil_atirando", "pulo",
+                                          "agachado_andando"};
     return cc >= 0 && cc < CC_Count ? slots[cc] : "";
 }
 

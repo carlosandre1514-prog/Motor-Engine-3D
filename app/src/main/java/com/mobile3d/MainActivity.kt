@@ -979,8 +979,8 @@ class MainActivity : Activity() {
 
     private fun addOutfitCharacter(visual: String, gear: List<String>, team: String) {
         val j = JSONObject()
-        j.put("tipo", "modelo"); j.put("arquivo", "kit:personagens/base"); j.put("personagem", true)
-        j.put("visual", visual); j.put("equipamento", JSONArray(gear))
+        j.put("tipo", "modelo"); j.put("arquivo", "kit:personagens/roupas/$visual"); j.put("personagem", true)
+        j.put("equipamento", JSONArray(gear))
         if (team.isNotEmpty()) j.put("time", team)
         gl {
             if (NativeBridge.addSpec(j.toString()) < 0) toast("Erro: " + NativeBridge.nativeLastError())
@@ -1600,6 +1600,17 @@ class MainActivity : Activity() {
             true
         }
         val jump = roundButton("Pular", 0xCC2E86DE.toInt()).apply { setOnClickListener { gl { NativeBridge.nativePlayerJump() } } }
+        // agachar: liga/desliga (agachado anda devagar e mira agachado)
+        var crouched = false
+        val crouchBtn = roundButton("Agachar", 0xCC5D6D7E.toInt())
+        crouchBtn.setOnClickListener {
+            crouched = !crouched
+            val on = crouched
+            crouchBtn.alpha = if (on) 1f else 0.75f
+            crouchBtn.text = if (on) "Levantar" else "Agachar"
+            gl { NativeBridge.nativePlayerCrouch(on) }
+        }
+        crouchBtn.alpha = 0.75f
         aimBtn = roundButton("Mirar", 0xCC37474F.toInt()).apply {
             setOnTouchListener { v, e ->  // segurar = mirar (anda devagar, arma apontada para frente)
                 when (e.actionMasked) {
@@ -1625,7 +1636,7 @@ class MainActivity : Activity() {
             magic.text = "Magia\n" + elements[spellElement]
             true
         }
-        col.addView(magic); col.addView(aimBtn); col.addView(fireBtn); col.addView(jump); col.addView(runBtn)
+        col.addView(magic); col.addView(aimBtn); col.addView(fireBtn); col.addView(jump); col.addView(crouchBtn); col.addView(runBtn)
         f.addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(20); bottomMargin = dp(20) })
         return f.apply { isClickable = false }
     }

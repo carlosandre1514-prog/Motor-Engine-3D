@@ -163,6 +163,7 @@ JNI_FN(jboolean, nativeHasPlayer)(JNIEnv*, jclass) { return g_engine && engine_h
 JNI_FN(void, nativeSetPlayer)(JNIEnv*, jclass) { if (g_engine) engine_set_player(g_engine); }
 JNI_FN(void, nativePlayerInput)(JNIEnv*, jclass, jfloat x, jfloat y, jboolean run) { if (g_engine) engine_player_input(g_engine, x, y, run ? 1 : 0); }
 JNI_FN(void, nativePlayerJump)(JNIEnv*, jclass) { if (g_engine) engine_player_jump(g_engine); }
+JNI_FN(void, nativePlayerCrouch)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_player_crouch(g_engine, on ? 1 : 0); }
 JNI_FN(void, nativePlayerFire)(JNIEnv*, jclass) { if (g_engine) engine_player_fire(g_engine); }
 JNI_FN(jint, nativePlayerWeapon)(JNIEnv*, jclass) { return g_engine ? engine_player_weapon(g_engine) : -1; }
 

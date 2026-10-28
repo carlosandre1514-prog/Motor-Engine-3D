@@ -19,7 +19,7 @@ de_costas_2.anim;-;De costas 2 (fuzil);1
 passo_esquerda.anim;-;Passo para a esquerda (fuzil);1
 passo_direita.anim;-;Passo para a direita (fuzil);1
 correndo_de_costas.anim;-;Correndo de costas (fuzil);1
-agachado_andando.anim;-;Agachado andando (fuzil);1
+agachado_andando.anim;agachado_andando;Agachado andando (fuzil);1
 agachar_ajoelhar.anim;-;Agachar e ajoelhar (fuzil);1
 virando_fuzil.anim;-;Virando (fuzil);1
 virando.anim;-;Virando andando;1

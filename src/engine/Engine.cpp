@@ -654,6 +654,11 @@ int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
                 c.support = kind == WK_Shotgun ? glm::vec3(0.f, 0.01f, 0.43f) : glm::vec3(0.f, 0.03f, kind == WK_Sniper ? 0.4f : 0.38f);
             else
                 c.support = glm::vec3(0.f, wb.min.y + hgt * 0.55f, wb.min.z + len * 0.64f);
+            // alça de mira: no alto da arma, um terço do comprimento a partir da coronha
+            c.sight = glm::vec3(0.f, wb.max.y - hgt * 0.06f, wb.min.z + len * 0.36f);
+            c.butt = glm::vec3(0.f, wb.min.y + hgt * 0.62f, wb.min.z + 0.01f);
+            c.gripPt = glm::vec3(0.f, wb.min.y + hgt * 0.4f, wb.min.z + len * 0.315f);
+            c.guardPt = glm::vec3(0.f, wb.min.y + hgt * 0.68f, wb.min.z + len * 0.63f);
         }
         int base = armedClipBase(kind);
         if (c.anim && base >= 0 && c.clipMap[base + AP_Idle] >= 0) c.anim->setClip(c.clipMap[base + AP_Idle]);
@@ -677,9 +682,66 @@ void updateAttachments(Engine* e) {
     }
 }
 
+// Gira um osso e tudo o que vem depois dele em volta de `pivot` (espaço do esqueleto)
+static void rotateJointSubtree(Animator& a, int root, const glm::quat& r, glm::vec3 pivot) {
+    const Skeleton& S = *a.skeleton;
+    glm::mat4 M = glm::translate(glm::mat4(1.f), pivot) * glm::mat4_cast(r) * glm::translate(glm::mat4(1.f), -pivot);
+    bool in[kMaxJoints] = {};
+    for (int k = 0; k < S.jointCount; ++k) {
+        int i = S.order[k];
+        in[i] = i == root || (S.parent[i] >= 0 && in[S.parent[i]]);
+        if (!in[i]) continue;
+        a.global[i] = M * a.global[i];
+        a.palette[i] = a.global[i] * S.inverseBind[i];
+    }
+}
+
+static int jointNamed(const Skeleton& S, const char* suffix) {
+    size_t n = std::strlen(suffix);
+    for (int j = 0; j < S.jointCount; ++j) {
+        size_t m = std::strlen(S.name[j]);
+        if (m >= n && std::strcmp(S.name[j] + m - n, suffix) == 0) return j;
+    }
+    return -1;
+}
+
+// Gira a mão (com os dedos) para os dedos apontarem em `fingers` e o polegar para o lado de `thumb`;
+// depois fecha os dedos em volta de `curlAxis` (segurando o cabo/guarda-mão). Tudo no espaço do esqueleto.
+static void poseHand(Animator& a, int hand, bool leftSide, glm::vec3 fingers, glm::vec3 thumb, glm::vec3 curlAxis, float curl, float w) {
+    const Skeleton& S = *a.skeleton;
+    const char* side = leftSide ? "LeftHand" : "RightHand";
+    char buf[48];
+    auto j = [&](const char* f, int k) { std::snprintf(buf, sizeof(buf), "%s%s%d", side, f, k); return jointNamed(S, buf); };
+    int mid = j("Middle", 1), th = j("Thumb", 1);
+    if (hand < 0 || mid < 0 || w <= 0.f) return;
+    auto P = [&](int k) { return glm::vec3(a.global[k][3]); };
+    glm::vec3 p = P(hand);
+    glm::vec3 f = P(mid) - p;
+    if (glm::length(f) < 1e-5f) return;
+    glm::quat r1 = glm::rotation(glm::normalize(f), glm::normalize(fingers));
+    rotateJointSubtree(a, hand, glm::slerp(glm::quat(1, 0, 0, 0), r1, w), p);
+    if (th >= 0) {
+        glm::vec3 fd = glm::normalize(P(mid) - p);
+        glm::vec3 t = P(th) - p, want = thumb;
+        t -= fd * glm::dot(t, fd); want -= fd * glm::dot(want, fd);
+        if (glm::length(t) > 1e-5f && glm::length(want) > 1e-5f) {
+            glm::quat r2 = glm::rotation(glm::normalize(t), glm::normalize(want));
+            rotateJointSubtree(a, hand, glm::slerp(glm::quat(1, 0, 0, 0), r2, w), p);
+        }
+    }
+    // dedos fechando (3 falanges de cada dedo)
+    for (const char* f : {"Index", "Middle", "Ring", "Pinky"})
+        for (int k = 1; k <= 3; ++k) {
+            int jj = j(f, k);
+            if (jj < 0) continue;
+            rotateJointSubtree(a, jj, glm::angleAxis(curl * w, glm::normalize(curlAxis)), P(jj));
+        }
+}
+
 // IK de dois ossos (ombro-cotovelo-pulso) direto nas matrizes globais da pose: leva o pulso até `target`
 // mantendo o plano do cotovelo; gira cada osso (com tudo o que vem depois dele) em volta da própria junta.
-static void twoBoneIK(Animator& a, int up, int fo, int ha, glm::vec3 target) {
+// poleHint (opcional): para onde o cotovelo deve apontar; sem ele, mantém o plano do cotovelo da animação
+static void twoBoneIK(Animator& a, int up, int fo, int ha, glm::vec3 target, glm::vec3 poleHint = glm::vec3(0.f)) {
     const Skeleton& S = *a.skeleton;
     auto pos = [&](int j) { return glm::vec3(a.global[j][3]); };
     auto rotateSubtree = [&](int root, const glm::quat& r, glm::vec3 pivot) {
@@ -699,7 +761,8 @@ static void twoBoneIK(Animator& a, int up, int fo, int ha, glm::vec3 target) {
     glm::vec3 to = target - p0;
     float d = glm::clamp(glm::length(to), std::abs(la - lb) + 1e-4f, la + lb - 1e-4f);
     glm::vec3 u = glm::length(to) > 1e-5f ? glm::normalize(to) : glm::normalize(p2 - p0);
-    glm::vec3 pole = (p1 - p0) - u * glm::dot(p1 - p0, u);
+    glm::vec3 pole = glm::length(poleHint) > 1e-5f ? poleHint : (p1 - p0);
+    pole -= u * glm::dot(pole, u);
     pole = glm::length(pole) > 1e-5f ? glm::normalize(pole) : glm::vec3(0.f, -1.f, 0.f);
     float cosA = glm::clamp((la * la + d * d - lb * lb) / (2.f * la * d), -1.f, 1.f);
     glm::vec3 elbow = p0 + u * (la * cosA) + pole * (la * std::sqrt(1.f - cosA * cosA));
@@ -726,17 +789,21 @@ void updateSupportHands(Engine* e, float dt) {
                 armed |= c.clipMap[k] >= 0 && a->clipIndex == c.clipMap[k] && !a->posing && !a->preview;
         else
             for (int k : {CC_Rifle + AP_Idle, CC_Rifle + AP_Walk, CC_Rifle + AP_Run, CC_Rifle + AP_Aim, CC_Rifle + AP_AimWalk, int(CC_RifleBack),
-                          int(CC_RifleLeft), int(CC_RifleRight), int(CC_RifleFire), int(CC_Jump)})
+                          int(CC_RifleLeft), int(CC_RifleRight), int(CC_RifleFire), int(CC_Jump), int(CC_CrouchWalk)})
                 armed |= c.clipMap[k] >= 0 && a->clipIndex == c.clipMap[k] && !a->posing && !a->preview;
         bool want = armed && !c.dying && c.reloadTimer <= 0.f;
         c.supportW = want ? std::min(1.f, c.supportW + dt * 6.f) : std::max(0.f, c.supportW - dt * 6.f);
+        // mirando com arma longa: a arma sobe até o olho (bochecha na coronha, coronha no ombro)
+        bool ads = !pistol && want && (c.aimHold || c.aimTimer > 0.f) && !(c.clipMap[CC_Rifle + AP_Run] >= 0 && a->clipIndex == c.clipMap[CC_Rifle + AP_Run]);
+        c.adsW = ads ? std::min(1.f, c.adsW + dt * 7.f) : std::max(0.f, c.adsW - dt * 7.f);
         if (c.supportW <= 0.f) continue;
-        int up, fo, ha, rfo, rha;
+        int up, fo, ha, rup, rfo, rha, head;
         if (const Retarget* rt = a->retarget) {
             up = rt->targetOf[CJ_LUpper]; fo = rt->targetOf[CJ_LFore]; ha = rt->targetOf[CJ_LHand];
-            rfo = rt->targetOf[CJ_RFore]; rha = rt->targetOf[CJ_RHand];
-        } else if (a->skeleton->jointCount == CJ_Total) { up = CJ_LUpper; fo = CJ_LFore; ha = CJ_LHand; rfo = CJ_RFore; rha = CJ_RHand; }
-        else continue;  // esqueleto sem humanoide reconhecido
+            rup = rt->targetOf[CJ_RUpper]; rfo = rt->targetOf[CJ_RFore]; rha = rt->targetOf[CJ_RHand]; head = rt->targetOf[CJ_Head];
+        } else if (a->skeleton->jointCount == CJ_Total) {
+            up = CJ_LUpper; fo = CJ_LFore; ha = CJ_LHand; rup = CJ_RUpper; rfo = CJ_RFore; rha = CJ_RHand; head = CJ_Head;
+        } else continue;  // esqueleto sem humanoide reconhecido
         if (up < 0 || fo < 0 || ha < 0 || rfo < 0 || rha < 0) continue;
         glm::mat4 space = a->space ? a->space->world() : glm::mat4(1.f);
         auto world = [&](int j) { return glm::vec3(space * a->global[j][3]); };
@@ -757,35 +824,73 @@ void updateSupportHands(Engine* e, float dt) {
             continue;
         }
         glm::vec3 fwd = body ? body->transform.rotation * glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 0.f, 1.f);
-        // Animação com as duas mãos na arma (mãos a ~55 cm, a esquerda à frente): a arma segue a linha das mãos.
-        // Animação de carregar com uma mão só (mãos afastadas ou a esquerda atrás): segura em "pronto baixo",
-        // cano para a frente e para baixo, atravessado no corpo; a mão esquerda vai ao guarda-mão pelo IK.
-        const float scale = c.height / 1.75f, hands = glm::length(L - R);
+        // Empunhadura de fuzil como no treino de tiro: a soleira da coronha fica no "bolso" do ombro direito (entre a
+        // clavícula e o deltoide). Pronto baixo: cano 35° para baixo e um pouco para dentro. Mirando: cano para a
+        // frente e a cabeça desce até o olho direito ficar atrás da alça de mira (bochecha apoiada na coronha).
+        // A mão direita vai ao cabo e a esquerda ao guarda-mão (IK); pernas e tronco seguem a animação.
+        const float scale = c.height / 1.75f;
         glm::vec3 left = body ? body->transform.rotation * glm::vec3(1.f, 0.f, 0.f) : glm::vec3(1.f, 0.f, 0.f);
-        bool twoHanded = hands > 0.12f * scale && hands < 0.64f * scale && glm::dot((L - R) / hands, fwd) > 0.15f;
-        glm::vec3 d = twoHanded ? (L - R) / hands : glm::normalize(fwd * 0.8f - glm::vec3(0.f, 0.55f, 0.f) + left * 0.3f);
+        const glm::vec3 upW(0.f, 1.f, 0.f);
+        auto basis = [](glm::vec3 x, glm::vec3 y) {
+            x = glm::normalize(x);
+            glm::vec3 z = glm::normalize(glm::cross(x, y));
+            return glm::mat3(x, glm::cross(z, x), z);
+        };
+        const float down = glm::radians(35.f);
+        glm::vec3 dLow = glm::normalize(fwd * std::cos(down) - upW * std::sin(down) + left * 0.18f);
+        glm::vec3 d = glm::normalize(glm::mix(dLow, fwd, c.adsW));
+        glm::quat q = glm::normalize(glm::quat_cast(basis(d, upW) * glm::transpose(basis(glm::vec3(0.f, 0.f, 1.f), upW))));
+        glm::vec3 shoulder = rup >= 0 ? world(rup) : R;
+        glm::vec3 pocket = shoulder + (fwd * glm::mix(0.09f, 0.05f, c.adsW) + left * 0.07f - upW * glm::mix(0.035f, -0.03f, c.adsW)) * scale;
         {
-            glm::vec3 axis = glm::normalize(c.support);  // do cabo ao guarda-mão, no espaço da arma
-            glm::vec3 upHint = glm::vec3(0.f, 1.f, 0.f);
-            if (std::abs(glm::dot(d, upHint)) > 0.97f) upHint = glm::vec3(space * glm::vec4(0.f, 0.f, 1.f, 0.f));
-            auto basis = [](glm::vec3 x, glm::vec3 y) {
-                x = glm::normalize(x);
-                glm::vec3 z = glm::normalize(glm::cross(x, y));
-                return glm::mat3(x, glm::cross(z, x), z);
-            };
-            glm::quat q = glm::normalize(glm::quat_cast(basis(d, upHint) * glm::transpose(basis(axis, glm::vec3(0.f, 1.f, 0.f)))));
             glm::quat cur = w->transform.rotation;
             if (glm::dot(cur, q) < 0.f) q = -q;
-            w->transform.position = glm::mix(w->transform.position, R, c.supportW);
+            w->transform.position = glm::mix(w->transform.position, pocket - q * c.butt, c.supportW);
             w->transform.rotation = glm::normalize(glm::slerp(cur, q, c.supportW));
             w->transform.markDirty();
             if (!w->transform.parent) w->transform.updateWorld(glm::mat4(1.f), false);
         }
-        // pulso fica um pouco atrás, por baixo e do lado esquerdo do ponto onde a palma segura
-        glm::vec3 grip = c.support + glm::vec3(0.03f, -0.045f, -0.05f) * (c.height / 1.75f);
-        glm::vec3 t = glm::vec3(glm::inverse(space) * w->transform.world() * glm::vec4(grip, 1.f));
-        glm::vec3 now = glm::vec3(a->global[ha][3]);
-        twoBoneIK(*a, up, fo, ha, glm::mix(now, t, c.supportW));
+        glm::mat4 toSkel = glm::inverse(space);
+        if (c.adsW > 0.f && head >= 0) {  // cabeça na coronha: o olho direito vai para trás da alça de mira
+            glm::vec3 hp = world(head);
+            glm::vec3 eye = hp + (upW * 0.075f + fwd * 0.085f - left * 0.032f) * scale;
+            glm::vec3 sightW = w->transform.position + w->transform.rotation * c.sight;
+            glm::vec3 want = sightW - d * (0.075f * scale) + upW * (0.012f * scale);
+            glm::vec3 pivot = glm::vec3(toSkel * glm::vec4(hp, 1.f));
+            glm::vec3 from = glm::normalize(glm::vec3(toSkel * glm::vec4(eye - hp, 0.f)));
+            glm::vec3 to = glm::normalize(glm::vec3(toSkel * glm::vec4(want - hp, 0.f)));
+            glm::quat r = glm::rotation(from, to);
+            float ang = glm::angle(r);
+            const float maxAng = glm::radians(28.f);
+            if (ang > maxAng) r = glm::slerp(glm::quat(1.f, 0.f, 0.f, 0.f), r, maxAng / ang);
+            r = glm::slerp(glm::quat(1.f, 0.f, 0.f, 0.f), r, c.adsW * c.supportW);
+            rotateJointSubtree(*a, head, r, pivot);
+        }
+        // eixos da arma no esqueleto: frente (cano), cima e esquerda
+        glm::vec3 wf = glm::normalize(glm::vec3(toSkel * glm::vec4(w->transform.rotation * glm::vec3(0, 0, 1), 0.f)));
+        glm::vec3 wu = glm::normalize(glm::vec3(toSkel * glm::vec4(w->transform.rotation * glm::vec3(0, 1, 0), 0.f)));
+        glm::vec3 wl = glm::normalize(glm::cross(wu, wf));
+        auto onGun = [&](glm::vec3 local) { return glm::vec3(toSkel * w->transform.world() * glm::vec4(local, 1.f)); };
+        if (rup >= 0) {  // mão direita no cabo: palma do lado direito do cabo, dedos dando a volta pela frente
+            glm::vec3 g = onGun(c.gripPt);
+            glm::vec3 wristR = g - wf * (0.06f * scale) - wl * (0.035f * scale) + wu * (0.03f * scale);
+            glm::vec3 nowR = glm::vec3(a->global[rha][3]);
+            glm::vec3 poleR = glm::vec3(toSkel * glm::vec4(-upW - left * 0.55f - fwd * 0.1f, 0.f));  // cotovelo direito para baixo e para fora
+            twoBoneIK(*a, rup, rfo, rha, glm::mix(nowR, wristR, c.supportW), poleR);
+            glm::vec3 gripAxis = glm::normalize(-wu + wf * 0.3f);
+            const float cr = -0.45f;  // dedos fechando em volta do cabo
+            poseHand(*a, rha, false, glm::normalize(wf * 0.8f + wl * 0.35f - wu * 0.35f), glm::normalize(wu + wl * 0.4f), gripAxis, cr, c.supportW);
+        }
+        // mão esquerda no guarda-mão: palma por baixo, dedos subindo pelo lado direito, polegar pelo lado esquerdo
+        {
+            glm::vec3 h = onGun(c.guardPt);
+            glm::vec3 wristL = h - wu * (0.06f * scale) + wl * (0.03f * scale) - wf * (0.05f * scale);
+            glm::vec3 nowL = glm::vec3(a->global[ha][3]);
+            glm::vec3 poleL = glm::vec3(toSkel * glm::vec4(-upW + left * 0.35f, 0.f));  // cotovelo esquerdo por baixo da arma
+            twoBoneIK(*a, up, fo, ha, glm::mix(nowL, wristL, c.supportW), poleL);
+            const float cl = -0.4f;   // dedos subindo pelo lado do guarda-mão
+            poseHand(*a, ha, true, glm::normalize(wf * 0.5f - wl * 0.6f + wu * 0.25f), glm::normalize(wf + wu * 0.5f), wf, cl, c.supportW);
+        }
     }
 }
 
@@ -970,6 +1075,7 @@ bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bo
             }
             if (aiming && hs < 0.4f && c.fireAnim > 0.f) clip = CC_RifleFire;
             if (c.reloadTimer > 0.f && hs < 4.f) clip = CC_Reload;
+            if (c.crouch && c.reloadTimer <= 0.f) clip = CC_CrouchWalk;  // agachado: parado, andando e mirando
         }
         bool airborne = !grounded && std::abs(float(vel.y())) > 1.5f;
         if (airborne) clip = CC_Jump;
@@ -977,7 +1083,8 @@ bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bo
         if (mapped < 0 && clip >= CC_Death) mapped = c.clipMap[base >= 0 ? base + AP_Aim : CC_Idle];  // modelo sem essa animação
         if ((grounded || airborne) && mapped >= 0 && c.anim->clipIndex != mapped) c.anim->setClip(mapped);
         c.anim->loop = true;
-        c.anim->speed = clip == CC_Reload ? 1.4f : clip == CC_Jump || clip == CC_RifleFire ? 1.f
+        c.anim->speed = clip == CC_CrouchWalk ? (hs < 0.3f ? 0.f : std::clamp(hs / 1.6f, 0.6f, 1.4f))
+                      : clip == CC_Reload ? 1.4f : clip == CC_Jump || clip == CC_RifleFire ? 1.f
                       : hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
     }
     return grounded;
@@ -1007,7 +1114,8 @@ void updatePlayer(Engine* e, float dt) {
     glm::vec3 move = alive ? right * e->moveInput.x + fwd * e->moveInput.y : glm::vec3(0.f);
     c.aimHold = alive && e->aimInput && c.weaponKind >= 0;
     glm::vec3 face = c.aimHold || c.aimTimer > 0.f ? fwd : glm::vec3(0.f);
-    float speed = e->runInput && !c.aimHold ? 6.5f : 2.6f;  // mirando: anda devagar
+    c.crouch = alive && e->crouchInput && c.weaponKind >= 0 && c.weaponKind != WK_Pistol;
+    float speed = c.crouch ? 1.6f : e->runInput && !c.aimHold ? 6.5f : 2.6f;  // mirando: anda devagar; agachado mais ainda
     driveCharacter(e, c, move, speed, alive && e->jumpRequest, dt, face);
     e->jumpRequest = false;
 

@@ -241,7 +241,7 @@ void engine_set_play(Engine* e, int playing) {
         e->gizmo.onTouchUp();
         e->savedCam = {e->editorCam.target, e->editorCam.yaw, e->editorCam.pitch, e->editorCam.distance};
         e->moveInput = glm::vec2(0.f);
-        e->runInput = e->jumpRequest = e->fireRequest = false;
+        e->runInput = e->jumpRequest = e->fireRequest = e->crouchInput = false;
         e->playing = true;  // a lógica de jogo só cria/danifica com o Play ligado
         e->playStartHour = e->timeOfDay;
         eng::weatherStart(e);
@@ -699,6 +699,7 @@ void engine_player_input(Engine* e, float x, float y, int run) {
     e->runInput = run != 0;
 }
 void engine_player_jump(Engine* e) { if (e) e->jumpRequest = true; }
+void engine_player_crouch(Engine* e, int on) { if (e) e->crouchInput = on != 0; }
 void engine_player_fire(Engine* e) { if (e) e->fireRequest = true; }
 int engine_player_weapon(Engine* e) { return engine_has_player(e) ? e->characters[e->player].weaponKind : -1; }
 

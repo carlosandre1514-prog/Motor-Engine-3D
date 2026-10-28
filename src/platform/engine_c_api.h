@@ -132,6 +132,7 @@ void    engine_player_input(Engine*, float x, float y, int run); // joystick -1.
 const char* engine_poll_sounds(Engine*);                        // sons pedidos: "nome\tvolume\tpan" por linha (e limpa a fila)
 void    engine_get_weather(Engine*, float* out3);               // chuva 0..1, noite 0..1, hora
 void    engine_player_jump(Engine*);
+void    engine_player_crouch(Engine*, int on);                  // agachar (1) / levantar (0)
 void    engine_player_fire(Engine*);
 int     engine_player_weapon(Engine*);                          // tipo da arma ou -1
 

@@ -48,6 +48,7 @@ struct CharacterInfo {
     glm::vec3 muzzle{0.f};     // ponta do cano no espaço da arma
     float aimTimer = 0.f;      // > 0: mirando/atacando (arma apontada para frente)
     bool aimHold = false;      // botão "Mirar" segurado (jogador)
+    bool crouch = false;       // agachado (anda devagar, mira agachado)
     float fireAnim = 0.f;      // > 0: acabou de atirar (animação de tiro, com coice)
     int ammo = 30;             // balas no pente (fuzil/escopeta/sniper do jogador)
     float reloadTimer = 0.f;   // > 0: recarregando (não atira)
@@ -56,6 +57,11 @@ struct CharacterInfo {
     bool hasSupport = false;
     glm::vec3 support{0.f};
     float supportW = 0.f;
+    // mira com fuzil: alça de mira no espaço da arma; a arma vai para a frente do olho direito e as mãos vão até ela
+    glm::vec3 sight{0.f, 0.08f, 0.1f};
+    glm::vec3 butt{0.f, 0.03f, -0.25f};  // meio da soleira da coronha (vai no bolso do ombro)
+    glm::vec3 gripPt{0.f, -0.04f, 0.f}, guardPt{0.f, 0.01f, 0.25f};  // centro do cabo e do guarda-mão (espaço da arma)
+    float adsW = 0.f;
 };
 // Animação de morte (não repete); sem ela, congela parado
 void playDeath(CharacterInfo& c);
@@ -278,7 +284,7 @@ struct Engine {
     // Jogador
     int player = -1;                 // índice em characters
     glm::vec2 moveInput{0.f};
-    bool runInput = false, jumpRequest = false, fireRequest = false, aimInput = false;
+    bool runInput = false, jumpRequest = false, fireRequest = false, aimInput = false, crouchInput = false;
     float fireCooldown = 0.f;
     Tracer tracers[16];
     struct CamState { glm::vec3 target; float yaw, pitch, distance; } savedCam{};

@@ -23,7 +23,7 @@ Backwards_Rifle_Walk.fbx;de_costas_2.anim;-;De costas 2 (fuzil);lugar
 Strafe.fbx;passo_esquerda.anim;-;Passo para a esquerda (fuzil);lugar
 Rifle_Side_Step.fbx;passo_direita.anim;-;Passo para a direita (fuzil);lugar
 run_backwards.fbx;correndo_de_costas.anim;-;Correndo de costas (fuzil);lugar
-Crouch_Walking.fbx;agachado_andando.anim;-;Agachado andando (fuzil);lugar
+Crouch_Walking.fbx;agachado_andando.anim;agachado_andando;Agachado andando (fuzil);lugar
 Rifle_Crouch_Walk_To_Kneel.fbx;agachar_ajoelhar.anim;-;Agachar e ajoelhar (fuzil);lugar
 Rifle_Turn.fbx;virando_fuzil.anim;-;Virando (fuzil);lugar
 Turning.fbx;virando.anim;-;Virando andando;lugar

@@ -9,6 +9,9 @@
 //   --regioes ARQ.png  grava o mapa de regiões (R = região, G = lado: 0 meio, 1 esquerdo, 2 direito)
 //   --posicoes ARQ.png grava onde cada pixel da textura fica no corpo (RGB = x, y, z na caixa do corpo; .txt com a caixa)
 //   --sem-cilios       tira os triângulos que usam a parte transparente da textura (cílios): textura sem alfa, .jpg
+//   --roupa PECAS.png COR.jpg  personagem vestido: a pele que fica à mostra (o corpo coberto sai) e a ROUPA 3D: as partes do corpo marcadas na máscara (R = peça*40:
+//                      1 camisa, 2 calça, 3 bota/tênis, 4 luva, 5 balaclava) viram uma casca afastada do corpo, com a
+//                      borda fechada (espessura nas barras e golas), os mesmos ossos e pesos, e a textura COR.jpg
 //   --cor ARQ          usa esta imagem como cor do corpo (roupa já pintada) em vez da textura do FBX
 #include <ufbx.h>
 #include <algorithm>
@@ -250,6 +253,7 @@ int main(int argc, char** argv) {
     float keep = 0.2f;
     std::string regionsOut, colorOverride, posOut;
     bool noLashes = false;
+    std::string garmentMask, garmentColor;
     for (int i = 3; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--texturas" && i + 1 < argc) texDirs.push_back(argv[++i]);
@@ -259,6 +263,7 @@ int main(int argc, char** argv) {
         else if (a == "--cor" && i + 1 < argc) colorOverride = argv[++i];
         else if (a == "--posicoes" && i + 1 < argc) posOut = argv[++i];
         else if (a == "--sem-cilios") noLashes = true;
+        else if (a == "--roupa" && i + 2 < argc) { garmentMask = argv[++i]; garmentColor = argv[++i]; }
     }
     if (texDirs.empty()) texDirs.push_back(fs::path(argv[1]).parent_path().string());
     auto find = [&](const std::string& file) -> std::string {
@@ -428,6 +433,133 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- roupa 3D: casca afastada do corpo onde a máscara marca uma peça
+    if (!garmentMask.empty()) {
+        Img mask;
+        if (!loadImg(garmentMask, mask)) { std::fprintf(stderr, "não consegui abrir %s\n", garmentMask.c_str()); return 1; }
+        auto clsAt = [&](float u, float v) {
+            int x = std::clamp(int(u * mask.w), 0, mask.w - 1), y = std::clamp(int(v * mask.h), 0, mask.h - 1);
+            return mask.px[(size_t(y) * mask.w + x) * 4] / 40;
+        };
+        // folga de cada peça (m): calça e bota mais largas; luva e balaclava justas
+        const float gap[6] = {0.f, 0.012f, 0.016f, 0.016f, 0.004f, 0.0045f};
+        Prim G;
+        G.mat = nullptr;
+        std::vector<int> triCls;
+        Prim skinP;  // pele à mostra (com o material do corpo)
+        for (auto& [m, P] : prims)
+            for (size_t t = 0; t + 2 < P.idx.size(); t += 3) {
+                const Vtx& a = P.v[P.idx[t]], & b = P.v[P.idx[t + 1]], & c = P.v[P.idx[t + 2]];
+                int k = 0, cnt[6] = {};
+                for (const Vtx* q : {&a, &b, &c}) { int cc = clsAt(q->uv[0], q->uv[1]); if (cc > 0 && cc < 6) ++cnt[cc]; }
+                int cc = clsAt((a.uv[0] + b.uv[0] + c.uv[0]) / 3.f, (a.uv[1] + b.uv[1] + c.uv[1]) / 3.f);
+                if (cc > 0 && cc < 6) ++cnt[cc];
+                for (int q = 1; q < 6; ++q) if (cnt[q] >= 2 && cnt[q] > cnt[k]) k = q;
+                int covered = 0;
+                for (int q = 1; q < 6; ++q) covered += cnt[q];
+                if (covered < 4) {  // pele (ou só um pedaço coberto): o corpo fica
+                    skinP.mat = m;
+                    for (const Vtx* q : {&a, &b, &c}) { skinP.idx.push_back(uint32_t(skinP.v.size())); skinP.v.push_back(*q); }
+                }
+                if (!k) continue;
+                for (const Vtx* q : {&a, &b, &c}) { G.idx.push_back(uint32_t(G.v.size())); G.v.push_back(*q); }
+                triCls.push_back(k);
+            }
+        // normal suave por posição (os vértices repetidos nas costuras de UV andam juntos: sem rachar a casca)
+        auto key = [](const float* p) { return std::make_tuple(std::lround(p[0] * 2e4), std::lround(p[1] * 2e4), std::lround(p[2] * 2e4)); };
+        std::map<std::tuple<long, long, long>, glm::vec3> nsum;
+        for (auto& v : G.v) nsum[key(v.p)] += glm::make_vec3(v.n);
+        std::vector<Vtx> base = G.v;  // na pele (para fechar as bordas)
+        for (size_t i = 0; i < G.v.size(); ++i) {
+            glm::vec3 n = glm::normalize(nsum[key(G.v[i].p)]);
+            float g = gap[triCls[i / 3]];
+            for (int a3 = 0; a3 < 3; ++a3) { G.v[i].p[a3] += n[a3] * g; G.v[i].n[a3] = n[a3]; }
+        }
+        // tecido não marca músculo: alisa a casca (média dos vizinhos), sem deixar entrar no corpo
+        {
+            std::map<std::tuple<long, long, long>, int> node;
+            std::vector<int> nodeOf(G.v.size());
+            std::vector<glm::vec3> np, nb, nn;
+            std::vector<float> ng;
+            for (size_t i = 0; i < G.v.size(); ++i) {
+                auto k = key(base[i].p);
+                auto it = node.find(k);
+                if (it == node.end()) {
+                    it = node.emplace(k, int(np.size())).first;
+                    np.push_back(glm::make_vec3(G.v[i].p)); nb.push_back(glm::make_vec3(base[i].p)); nn.push_back(glm::make_vec3(G.v[i].n));
+                    ng.push_back(gap[triCls[i / 3]]);
+                }
+                nodeOf[i] = it->second;
+                ng[it->second] = std::max(ng[it->second], gap[triCls[i / 3]]);
+            }
+            std::vector<std::set<int>> nbr(np.size());
+            for (size_t t = 0; t < G.idx.size() / 3; ++t)
+                for (int e = 0; e < 3; ++e) {
+                    int a = nodeOf[t * 3 + e], b = nodeOf[t * 3 + (e + 1) % 3];
+                    if (a != b) { nbr[a].insert(b); nbr[b].insert(a); }
+                }
+            for (int it = 0; it < 8; ++it) {
+                std::vector<glm::vec3> nx = np;
+                for (size_t i = 0; i < np.size(); ++i) {
+                    if (nbr[i].empty()) continue;
+                    glm::vec3 avg(0.f);
+                    for (int j : nbr[i]) avg += np[j];
+                    avg /= float(nbr[i].size());
+                    glm::vec3 q = glm::mix(np[i], avg, 0.6f);
+                    float out = glm::dot(q - nb[i], nn[i]);  // não entra no corpo (folga mínima de 60%)
+                    if (out < ng[i] * 0.6f) q += nn[i] * (ng[i] * 0.6f - out);
+                    nx[i] = q;
+                }
+                np.swap(nx);
+            }
+            for (size_t i = 0; i < G.v.size(); ++i) for (int a3 = 0; a3 < 3; ++a3) G.v[i].p[a3] = np[nodeOf[i]][a3];
+            // normais de novo pela casca alisada
+            std::map<std::tuple<long, long, long>, glm::vec3> ns;
+            for (size_t t = 0; t < G.idx.size() / 3; ++t) {
+                glm::vec3 p0 = glm::make_vec3(G.v[t * 3].p), p1 = glm::make_vec3(G.v[t * 3 + 1].p), p2 = glm::make_vec3(G.v[t * 3 + 2].p);
+                glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
+                for (int c3 = 0; c3 < 3; ++c3) ns[key(base[t * 3 + c3].p)] += fn;
+            }
+            for (size_t i = 0; i < G.v.size(); ++i) {
+                glm::vec3 n = ns[key(base[i].p)];
+                if (glm::length(n) > 1e-12f) { n = glm::normalize(n); G.v[i].n[0] = n.x; G.v[i].n[1] = n.y; G.v[i].n[2] = n.z; }
+            }
+        }
+        // borda de cada peça: aresta que só um triângulo daquela peça usa -> faixa até a pele (espessura)
+        std::map<std::tuple<long, long, long, long, long, long, int>, int> edgeUse;
+        auto ekey = [&](size_t i, size_t j, int k) {
+            auto a = key(base[i].p), b = key(base[j].p);
+            if (b < a) std::swap(a, b);
+            return std::make_tuple(std::get<0>(a), std::get<1>(a), std::get<2>(a), std::get<0>(b), std::get<1>(b), std::get<2>(b), k);
+        };
+        size_t tris = G.idx.size() / 3;
+        for (size_t t = 0; t < tris; ++t)
+            for (int e = 0; e < 3; ++e) ++edgeUse[ekey(t * 3 + e, t * 3 + (e + 1) % 3, triCls[t])];
+        size_t rims = 0;
+        for (size_t t = 0; t < tris; ++t)
+            for (int e = 0; e < 3; ++e) {
+                size_t i = t * 3 + e, j = t * 3 + (e + 1) % 3;
+                if (edgeUse[ekey(i, j, triCls[t])] != 1) continue;
+                Vtx o0 = G.v[i], o1 = G.v[j], b0 = base[i], b1 = base[j];
+                // entra 2 mm na pele para não abrir fresta quando o corpo dobra
+                for (int a3 = 0; a3 < 3; ++a3) { b0.p[a3] -= b0.n[a3] * 0.002f; b1.p[a3] -= b1.n[a3] * 0.002f; }
+                b0.n[0] = o0.n[0]; b0.n[1] = o0.n[1]; b0.n[2] = o0.n[2];
+                b1.n[0] = o1.n[0]; b1.n[1] = o1.n[1]; b1.n[2] = o1.n[2];
+                uint32_t s0 = uint32_t(G.v.size());
+                G.v.push_back(o0); G.v.push_back(o1); G.v.push_back(b1); G.v.push_back(b0);
+                for (uint32_t q : {0u, 2u, 1u, 0u, 3u, 2u}) G.idx.push_back(s0 + q);
+                ++rims;
+            }
+        std::printf("  roupa: %zu triângulos de peça, %zu de borda\n", tris, rims * 2);
+        std::printf("  pele à mostra: %zu triângulos\n", skinP.idx.size() / 3);
+        const ufbx_material* skinMat = skinP.mat;
+        prims.clear();
+        prims[nullptr] = std::move(G);
+        if (!skinP.idx.empty()) prims[skinMat] = std::move(skinP);
+        colorOverride = garmentColor;  // a pele também usa a textura do visual (tatuagens, barba)
+        keep = 1.f;
+    }
+
     // ---- junta vértices iguais e reduz a malha (as costuras de UV ficam presas: sem rachaduras)
     size_t trisOut = 0;
     for (auto& [m, P] : prims) {
@@ -534,8 +666,9 @@ int main(int argc, char** argv) {
                 if (k != std::string::npos) { guess.replace(k, 8, "_Opacity"); if (fs::exists(guess)) opacity = guess; }
             }
         }
-        if (!colorOverride.empty()) albedo = colorOverride;
-        json m = {{"name", mat ? mat->name.data : "corpo"}, {"pbrMetallicRoughness", {{"metallicFactor", 0.f}, {"roughnessFactor", 0.7f}}}};
+        if (!colorOverride.empty()) { albedo = colorOverride; if (!garmentMask.empty() && !mat) normal.clear(); }
+        json m = {{"name", mat ? (garmentMask.empty() ? mat->name.data : "pele") : garmentMask.empty() ? "corpo" : "roupa"}, {"pbrMetallicRoughness", {{"metallicFactor", 0.f}, {"roughnessFactor", garmentMask.empty() || mat ? 0.7f : 0.9f}}}};
+        if (!garmentMask.empty() && !mat) m["doubleSided"] = true;
         Img im, op;
         bool cut = false;
         if (!albedo.empty() && loadImg(albedo, im)) {
