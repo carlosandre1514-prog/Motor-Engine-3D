@@ -568,13 +568,19 @@ class MainActivity : Activity() {
     }
 
     private fun weaponMenu() {
-        val items = arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco", "🔫 M4A1 (modelo realista)",
+        val items = arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco", "🔫 Armas realistas (M4A1, M4 Colt, AK-47, AK-74…)",
                             "📂 Arma de um arquivo 3D (.glb, .fbx, .obj)…", "🔧 Ajustar a arma atual (acessórios, virar, tamanho)…",
                             "ℹ Créditos dos modelos")
         dialog().setTitle("Arma (vai para a mão do personagem selecionado)").setItems(items) { _, k ->
             when {
                 k < 6 -> accessoriesDialog(WeaponChoice(k, "", false, 1f, 0)) { equipWeapon(it) }
-                k == 6 -> accessoriesDialog(WeaponChoice(1, "kit:armas/m4a1", false, 1f, 0)) { equipWeapon(it) }
+                k == 6 -> {
+                    val real = arrayOf("M4A1" to "kit:armas/m4a1", "M4 Colt (com mira holográfica)" to "kit:armas/m4colt",
+                                       "AK-47" to "kit:armas/ak47", "AK-74 (madeira)" to "kit:armas/ak74", "AK-74 tática" to "kit:armas/ak74_tatica")
+                    list("Armas realistas (fuzil)", real.map { it.first }.toTypedArray()) { r ->
+                        accessoriesDialog(WeaponChoice(1, real[r].second, false, 1f, 0)) { equipWeapon(it) }
+                    }
+                }
                 k == 7 -> list("Que tipo de arma é? (define a pose, o tamanho e o dano)", weaponKinds) { t ->
                     pendingWeaponKind = t
                     pickFile(REQ_WEAPON)

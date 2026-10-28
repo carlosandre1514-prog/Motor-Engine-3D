@@ -7,6 +7,10 @@ M4A1 (arma realista)
   Uso comercial permitido, com crédito ao autor.
   Alterações: só uma das armas da cena, deitada para o jogo, texturas reduzidas para 1024 px.
 
+AK-47, M4 Colt e AK-74 (madeira e tática)
+  Modelos baixados do CGTrader pelo dono do projeto (autores e licenças a confirmar e completar aqui).
+  Alterações: só as malhas de uma arma montada, texturas reduzidas para 1024 px (tools/fbx_para_glb).
+
 Acessórios de arma (mira red dot, trilho, coronha tática, empunhadura frontal) — arquivo "Low.fbx"
   Autor: a confirmar (pacote gratuito enviado pelo dono do projeto).
 

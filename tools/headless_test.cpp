@@ -395,6 +395,26 @@ int main(int argc, char** argv) {
         engine_set_camera(e, 0.f, 0.7f, 0.15f, 1.5707963f, 0.05f, 1.6f);
         frames(e, 3);
         save(out, "25_lado.png");
+        // armas prontas do app, lado a lado (cano para a esquerda da imagem)
+        engine_new_scene(e);
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, 0.f, 3.f);
+        frames(e, 1);
+        const char* prontas[] = {"kit:armas/m4a1", "kit:armas/m4colt", "kit:armas/ak47", "kit:armas/ak74", "kit:armas/ak74_tatica"};
+        for (int k = 0; k < 5; ++k) {
+            int w = engine_create_weapon_ex(e, 1, prontas[k], 0, 1.f, 0);
+            if (w < 0) { std::printf("  [ERRO] %s: %s\n", prontas[k], engine_last_error(e)); ++g_fail; continue; }
+            float p[3], rr[3], ss[3];
+            engine_get_transform(e, w, p, rr, ss);
+            p[0] = 0.f; p[1] = 1.3f - k * 0.28f; p[2] = 0.f; rr[0] = rr[1] = rr[2] = 0.f;
+            engine_set_transform(e, w, p, rr, ss);
+        }
+        engine_select(e, -1);
+        engine_set_camera(e, 0.f, 0.75f, 0.1f, 1.5707963f, 0.05f, 2.1f);
+        frames(e, 3);
+        save(out, "25_prontas.png");
+        engine_set_camera(e, 0.f, 0.75f, 0.1f, 1.2f, 0.12f, 0.75f);
+        frames(e, 3);
+        save(out, "25_prontas_perto.png");
     };
     // Play direto do globo (como no celular): o jogador tem que estar em terra, com céu de dia
     auto globePlay = [&]() {
