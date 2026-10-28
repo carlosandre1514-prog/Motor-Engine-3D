@@ -50,6 +50,10 @@ struct CharacterInfo {
     int ammo = 30;             // balas no pente (fuzil/escopeta/sniper do jogador)
     float reloadTimer = 0.f;   // > 0: recarregando (não atira)
     bool dying = false;        // tocando a animação de morte
+    // mão esquerda na arma (armas longas): ponto do guarda-mão no espaço da arma e peso do IK (0..1)
+    bool hasSupport = false;
+    glm::vec3 support{0.f};
+    float supportW = 0.f;
 };
 // Animação de morte (não repete); sem ela, congela parado
 void playDeath(CharacterInfo& c);
@@ -323,6 +327,8 @@ int makeCharacterFromModel(Engine* e, bool controllable);
 void setPlayer(Engine* e, int character);
 void updatePlayer(Engine* e, float dt);
 void updateAttachments(Engine* e);
+// Mão esquerda segura o guarda-mão das armas longas (IK de dois ossos depois da animação)
+void updateSupportHands(Engine* e, float dt);
 void updateDoors(Engine* e, float dt);                 // abre/fecha portas perto de personagens
 std::string interactLabel(Engine* e, int* which = nullptr);  // botão de interação do jogador ("" = nenhum)
 bool interact(Engine* e);

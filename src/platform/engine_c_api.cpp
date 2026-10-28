@@ -120,6 +120,7 @@ void engine_frame(Engine* e, float dt) {
     e->editorCam.apply(e->camera);
     e->scene.updateTransforms();
     eng::updateAttachments(e);
+    eng::updateSupportHands(e, dt);
 
     auto ts = std::chrono::steady_clock::now();
     e->renderer.beginFrame(e->camera, sun);

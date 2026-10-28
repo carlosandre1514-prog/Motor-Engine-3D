@@ -538,6 +538,29 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (std::getenv("SO_GLOBO_PLAY")) { globePlay(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
+    // mão esquerda na arma: personagem com a M4A1 nas animações de fuzil, de perto (lado e frente)
+    auto supportHand = [&]() {
+        std::printf("[27] mão esquerda na arma\n");
+        engine_new_scene(e);
+        int ch = engine_create_random_character(e, 3, 1);
+        engine_select(e, ch);
+        engine_create_weapon_ex(e, 1, "kit:armas/m4a1", 0, 1.f, 0);
+        engine_select(e, ch);
+        engine_set_anim_preview(e, 1);
+        const int clips[] = {5, 6, 7, 8, 9, 22, 23, 24, 25};
+        for (int k = 0; k < 9; ++k) {
+            engine_set_animation(e, clips[k]);
+            frames(e, 12);
+            for (int v = 0; v < 2; ++v) {
+                engine_set_camera(e, 0.25f, 1.25f, 0.2f, v ? -0.6f : 0.6f, 0.25f, 1.9f);
+                frames(e, 1, 0.f);
+                char fn[64];
+                std::snprintf(fn, sizeof(fn), "27_mao_%02d_%d.png", clips[k], v);
+                save(out, fn);
+            }
+        }
+    };
+    if (std::getenv("SO_MAO")) { supportHand(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ARMAS")) { weapons(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_DESEMPENHO")) { perf(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_KIT")) { kit(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
@@ -1200,6 +1223,7 @@ int main(int argc, char** argv) {
     globePlay();
     kit();
     weapons();
+    supportHand();
 
     engine_destroy(e);
     check("destroy");
