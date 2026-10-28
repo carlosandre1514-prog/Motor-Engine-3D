@@ -495,7 +495,8 @@ int main(int argc, char** argv) {
             f.push_back(l.substr(a));
             if (f.size() < 5) continue;
             int mode = f[4] == "lugar" ? 1 : f[4] == "pose" ? 2 : 0;
-            int n = engine_mocap_bake((base + f[0]).c_str(), (outDir + "/" + f[1]).c_str(), mode, f[3].c_str());
+            float down = f.size() >= 6 && f[5].rfind("abaixar=", 0) == 0 ? float(std::atof(f[5].c_str() + 8)) : 0.f;
+            int n = engine_mocap_bake((base + f[0]).c_str(), (outDir + "/" + f[1]).c_str(), mode, f[3].c_str(), down);
             std::printf("  %-34s %-24s %s %4d quadros\n", f[0].c_str(), f[2].c_str(), n ? "ok" : "ERRO", n);
             if (!n) { ++g_fail; continue; }
             std::fprintf(lib, "%s;%s;%s;%d\n", f[1].c_str(), f[2].c_str(), f[3].c_str(), mode == 1 ? 1 : 0);
@@ -542,19 +543,31 @@ int main(int argc, char** argv) {
     auto supportHand = [&]() {
         std::printf("[27] mão esquerda na arma\n");
         engine_new_scene(e);
-        int ch = engine_create_random_character(e, 3, 1);
+        int ch = -1;
+        if (std::getenv("SOLDADO")) {  // personagem pronto do app (modelo importado, animações do motor por retarget)
+            int id = engine_load_model(e, std::getenv("SOLDADO_ARQ") ? std::getenv("SOLDADO_ARQ") : "kit:personagens/soldado");
+            engine_select(e, id);
+            ch = engine_make_character(e, 1);
+            if (ch < 0) { std::printf("  [ERRO] soldado: %s\n", engine_last_error(e)); ++g_fail; return; }
+            float sp[3], sr[3], ss[3];
+            engine_get_transform(e, ch, sp, sr, ss);
+            std::printf("  soldado em %.2f %.2f %.2f\n", sp[0], sp[1], sp[2]);
+            sp[0] = sp[2] = 0.f; sp[1] = 0.f; sr[0] = sr[1] = sr[2] = 0.f;
+            engine_set_transform(e, ch, sp, sr, ss);
+        } else ch = engine_create_random_character(e, 3, 1);
         engine_select(e, ch);
         const char* arma = std::getenv("ARMA_TESTE") ? std::getenv("ARMA_TESTE") : "kit:armas/m4a1";
-        if (!std::getenv("SEM_ARMA")) engine_create_weapon_ex(e, 1, arma, 0, 1.f, 0);
+        if (!std::getenv("SEM_ARMA")) engine_create_weapon_ex(e, std::getenv("PISTOLA") ? 0 : 1, std::getenv("PISTOLA") ? "" : arma, 0, 1.f, 0);
         engine_select(e, ch);
         engine_set_anim_preview(e, 1);
         std::vector<int> clips = {5, 6, 7, 8, 9, 22, 23, 24, 25};
+        if (std::getenv("PISTOLA")) clips = {10, 11, 12, 13, 14};
         if (std::getenv("TODAS_ANIMS")) { clips.clear(); for (int k = 0; k < 48; ++k) clips.push_back(k); }
         for (size_t k = 0; k < clips.size(); ++k) {
             engine_set_animation(e, clips[k]);
             frames(e, 12);
             for (int v = 0; v < 2; ++v) {
-                engine_set_camera(e, 0.f, 1.15f, 0.f, std::getenv("FRENTE") ? (v ? 3.14159f : 0.f) : (v ? -1.5707963f : 1.5707963f), 0.12f, 2.f);
+                engine_set_camera(e, 0.f, 1.15f, 0.f, std::getenv("FRENTE") ? (v ? 3.14159f : 0.f) : (v ? -1.5707963f : 1.5707963f), 0.12f, std::getenv("LONGE") ? 8.f : 2.f);
                 frames(e, 1, 0.f);
                 char fn[64];
                 std::snprintf(fn, sizeof(fn), "27_mao_%02d_%d.png", clips[k], v);

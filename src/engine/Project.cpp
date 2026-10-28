@@ -75,6 +75,18 @@ int weaponOf(const std::string& s) {
                       {"metralhadora", WK_Rifle}, {"escopeta", WK_Shotgun}, {"sniper", WK_Sniper}, {"faca", WK_Knife},
                       {"taco", WK_Bat}, {"bastao", WK_Bat}});
 }
+// Armas realistas do app (fuzis com textura): nome -> arquivo do kit. Vazio = não é uma delas.
+std::string realWeaponFile(const std::string& s) {
+    std::string n = norm(s);
+    n.erase(std::remove(n.begin(), n.end(), '_'), n.end());
+    if (n.find("ak74tat") != std::string::npos) return "kit:armas/ak74_tatica";
+    if (n.find("ak74") != std::string::npos) return "kit:armas/ak74";
+    if (n.find("ak47") != std::string::npos || n == "ak") return "kit:armas/ak47";
+    if (n.find("m4colt") != std::string::npos || n.find("colt") != std::string::npos) return "kit:armas/m4colt";
+    if (n.find("m4") != std::string::npos) return "kit:armas/m4a1";
+    return {};
+}
+
 const char* weaponKey(int k) {
     static const char* n[] = {"pistola", "fuzil", "escopeta", "sniper", "faca", "taco"};
     return k >= 0 && k < WK_Count ? n[k] : "";
@@ -592,15 +604,21 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         if (!controllable && e->player == ci) e->player = prevPlayer;  // só vira jogador se pedido (ou se não há outro)
         if (!controllable && prevPlayer < 0 && !enemy) e->player = ci;
         if (auto it = spec.find("arma"); it != spec.end() && it->is_string() && !it->get<std::string>().empty()) {
-            int wk = weaponOf(it->get<std::string>());
-            if (wk >= 0 && createWeapon(e, wk, ci, weaponLookOf(spec, true)) < 0) e->lastError.clear();  // arquivo sumiu: fica sem arma
+            WeaponLook look = weaponLookOf(spec, true);
+            std::string real = realWeaponFile(it->get<std::string>());
+            int wk = real.empty() ? weaponOf(it->get<std::string>()) : int(WK_Rifle);
+            if (!real.empty() && look.file.empty()) look.file = real;
+            if (wk >= 0 && createWeapon(e, wk, ci, look) < 0) e->lastError.clear();  // arquivo sumiu: fica sem arma
         }
         spec.erase("jogador");
         return finish(e, e->objects[id], spec, true);
     }
     if (tipo == "arma") {
-        int wk = weaponOf(str(spec, "arma", str(spec, "modelo", "pistola").c_str()));
+        std::string armaName = str(spec, "arma", str(spec, "modelo", "pistola").c_str());
+        std::string real = realWeaponFile(armaName);
+        int wk = real.empty() ? weaponOf(armaName) : int(WK_Rifle);
         if (wk < 0) return fail("arma desconhecida");
+        if (!real.empty() && !spec.contains("arquivo")) spec["arquivo"] = real;
         if (auto it = spec.find("portador"); it != spec.end() && it->is_number()) {  // equipa num personagem
             GameObject* owner = objectById(e, it->get<int>());
             int ci = charIndexOf(e, rootOf(e, owner));

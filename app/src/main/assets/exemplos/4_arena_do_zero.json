@@ -39,7 +39,7 @@
    "tipo": "chao"
   },
   {
-   "arma": "escopeta",
+   "arma": "m4colt",
    "jogador": true,
    "nome": "Jogador",
    "pos": [
@@ -342,7 +342,7 @@
    "tipo": "forma"
   },
   {
-   "arma": "pistola",
+   "arma": "ak74",
    "nome": "Personagem 2",
    "pos": [
     0.0,

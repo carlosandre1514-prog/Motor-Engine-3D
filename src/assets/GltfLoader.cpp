@@ -365,9 +365,13 @@ bool loadGltf(const char* path, LoadContext& ctx, LoadedModel& out) {
 
     Animator* modelAnim = nullptr;
     if (!out.skeletons.empty()) {
-        // glTF: as matrizes de bind estão no espaço do arquivo; guarda a conversão para o espaço do esqueleto
+        // glTF: as matrizes de bind estão no espaço da malha com skin; guarda a conversão para o espaço do esqueleto.
+        // (a malha pode estar na raiz ou dentro do mesmo nó do esqueleto, ex.: "Character" do Blender com escala 0,01)
         root->transform.updateWorld(glm::mat4(1.f), true);
-        if (spaceNode >= 0) out.skeletons[0].bindToSkel = glm::inverse(scene.get(nodeObj[spaceNode])->transform.world());
+        glm::mat4 meshWorld = root->transform.world();
+        for (size_t ni = 0; ni < model.nodes.size(); ++ni)
+            if (model.nodes[ni].skin >= 0 && model.nodes[ni].mesh >= 0) { meshWorld = scene.get(nodeObj[ni])->transform.world(); break; }
+        if (spaceNode >= 0) out.skeletons[0].bindToSkel = glm::inverse(scene.get(nodeObj[spaceNode])->transform.world()) * meshWorld;
         auto ah = ctx.animators.acquire();
         modelAnim = ctx.animators.get(ah);
         if (modelAnim) {

@@ -542,7 +542,7 @@ class MainActivity : Activity() {
     private data class WeaponChoice(val kind: Int, val file: String, val flip: Boolean, val size: Float, val acc: Int)
     private var lastWeapon = WeaponChoice(1, "", false, 1f, 0)
     private var pendingWeaponKind = 1
-    private val weaponKinds = arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco")
+    private val weaponKinds = arrayOf("Pistola / revólver", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco")
     private val accessoryNames = arrayOf("🔴 Mira red dot (com trilho)", "🪖 Coronha tática", "✊ Empunhadura frontal")
 
     private fun equipWeapon(w: WeaponChoice) {
@@ -567,25 +567,22 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancelar", null).show()
     }
 
+    // Armas do app (modelos realistas com textura) — só o nome na lista
+    private val realWeapons = arrayOf("M4A1" to "kit:armas/m4a1", "M4 Colt" to "kit:armas/m4colt", "AK-47" to "kit:armas/ak47",
+                                      "AK-74" to "kit:armas/ak74", "AK-74 tática" to "kit:armas/ak74_tatica")
+
     private fun weaponMenu() {
-        val items = arrayOf("Pistola", "Fuzil", "Escopeta", "Sniper", "Faca", "Taco", "🔫 Armas realistas (M4A1, M4 Colt, AK-47, AK-74…)",
-                            "📂 Arma de um arquivo 3D (.glb, .fbx, .obj)…", "🔧 Ajustar a arma atual (acessórios, virar, tamanho)…",
-                            "ℹ Créditos dos modelos")
+        val items = realWeapons.map { it.first }.toTypedArray() +
+            arrayOf("📂 Arma de um arquivo 3D (.glb, .fbx, .obj)…", "🔧 Ajustar a arma atual (acessórios, virar, tamanho)…", "ℹ Créditos dos modelos")
         dialog().setTitle("Arma (vai para a mão do personagem selecionado)").setItems(items) { _, k ->
+            val n = realWeapons.size
             when {
-                k < 6 -> accessoriesDialog(WeaponChoice(k, "", false, 1f, 0)) { equipWeapon(it) }
-                k == 6 -> {
-                    val real = arrayOf("M4A1" to "kit:armas/m4a1", "M4 Colt (com mira holográfica)" to "kit:armas/m4colt",
-                                       "AK-47" to "kit:armas/ak47", "AK-74 (madeira)" to "kit:armas/ak74", "AK-74 tática" to "kit:armas/ak74_tatica")
-                    list("Armas realistas (fuzil)", real.map { it.first }.toTypedArray()) { r ->
-                        accessoriesDialog(WeaponChoice(1, real[r].second, false, 1f, 0)) { equipWeapon(it) }
-                    }
-                }
-                k == 7 -> list("Que tipo de arma é? (define a pose, o tamanho e o dano)", weaponKinds) { t ->
+                k < n -> accessoriesDialog(WeaponChoice(1, realWeapons[k].second, false, 1f, 0)) { equipWeapon(it) }
+                k == n -> list("Que tipo de arma é? (define a pose, o tamanho e o dano)", weaponKinds) { t ->
                     pendingWeaponKind = t
                     pickFile(REQ_WEAPON)
                 }
-                k == 8 -> adjustWeaponDialog()
+                k == n + 1 -> adjustWeaponDialog()
                 else -> creditsDialog()
             }
         }.show()
@@ -649,7 +646,7 @@ class MainActivity : Activity() {
     private fun characterMenu() {
         val items = arrayOf("Aleatório", "Personalizar…", "✏ Editar o personagem selecionado…",
                             "📂 Personagem de um arquivo 3D (.fbx, .glb, .gltf, .obj)…", "Controlar o personagem selecionado no Play",
-                            "Ver / trocar animações…", "Transformar o modelo selecionado em personagem")
+                            "Ver / trocar animações…", "Transformar o modelo selecionado em personagem", "🪖 Soldado (traje tático)")
         dialog().setTitle("Personagem").setItems(items) { _, which ->
             when (which) {
                 0 -> gl { NativeBridge.nativeCreateRandomCharacter(seed(), false) }
@@ -661,6 +658,14 @@ class MainActivity : Activity() {
                     val id = NativeBridge.nativeMakeCharacter(true)
                     val msg = NativeBridge.nativeLastError()
                     toast(if (id < 0) "Não deu: $msg" else if (msg.isNotEmpty()) "Personagem pronto ($msg)" else "Personagem pronto! Aperte ▶ Play")
+                }
+                7 -> gl {  // personagem pronto do app (Vanguard, Mixamo): usa as animações do motor
+                    val id = NativeBridge.nativeLoadModel("kit:personagens/soldado")
+                    if (id < 0) { toast("Não deu: " + NativeBridge.nativeLastError()); return@gl }
+                    NativeBridge.nativeSelect(id)
+                    val cid = NativeBridge.nativeMakeCharacter(true)
+                    toast(if (cid < 0) "Não deu: " + NativeBridge.nativeLastError() else "Soldado pronto! Dê uma arma a ele e aperte ▶ Play")
+                    saveIfChanged()
                 }
                 else -> gl { NativeBridge.nativeSetPlayer(); toast("Esse personagem é o jogador no Play") }
             }
@@ -1103,17 +1108,17 @@ class MainActivity : Activity() {
 
     // ---------------- menu Jogo: regras, inimigos, itens, comportamentos ----------------
     private fun gameMenu() {
-        val items = arrayOf("🎯 Objetivo e regras…", "👾 Inimigo com pistola", "👾 Inimigo com fuzil", "🔪 Inimigo com faca",
+        val items = arrayOf("🎯 Objetivo e regras…", "👾 Inimigo com AK-47", "👾 Inimigo com M4A1", "👾 Inimigo com AK-74",
                             "👊 Inimigo desarmado", "🌀 Portal que cria inimigos", "🪙 Moeda", "💎 Cristal (50 pontos)", "❤ Vida (cura)",
                             "🏁 Ponto de chegada", "🔥 Zona de dano (fogo)", "☠ Zona de veneno", "🛢 Barril explosivo",
                             "📦 Caixa quebrável", "⚙ Comportamento do objeto selecionado…")
         dialog().setTitle("Jogo").setItems(items) { _, which ->
             val spec = when (which) {
-                1 -> "{\"tipo\":\"inimigo\",\"arma\":\"pistola\"}"
-                2 -> "{\"tipo\":\"inimigo\",\"arma\":\"fuzil\",\"dano\":8}"
-                3 -> "{\"tipo\":\"inimigo\",\"arma\":\"faca\",\"dano\":15,\"velocidade\":4}"
+                1 -> "{\"tipo\":\"inimigo\",\"arma\":\"ak47\",\"dano\":8}"
+                2 -> "{\"tipo\":\"inimigo\",\"arma\":\"m4a1\",\"dano\":8}"
+                3 -> "{\"tipo\":\"inimigo\",\"arma\":\"ak74\",\"dano\":8}"
                 4 -> "{\"tipo\":\"inimigo\",\"velocidade\":4}"
-                5 -> "{\"tipo\":\"spawner\",\"maximo\":4,\"total\":8,\"arma_inimigo\":\"pistola\"}"
+                5 -> "{\"tipo\":\"spawner\",\"maximo\":4,\"total\":8,\"arma_inimigo\":\"ak47\"}"
                 6 -> "{\"tipo\":\"coletavel\",\"item\":\"moeda\"}"
                 7 -> "{\"tipo\":\"coletavel\",\"item\":\"cristal\"}"
                 8 -> "{\"tipo\":\"coletavel\",\"item\":\"vida\"}"

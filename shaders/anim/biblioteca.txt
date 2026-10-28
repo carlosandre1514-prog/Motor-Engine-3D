@@ -1,6 +1,8 @@
 # gerado por tools/headless_test (MOCAP_LISTA): arquivo;papel;Nome;loop
 fuzil_parado.anim;fuzil_parado;Parado (fuzil);1
 fuzil_andando.anim;fuzil_andando;Andando (fuzil);1
+pistola_parado.anim;pistola_parado;Parado (pistola);1
+pistola_andando.anim;pistola_andando;Andando (pistola);1
 fuzil_correndo.anim;fuzil_correndo;Correndo (fuzil);1
 fuzil_mirando.anim;fuzil_mirando;Mirando (fuzil);1
 fuzil_andando_mirando.anim;fuzil_andando_mirando;Andando mirando (fuzil);1

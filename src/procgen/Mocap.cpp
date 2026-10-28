@@ -58,7 +58,7 @@ glm::quat alignOne(glm::vec3 a, glm::vec3 b) {
 
 }  // namespace
 
-bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& err) {
+bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& err, float armsDownDeg) {
     const bool inPlace = rootMode != MR_Free;
     ufbx_load_opts opts = {};
     opts.target_axes = ufbx_axes_right_handed_y_up;
@@ -145,6 +145,13 @@ bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& e
     }
     for (int j = 0; j < CJ_Total; ++j) if (!src[j]) A[j] = A[ref.parent[j] >= 0 ? ref.parent[j] : 0];
 
+    // braços (ombros e tudo depois deles) que descem junto
+    bool inArm[CJ_Total] = {};
+    for (int k = 0; k < CJ_Total; ++k) {
+        int j = ref.order[k], p = ref.parent[j];
+        inArm[j] = j == CJ_LUpper || j == CJ_RUpper || (p >= 0 && inArm[p]);
+    }
+    const glm::quat down = glm::angleAxis(glm::radians(armsDownDeg), glm::vec3(1.f, 0.f, 0.f));
     // amostragem a 30 quadros por segundo
     // a tomada com mais curvas (arquivos do Mixamo com personagem trazem uma "Take 001" vazia antes)
     const ufbx_anim_stack* stack = scene->anim_stacks.data[0];
@@ -180,6 +187,7 @@ bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& e
                 gs = rotOf(w);
                 if (j == CJ_Hips) hipsW = glm::vec3(w[3]);
                 G[j] = glm::normalize(gs * glm::inverse(srcRest[j]) * A[j]);
+                if (armsDownDeg != 0.f && inArm[j]) G[j] = glm::normalize(down * G[j]);
             } else {
                 G[j] = p >= 0 ? G[p] : glm::quat(1, 0, 0, 0);  // osso que o arquivo não tem: acompanha o pai
             }

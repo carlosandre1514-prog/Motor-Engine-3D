@@ -465,10 +465,10 @@ const char* engine_animation_name(Engine* e) {
 }
 
 // ---------- estatísticas ----------
-int engine_mocap_bake(const char* fbx, const char* outAnim, int rootMode, const char* name) {
+int engine_mocap_bake(const char* fbx, const char* outAnim, int rootMode, const char* name, float armsDownDeg) {
     eng::MocapClip c;
     std::string err;
-    if (!eng::bakeMocap(fbx, rootMode, c, err)) { std::fprintf(stderr, "%s: %s\n", fbx, err.c_str()); return 0; }
+    if (!eng::bakeMocap(fbx, rootMode, c, err, armsDownDeg)) { std::fprintf(stderr, "%s: %s\n", fbx, err.c_str()); return 0; }
     c.name = name ? name : "";
     return eng::saveMocap(outAnim, c) ? c.frames : 0;
 }

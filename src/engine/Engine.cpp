@@ -601,8 +601,8 @@ int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
         c.weaponKind = kind;
         c.muzzle = muzzle;
         // onde a mão esquerda segura: guarda-mão (ou a empunhadura frontal, se tiver)
-        c.hasSupport = kind == WK_Rifle || kind == WK_Shotgun || kind == WK_Sniper;
-        if (c.hasSupport) {
+        c.hasSupport = kind == WK_Rifle || kind == WK_Shotgun || kind == WK_Sniper || kind == WK_Pistol;
+        if (c.hasSupport && kind != WK_Pistol) {  // pistola: a mão esquerda segura o pulso direito (veja updateSupportHands)
             const float len = wb.max.z - wb.min.z, hgt = wb.max.y - wb.min.y;
             if (look.accessories & ACC_Foregrip)
                 c.support = glm::vec3(0.f, (look.file.empty() ? 0.024f : wb.min.y + hgt * 0.57f) - 0.05f, wb.max.z * 0.55f);
@@ -674,10 +674,16 @@ void updateSupportHands(Engine* e, float dt) {
         GameObject* w = e->scene.get(c.weapon);
         if (!a || !a->skeleton || !w || !c.hasSupport) { c.supportW = 0.f; continue; }
         // só nas animações com as duas mãos na arma (não ao recarregar nem morrendo)
+        // pistola: só correndo e mirando (parado/andando ela fica ao lado da perna, numa mão)
+        const bool pistol = c.weaponKind == WK_Pistol;
         bool armed = false;
-        for (int k : {CC_Rifle + AP_Idle, CC_Rifle + AP_Walk, CC_Rifle + AP_Run, CC_Rifle + AP_Aim, CC_Rifle + AP_AimWalk, int(CC_RifleBack),
-                      int(CC_RifleLeft), int(CC_RifleRight), int(CC_RifleFire), int(CC_Jump)})
-            armed |= c.clipMap[k] >= 0 && a->clipIndex == c.clipMap[k] && !a->posing && !a->preview;
+        if (pistol)
+            for (int k : {CC_Pistol + AP_Run, CC_Pistol + AP_Aim, CC_Pistol + AP_AimWalk})
+                armed |= c.clipMap[k] >= 0 && a->clipIndex == c.clipMap[k] && !a->posing && !a->preview;
+        else
+            for (int k : {CC_Rifle + AP_Idle, CC_Rifle + AP_Walk, CC_Rifle + AP_Run, CC_Rifle + AP_Aim, CC_Rifle + AP_AimWalk, int(CC_RifleBack),
+                          int(CC_RifleLeft), int(CC_RifleRight), int(CC_RifleFire), int(CC_Jump)})
+                armed |= c.clipMap[k] >= 0 && a->clipIndex == c.clipMap[k] && !a->posing && !a->preview;
         bool want = armed && !c.dying && c.reloadTimer <= 0.f;
         c.supportW = want ? std::min(1.f, c.supportW + dt * 6.f) : std::max(0.f, c.supportW - dt * 6.f);
         if (c.supportW <= 0.f) continue;
@@ -699,6 +705,13 @@ void updateSupportHands(Engine* e, float dt) {
         };
         glm::vec3 R = palmOf(rfo, rha), L = palmOf(fo, ha);
         GameObject* body = e->scene.get(c.root);
+        if (pistol) {  // reforço para o coice: a mão esquerda envolve o pulso direito, por baixo e do lado de dentro
+            glm::vec3 lft = body ? body->transform.rotation * glm::vec3(1.f, 0.f, 0.f) : glm::vec3(1.f, 0.f, 0.f);
+            glm::vec3 wr = world(rha) + (lft * 0.04f - glm::vec3(0.f, 0.045f, 0.f)) * (c.height / 1.75f);
+            glm::vec3 now = glm::vec3(a->global[ha][3]);
+            twoBoneIK(*a, up, fo, ha, glm::mix(now, glm::vec3(glm::inverse(space) * glm::vec4(wr, 1.f)), c.supportW));
+            continue;
+        }
         glm::vec3 fwd = body ? body->transform.rotation * glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 0.f, 1.f);
         // Animação com as duas mãos na arma (mãos a ~55 cm, a esquerda à frente): a arma segue a linha das mãos.
         // Animação de carregar com uma mão só (mãos afastadas ou a esquerda atrás): segura em "pronto baixo",

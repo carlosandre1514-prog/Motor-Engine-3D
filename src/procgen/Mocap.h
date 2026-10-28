@@ -30,7 +30,8 @@ enum MocapRoot {
 };
 // Converte a animação (a tomada com mais curvas) de um FBX com ossos no padrão Mixamo ("mixamorig:LeftArm"...)
 // para o esqueleto do motor.
-bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& err);
+// armsDownDeg: abaixa os dois braços (girando nos ombros) — ex.: animação de mirar vira "pronto baixo"
+bool bakeMocap(const char* fbxPath, int rootMode, MocapClip& out, std::string& err, float armsDownDeg = 0.f);
 
 // Arquivo .anim (binário pequeno) com o resultado da conversão
 bool saveMocap(const char* path, const MocapClip& c);

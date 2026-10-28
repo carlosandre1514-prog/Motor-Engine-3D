@@ -25,7 +25,7 @@
  "objetos": [
   {
    "aparencia": "aleatorio",
-   "arma": "pistola",
+   "arma": "m4a1",
    "jogador": true,
    "nome": "Jogador",
    "pos": [
@@ -47,7 +47,7 @@
    "tipo": "objetivo"
   },
   {
-   "arma": "faca",
+   "arma": "ak47",
    "dano": 12,
    "nome": "Personagem 2",
    "pos": [
@@ -60,7 +60,7 @@
    "vida": 50
   },
   {
-   "arma": "faca",
+   "arma": "ak47",
    "dano": 12,
    "nome": "Personagem 3",
    "pos": [
@@ -73,7 +73,7 @@
    "vida": 50
   },
   {
-   "arma": "faca",
+   "arma": "ak47",
    "dano": 12,
    "nome": "Personagem 4",
    "pos": [

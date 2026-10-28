@@ -25,7 +25,7 @@
  "objetos": [
   {
    "aparencia": "aleatorio",
-   "arma": "fuzil",
+   "arma": "ak47",
    "jogador": true,
    "nome": "Jogador",
    "pos": [
@@ -37,7 +37,7 @@
    "tipo": "personagem"
   },
   {
-   "arma_inimigo": "pistola",
+   "arma_inimigo": "ak74",
    "dano": 6,
    "intervalo": 5,
    "maximo": 3,

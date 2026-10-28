@@ -14,6 +14,8 @@ AK-47, M4 Colt e AK-74 (madeira e tática)
 Acessórios de arma (mira red dot, trilho, coronha tática, empunhadura frontal) — arquivo "Low.fbx"
   Autor: a confirmar (pacote gratuito enviado pelo dono do projeto).
 
+Soldado (traje tático): personagem "Vanguard" do Mixamo (Adobe), uso livre em jogos.
+
 Animações de captura de movimento (andar, correr, mirar, atirar, recarregar, morte, pulo...)
   Mixamo (Adobe) — https://www.mixamo.com — uso livre em jogos e projetos, inclusive comerciais.
 
