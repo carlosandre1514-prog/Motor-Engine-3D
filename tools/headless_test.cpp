@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <functional>
+#include <glm/glm.hpp>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -640,6 +642,144 @@ int main(int argc, char** argv) {
         if (p[1] < 2.5f) { std::printf("  [ERRO] não subiu a escada interna\n"); ++g_fail; }
         engine_set_play(e, 0);
     };
+    // Personagem andando no Play guiado por uma direção no mundo (câmera fixa em yaw 0: frente = -Z)
+    auto steer = [&](int ch, int maxFrames, const std::function<glm::vec2(glm::vec3)>& dirOf) {
+        float p[3], r[3], sc[3];
+        for (int k = 0; k < maxFrames; ++k) {
+            engine_get_transform(e, ch, p, r, sc);
+            glm::vec2 d = dirOf(glm::vec3(p[0], p[1], p[2]));
+            if (std::getenv("DEPURAR") && k % 40 == 0) std::printf("    %3d: %.2f %.2f %.2f -> %.2f %.2f\n", k, p[0], p[1], p[2], d.x, d.y);
+            if (glm::length(d) > 1.f) d = glm::normalize(d);
+            engine_set_camera(e, p[0], p[1] + 1.f, p[2], 0.f, 0.3f, 4.f);
+            engine_player_input(e, d.x, -d.y, 0);
+            frames(e, 1);
+        }
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_get_transform(e, ch, p, r, sc);
+        return glm::vec3(p[0], p[1], p[2]);
+    };
+    auto placeChar = [&](int ch, glm::vec3 at) {
+        float p[3], r[3], sc[3];
+        engine_get_transform(e, ch, p, r, sc);
+        p[0] = at.x; p[1] = at.y; p[2] = at.z;
+        engine_set_transform(e, ch, p, r, sc);
+    };
+
+    // Escadas em L, em U e caracol: vistas de cima (sem laje) e o personagem subindo até a laje
+    auto stairs = [&]() {
+        std::printf("[29] escadas reta, em L, em U e caracol\n");
+        engine_new_scene(e);
+        const char* kinds[] = {"reta", "l", "u", "caracol"};
+        for (int k = 0; k < 4; ++k) {
+            char spec[256];
+            std::snprintf(spec, sizeof(spec), R"({"tipo":"modulo","pos":[%d,0,0],"largura":5,"profundidade":5,"paredes":["porta","lisa","lisa","lisa"],"escada":"%s","laje":false})", k * 7, kinds[k]);
+            engine_add_spec(e, spec);
+            std::snprintf(spec, sizeof(spec), R"({"tipo":"modulo","pos":[%d,0,9],"largura":5,"profundidade":5,"paredes":["porta","lisa","lisa","lisa"],"escada":"%s"})", k * 7, kinds[k]);
+            engine_add_spec(e, spec);
+            std::snprintf(spec, sizeof(spec), R"({"tipo":"modulo","peca":"escada","pos":[%d,0,-8],"largura":3,"profundidade":3,"altura":2.8,"escada":"%s"})", k * 7, kinds[k]);
+            engine_add_spec(e, spec);
+        }
+        engine_select(e, -1);
+        engine_set_camera(e, 10.f, 0.f, -1.f, 0.25f, 1.15f, 22.f);
+        frames(e, 3);
+        save(out, "29_escadas_cima.png");
+        engine_set_camera(e, 10.f, 0.f, -6.f, 0.5f, 0.45f, 16.f);
+        frames(e, 3);
+        save(out, "29_escadas_avulsas.png");
+        // sobe cada uma (casas da fileira z = 9, com laje). Topo da laje: 0.15 + 2.8 + 0.15
+        const float xL = 2.35f, zB = -2.35f, top = 3.1f;
+        int ch = engine_create_random_character(e, 7, 1);
+        for (int k = 0; k < 4; ++k) {
+            const float ox = k * 7.f, oz = 9.f;
+            engine_set_play(e, 0);
+            if (k == 3) placeChar(ch, {ox + 1.3f + 0.15f, 0.3f, oz - 1.32f + 0.95f});
+            else placeChar(ch, {ox + xL - 0.45f, 0.3f, oz + 1.9f});
+            engine_set_play(e, 1);
+            frames(e, 10);
+            if (std::getenv("DEPURAR")) { float q[3], r[3], sc[3]; engine_get_transform(e, ch, q, r, sc); std::printf("  início %.2f %.2f %.2f\n", q[0], q[1], q[2]); }
+            int phase = 0;
+            glm::vec2 last(0.f);
+            glm::vec3 end = steer(ch, 420, [&](glm::vec3 p) -> glm::vec2 { return last = [&]() -> glm::vec2 {
+                float lx = p.x - ox, lz = p.z - oz;
+                if (p.y > top - 0.04f && phase < 9) phase = 9;  // chegou na laje: anda mais um pouco e para
+                if (phase >= 9) { ++phase; return phase > 18 ? glm::vec2(0.f) : k == 0 ? glm::vec2(-1.f, 0.f) : last; }  // reta: sai pelo lado
+                switch (k) {
+                    case 0: return {0.f, -1.f};
+                    case 1: if (lz > zB + 0.5f && phase == 0) return {0.f, -1.f}; phase = 1; return {-1.f, 0.f};
+                    case 2:
+                        if (phase == 0 && lz > zB + 0.45f) return {0.f, -1.f};
+                        if (phase <= 1 && lx > xL - 1.35f) { phase = 1; return {-1.f, 0.f}; }
+                        phase = 2; return {0.f, 1.f};
+                    default: {  // caracol: anda na tangente, puxando para o raio do meio
+                        const float cx = 1.32f, cz = -1.32f, rm = 0.53f;
+                        float dx = lx - cx, dz = lz - cz, rr = std::sqrt(dx * dx + dz * dz) + 1e-4f;
+                        float phi = std::atan2(-dz, dx);
+                        glm::vec2 tan(-std::sin(phi), -std::cos(phi)), rad(dx / rr, dz / rr);
+                        return tan + rad * ((rm - rr) * 3.f);
+                    }
+                }
+            }(); });
+            std::printf("  escada %-8s topo em y = %.2f (laje %.2f)\n", kinds[k], end.y, top);
+            if (end.y < top - 0.25f) { std::printf("  [ERRO] não subiu a escada %s\n", kinds[k]); ++g_fail; }
+        }
+        engine_set_play(e, 0);
+    };
+
+    // Abrir porta / janela / vão em parede pronta e cortar um muro
+    auto openings = [&]() {
+        std::printf("[30] aberturas em paredes e muros\n");
+        engine_new_scene(e);
+        int house = engine_add_spec(e, R"({"tipo":"modulo","pos":[0,0,0],"largura":5,"profundidade":5,"paredes":["lisa","lisa","lisa","lisa"],"material":"reboco","cor_parede":"#e8d9b0"})");
+        int muro = engine_add_spec(e, R"({"tipo":"construcao","modelo":"muro","pos":[0,0,10],"semente":1})");
+        if (house < 0 || muro < 0) { std::printf("  [ERRO] cena\n"); ++g_fail; return; }
+        auto cut = [&](float tx, float ty, float tz, float yaw, const char* spec) {
+            engine_select(e, -1);
+            engine_set_camera(e, tx, ty, tz, yaw, 0.f, 6.f);
+            frames(e, 1);
+            int id = engine_add_spec(e, spec);
+            if (id < 0) { std::printf("  [ERRO] %s: %s\n", spec, engine_last_error(e)); ++g_fail; }
+            return id;
+        };
+        cut(0.f, 1.2f, 2.5f, 0.f, R"({"tipo":"abertura","estilo":"porta"})");              // frente da casa
+        cut(1.f, 1.5f, -2.5f, 3.14159f, R"({"tipo":"abertura","estilo":"janela","largura":1.4})");  // fundo
+        cut(-2.5f, 1.2f, 0.f, -1.5708f, R"({"tipo":"abertura","estilo":"vao","largura":1.2})");    // lado direito
+        cut(1.5f, 1.f, 10.f, 0.f, R"({"tipo":"abertura","estilo":"corte","largura":2.0})");      // muro
+        engine_select(e, -1);
+        engine_set_camera(e, 0.f, 1.f, 4.f, 0.5f, 0.3f, 13.f);
+        frames(e, 3);
+        save(out, "30_aberturas_frente.png");
+        engine_set_camera(e, 0.f, 1.f, 2.f, 3.14159f + 0.4f, 0.3f, 11.f);
+        frames(e, 3);
+        save(out, "30_aberturas_fundo.png");
+        engine_set_camera(e, 0.f, 1.4f, 0.f, 0.3f, 0.1f, 1.5f);
+        frames(e, 3);
+        save(out, "30_dentro.png");
+        // passa pela porta cortada e pelo corte do muro
+        int ch = engine_create_random_character(e, 9, 1);
+        placeChar(ch, {0.f, 0.2f, 4.f});
+        engine_set_play(e, 1);
+        frames(e, 10);
+        glm::vec3 p = steer(ch, 120, [](glm::vec3) { return glm::vec2(0.f, -1.f); });
+        std::printf("  entrou pela porta cortada: z = %.2f (parede em 2.5)\n", p.z);
+        if (p.z > 1.5f) { std::printf("  [ERRO] não passou pela porta\n"); ++g_fail; }
+        engine_set_play(e, 0);
+        placeChar(ch, {1.5f, 0.2f, 12.f});
+        engine_set_play(e, 1);
+        frames(e, 10);
+        p = steer(ch, 120, [](glm::vec3) { return glm::vec2(0.f, -1.f); });
+        std::printf("  passou pelo corte do muro: z = %.2f (muro em 10)\n", p.z);
+        if (p.z > 9.f) { std::printf("  [ERRO] não passou pelo muro\n"); ++g_fail; }
+        engine_set_play(e, 0);
+        placeChar(ch, {-3.5f, 0.2f, 12.f});
+        engine_set_play(e, 1);
+        frames(e, 10);
+        p = steer(ch, 120, [](glm::vec3) { return glm::vec2(0.f, -1.f); });
+        std::printf("  fora do corte o muro segura: z = %.2f\n", p.z);
+        if (p.z < 10.f) { std::printf("  [ERRO] atravessou o muro fora do corte\n"); ++g_fail; }
+        engine_set_play(e, 0);
+    };
+    if (std::getenv("SO_ESCADAS")) { stairs(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
+    if (std::getenv("SO_ABERTURAS")) { openings(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_CONSTRUCAO")) { modules(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ARMAS")) { weapons(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_DESEMPENHO")) { perf(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
@@ -1304,6 +1444,8 @@ int main(int argc, char** argv) {
     kit();
     weapons();
     modules();
+    stairs();
+    openings();
     supportHand();
 
     engine_destroy(e);

@@ -121,6 +121,7 @@ void engine_frame(Engine* e, float dt) {
     e->scene.updateTransforms();
     eng::updateAttachments(e);
     eng::updateSupportHands(e, dt);
+    eng::updateCuts(e);
 
     auto ts = std::chrono::steady_clock::now();
     e->renderer.beginFrame(e->camera, sun);

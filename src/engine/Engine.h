@@ -141,6 +141,8 @@ struct AnimEditState {
 };
 // Porta em jogo: abre sozinha quando alguém chega perto
 struct DoorRT { Scene::Handle h; glm::quat base{1, 0, 0, 0}; float angle = 0.f, w = 1.f; };
+// Abertura cortada numa parede/muro (porta, janela, vão): caixa local (centro e tamanho) em relação à raiz
+struct Opening { Scene::Handle root; glm::vec3 center, size; };
 // Elevador/passagem: pontos em coordenadas locais do objeto `root` (acompanha se a construção for movida)
 struct TeleRT { Scene::Handle root; glm::vec3 a, b; std::string la, lb; };
 struct LightObject { Scene::Handle obj; glm::vec3 color{1.f}; float intensity = 8.f, radius = 10.f; };
@@ -249,6 +251,7 @@ struct Engine {
     float timeOfDay = 13.f;
     std::vector<LightObject> lightObjects;
     std::vector<DoorRT> doors;
+    std::vector<Opening> openings;  // máx. Renderer::kMaxCuts ativas
     std::vector<TeleRT> teles;
     MeshId doorMesh = kInvalidId;
     GameRules rules;
@@ -351,6 +354,8 @@ void deleteObject(Engine* e, Scene::Handle h);
 // Modelo humanoide importado: liga as animações do motor (retarget) sem precisar virar personagem.
 bool setupHumanoid(Engine* e, GameObject& root, Animator* anim);
 Animator* animatorOf(GameObject& root);
+// Atualiza as caixas das aberturas no renderizador e na física (antes de desenhar)
+void updateCuts(Engine* e);
 void applyCustomAnims(Engine* e, GameObject& root, const std::string& arrJson);  // "animacoes" da receita
 void forgetClipStores(Engine* e, const std::vector<Animator*>& gone);
 int animEditBegin(Engine* e);                       // ossos ou -1 (lastError)

@@ -154,8 +154,9 @@ madeira, metal, metal_escuro, plastico, vidro, agua, pintura), comportamentos (l
 - {"tipo":"forma","forma":"cubo|esfera|capsula|pedra","fisica":true,"massa":1} (massa 0 = parado/fixo; use para paredes, rampas, plataformas)
 - {"tipo":"chao","tamanho":40}
 - {"tipo":"construcao","modelo":"casa|sobrado|barraco|predio|arranha_ceu|escola|arvore|pinheiro|palmeira|carro|poste|muro","semente":123,"andares":2}  (andares opcional)
-- {"tipo":"modulo","largura":5,"profundidade":4,"altura":2.8,"paredes":["porta","janela","lisa","janela"],"material":"tijolo|tijolo_vermelho|reboco|concreto|madeira|pedra","cor_parede":"#e0a060","piso":"ceramica|pedra|calcada|asfalto|concreto|madeira|marmore|terra|grama","laje":true,"mureta":false,"varanda":true,"escada":"nenhuma|interna|externa"}  (andar/cômodo montado; paredes = frente, fundo, esquerda, direita: lisa|porta|janela|aberta; "sobre":ID empilha em cima do andar ID com o mesmo tamanho)
-- {"tipo":"modulo","peca":"piso|parede|laje|varanda|escada|telhado","largura":4,"profundidade":4,"parede":"lisa|porta|janela","piso":"pedra"}  (peça avulsa)
+- {"tipo":"modulo","largura":5,"profundidade":4,"altura":2.8,"paredes":["porta","janela","lisa","janela"],"material":"tijolo|tijolo_vermelho|reboco|concreto|madeira|pedra","cor_parede":"#e0a060","piso":"ceramica|pedra|calcada|asfalto|concreto|madeira|marmore|terra|grama","laje":true,"mureta":false,"varanda":true,"escada":"nenhuma|reta|l|u|caracol|externa"}  (andar/cômodo montado; paredes = frente, fundo, esquerda, direita: lisa|porta|janela|aberta; "sobre":ID empilha em cima do andar ID com o mesmo tamanho)
+- {"tipo":"modulo","peca":"piso|parede|laje|varanda|escada|telhado","largura":4,"profundidade":4,"parede":"lisa|porta|janela","piso":"pedra","escada":"reta|l|u|caracol"}  (peça avulsa)
+- {"tipo":"abertura","estilo":"porta|vao|janela|corte","largura":1.0,"altura":2.1,"pos":[x,y,z],"rot_y":0,"espessura":0.2}  (corta porta/janela/vão em parede ou muro já existente; sem "pos" usa o ponto no centro da tela)
 - {"tipo":"personagem","jogador":true,"arma":"pistola|fuzil|escopeta|sniper|faca|taco","aparencia":"aleatorio" ou
    {"altura":1.75,"corpo":"magro|normal|forte","pele":"clara|morena|parda|negra","camisa":cor,"calca":cor,"tenis":cor,
     "cabelo":cor,"estilo_cabelo":"careca|curto|comprido|bone","manga_comprida":false}}

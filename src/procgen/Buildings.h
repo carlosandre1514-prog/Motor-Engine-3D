@@ -122,7 +122,10 @@ void buildSchoolWing(Geo& g, float len, float depth, int floors, glm::vec4 wall,
 
 // Construção montada pelo usuário, andar por andar. Origem: centro da base, frente para +Z.
 enum ModuleWall { MW_Plain, MW_Door, MW_Window, MW_Open };
-enum ModulePiece { MP_Floor, MP_Wall, MP_Slab, MP_Porch, MP_StairsOut, MP_Roof };
+enum ModulePiece { MP_Floor, MP_Wall, MP_Slab, MP_Porch, MP_StairsOut, MP_Roof, MP_Stairs };
+// Escadas: reta (interna), externa (lateral, reta), em L, em U e caracol
+enum StairKind { SK_None, SK_Straight, SK_Outside, SK_L, SK_U, SK_Spiral };
+struct StairHole { float x0, x1, z0, z1; };  // abertura na laje (coordenadas locais)
 struct ModuleSpec {
     float w = 4.f, d = 4.f, h = 2.8f;                        // largura (X), profundidade (Z), pé-direito
     int walls[4] = {MW_Door, MW_Plain, MW_Window, MW_Window};  // frente (+Z), fundo (-Z), esquerda (+X), direita (-X)
@@ -132,7 +135,7 @@ struct ModuleSpec {
     bool floor = true;      // piso próprio (andar de cima: não, a laje de baixo é o piso)
     bool slab = true;       // laje em cima (teto / piso do próximo andar)
     bool parapet = false;   // mureta em volta da laje (terraço)
-    int stairs = 0;         // 0 nenhuma, 1 interna (abre a laje), 2 externa pela lateral direita
+    int stairs = SK_None;   // StairKind; as internas ficam no canto esquerdo-fundo e abrem a laje
     bool porch = false;     // varanda coberta na frente (no chão) ou sacada (andar de cima)
 };
 // Altura do topo do módulo (onde o próximo andar começa)

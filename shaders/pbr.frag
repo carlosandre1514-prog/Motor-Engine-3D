@@ -8,6 +8,7 @@ in vec2 vUV;
 in vec4 vTangent;
 in float vViewDepth;
 in vec4 vColor;
+flat in uint vCut;
 
 uniform sampler2D uAlbedoMap;
 uniform sampler2D uNormalMap;
@@ -189,6 +190,7 @@ void terrainLayers(out vec3 albedo, out vec3 nt, out float cavity) {
 }
 
 void main() {
+    if (vCut != 0u && insideCut(vWorldPos, vCut)) discard;  // abertura cortada na parede
     if (uMode == 2) { oColor = vec4(toDisplay(waterColor()), 1.0); return; }
     vec4 albedoS = texture(uAlbedoMap, vUV) * uAlbedoFactor * vColor;  // textura em sRGB: o GL já linearizou
     if (albedoS.a < uAlphaCutoff) discard;

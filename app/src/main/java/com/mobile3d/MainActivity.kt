@@ -73,6 +73,8 @@ class MainActivity : Activity() {
     private lateinit var fields: List<EditText>
     private lateinit var visualPanel: LinearLayout
     private lateinit var hud: FrameLayout
+    private lateinit var aimOverlay: FrameLayout
+    private var aimSpec = ""  // abertura a cortar quando o usuário apertar "Cortar aqui"
     private lateinit var joystick: JoystickView
     private lateinit var runBtn: TextView
     private lateinit var fireBtn: TextView
@@ -159,6 +161,9 @@ class MainActivity : Activity() {
         root.addView(aiPanel, FrameLayout.LayoutParams(dp(340), -2, Gravity.BOTTOM or Gravity.END).apply {
             rightMargin = dp(8); bottomMargin = dp(8)
         })
+
+        aimOverlay = buildAimOverlay().apply { visibility = View.GONE }
+        root.addView(aimOverlay, FrameLayout.LayoutParams(-1, -1))
 
         setContentView(root)
         ui.post(refresh)
@@ -541,6 +546,9 @@ class MainActivity : Activity() {
     private val wallPaints = intArrayOf(0xFFF2EBDD.toInt(), 0xFFE8B04A.toInt(), 0xFF8FB9D8.toInt(), 0xFFB7D39A.toInt(),
                                         0xFFE59A8C.toInt(), 0xFFFFFFFF.toInt(), 0xFF9C9C9C.toInt())
 
+    private val stairNames = arrayOf("Nenhuma", "Reta (por dentro)", "Em L", "Em U", "Caracol", "Externa (lateral, por fora)")
+    private val stairKeys = arrayOf("nenhuma", "reta", "l", "u", "caracol", "externa")
+
     // Último andar montado (o "Empilhar" repete o mesmo jeito em cima do selecionado)
     private data class FloorChoice(var w: Float = 5f, var d: Float = 5f, var h: Float = 2.8f, val walls: IntArray = intArrayOf(1, 2, 0, 2),
                                    var wallMat: Int = 0, var paint: Int = 0, var floorMat: Int = 0, var slab: Boolean = true,
@@ -553,7 +561,7 @@ class MainActivity : Activity() {
         sb.append(",\"paredes\":[").append(f.walls.joinToString(",") { "\"${wallKeys[it]}\"" }).append("]")
         sb.append(",\"material\":\"${wallMats[f.wallMat].second}\",\"cor_parede\":${hex(wallPaints[f.paint])}")
         sb.append(",\"piso\":\"${floorMats[f.floorMat].second}\",\"laje\":${f.slab},\"mureta\":${f.parapet},\"varanda\":${f.porch}")
-        sb.append(",\"escada\":\"${arrayOf("nenhuma", "interna", "externa")[f.stairs]}\"")
+        sb.append(",\"escada\":\"${stairKeys[f.stairs]}\"")
         if (onTopOf >= 0) sb.append(",\"sobre\":$onTopOf")
         return sb.append("}").toString()
     }
@@ -567,9 +575,10 @@ class MainActivity : Activity() {
         val items = arrayOf("🧱 Montar andar / cômodo (paredes, porta, janela, escada, varanda)…",
                             "⬆ Empilhar um andar em cima do selecionado…",
                             "🏠 Casa / sobrado / barraco / prédio (escolher quantos andares)…",
+                            "✂ Abrir porta / janela / vão numa parede ou muro…",
                             "🪨 Piso avulso (pedra, calçada, asfalto, cerâmica…)…",
                             "▮ Parede avulsa (lisa, com porta, com janela)…",
-                            "⛱ Varanda coberta avulsa…", "🪜 Escada externa (lateral) avulsa…", "▬ Laje avulsa…", "⌂ Telhado avulso…",
+                            "⛱ Varanda coberta avulsa…", "🪜 Escada avulsa (reta, em L, em U, caracol)…", "▬ Laje avulsa…", "⌂ Telhado avulso…",
                             "Outras peças (rua, calçada, muro, rampa, cerca, banco…)")
         list("Construção", items) { which ->
             when (which) {
@@ -591,12 +600,13 @@ class MainActivity : Activity() {
                         }
                     }
                 }
-                3 -> pieceDialog("piso")
-                4 -> pieceDialog("parede")
-                5 -> pieceDialog("varanda")
-                6 -> pieceDialog("escada")
-                7 -> pieceDialog("laje")
-                8 -> pieceDialog("telhado")
+                3 -> openingDialog()
+                4 -> pieceDialog("piso")
+                5 -> pieceDialog("parede")
+                6 -> pieceDialog("varanda")
+                7 -> pieceDialog("escada")
+                8 -> pieceDialog("laje")
+                9 -> pieceDialog("telhado")
                 else -> {
                     val kinds = intArrayOf(11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
                     list("Outras peças", arrayOf("Muro", "🛣 Rua (pista)", "✚ Cruzamento", "Calçada", "Escada", "Rampa", "Piso / laje",
@@ -623,7 +633,7 @@ class MainActivity : Activity() {
         p.addView(choice("Material da parede", wallMats.map { it.first }.toTypedArray(), f.wallMat) { f.wallMat = it })
         p.addView(colorRow("Cor da pintura (reboco/concreto)", wallPaints, f.paint) { f.paint = it })
         if (onTopOf < 0) p.addView(choice("Piso", floorMats.map { it.first }.toTypedArray(), f.floorMat) { f.floorMat = it })
-        p.addView(choice("Escada", arrayOf("Nenhuma", "Interna (sobe por dentro)", "Externa (lateral, por fora)"), f.stairs) { f.stairs = it })
+        p.addView(choice("Escada", stairNames, f.stairs) { f.stairs = it })
         val slab = CheckBox(this).apply { text = "Laje em cima (dá para empilhar outro andar)"; setTextColor(Color.WHITE); isChecked = f.slab }
         val parapet = CheckBox(this).apply { text = "Mureta no terraço (laje)"; setTextColor(Color.WHITE); isChecked = f.parapet }
         val porch = CheckBox(this).apply {
@@ -639,12 +649,59 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancelar", null).show()
     }
 
+    // Abrir porta/janela/vão em qualquer parede, muro ou construção: escolhe o tipo e o tamanho, depois mira
+    private fun openingDialog() {
+        val styles = arrayOf("🚪 Porta (com folha que abre)", "▯ Vão de porta (passagem sem porta)", "🪟 Janela", "✂ Corte no muro (abertura até o topo)")
+        val keys = arrayOf("porta", "vao", "janela", "corte")
+        list("Abrir na parede", styles) { k ->
+            var w = floatArrayOf(0.9f, 0.9f, 1.2f, 2f)[k]
+            var h = floatArrayOf(2.1f, 2.1f, 1.1f, 2.2f)[k]
+            var sill = 1f
+            val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+            p.addView(slider("Largura (m)", 0.5f, 8f, w) { w = it })
+            if (k != 3) p.addView(slider("Altura (m)", 0.5f, 4f, h) { h = it })
+            else p.addView(label("Altura: do chão até o topo do muro"))
+            if (k == 2) p.addView(slider("Altura do peitoril (m)", 0f, 2f, sill) { sill = it })
+            p.addView(label("Depois gire a câmera até a mira (+) ficar em cima da parede e toque em \"Cortar aqui\". " +
+                            "Para fechar de novo: selecione a abertura e apague."))
+            dialog().setTitle(styles[k]).setView(ScrollView(this).apply { addView(p) })
+                .setPositiveButton("Mirar") { _, _ ->
+                    aimSpec = String.format(Locale.US, "{\"tipo\":\"abertura\",\"estilo\":\"%s\",\"largura\":%.2f%s%s}", keys[k], w,
+                        if (k != 3) String.format(Locale.US, ",\"altura\":%.2f", h) else "",
+                        if (k == 2) String.format(Locale.US, ",\"peitoril\":%.2f", sill) else "")
+                    aimOverlay.visibility = View.VISIBLE
+                }.setNegativeButton("Cancelar", null).show()
+        }
+    }
+
+    private fun buildAimOverlay(): FrameLayout {
+        val f = FrameLayout(this)
+        f.addView(TextView(this).apply {
+            text = "+"; setTextColor(0xFFFF5040.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 40f); typeface = Typeface.DEFAULT_BOLD
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+        }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        row.addView(button("✂ Cortar aqui", true) {
+            val spec = aimSpec
+            gl {
+                val id = NativeBridge.addSpec(spec)
+                if (id < 0) toast("Não deu: " + NativeBridge.nativeLastError())
+                else { toast("Aberto! Mova com as setas ou apague para fechar."); saveIfChanged() }
+            }
+            aimOverlay.visibility = View.GONE
+        })
+        row.addView(View(this), LinearLayout.LayoutParams(dp(16), 1))
+        row.addView(button("Cancelar") { aimOverlay.visibility = View.GONE })
+        f.addView(row, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(90) })
+        return f
+    }
+
     // Peças avulsas (cada uma vira um objeto que dá para mover, girar e apagar)
     private fun pieceDialog(piece: String) {
         var w = if (piece == "parede") 3f else 5f
         var d = if (piece == "piso") 5f else 4f
         var h = 2.8f
-        var wall = 0; var wallMat = 0; var paint = 0; var floorMat = 0
+        var wall = 0; var wallMat = 0; var paint = 0; var floorMat = 0; var stair = 0
         val p = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
         p.addView(slider(if (piece == "parede") "Comprimento (m)" else "Largura (m)", 1f, 20f, w) { w = it })
         if (piece != "parede") p.addView(slider("Profundidade (m)", 1f, 20f, d) { d = it })
@@ -654,15 +711,17 @@ class MainActivity : Activity() {
             p.addView(choice("Material", wallMats.map { it.first }.toTypedArray(), wallMat) { wallMat = it })
             p.addView(colorRow("Cor da pintura (reboco/concreto)", wallPaints, paint) { paint = it })
         }
+        if (piece == "escada") p.addView(choice("Tipo de escada", arrayOf("Reta", "Em L", "Em U", "Caracol"), stair) { stair = it })
         if (piece == "piso" || piece == "varanda") p.addView(choice("Material do piso", floorMats.map { it.first }.toTypedArray(), floorMat) { floorMat = it })
-        val names = mapOf("piso" to "Piso", "parede" to "Parede", "varanda" to "Varanda coberta", "escada" to "Escada externa",
+        val names = mapOf("piso" to "Piso", "parede" to "Parede", "varanda" to "Varanda coberta", "escada" to "Escada",
                           "laje" to "Laje", "telhado" to "Telhado")
         dialog().setTitle(names[piece])
             .setView(ScrollView(this).apply { addView(p) })
             .setPositiveButton("Criar") { _, _ ->
                 val spec = String.format(Locale.US, "{\"tipo\":\"modulo\",\"peca\":\"%s\",\"largura\":%.1f,\"profundidade\":%.1f,\"altura\":%.1f," +
-                    "\"parede\":\"%s\",\"material\":\"%s\",\"cor_parede\":%s,\"piso\":\"%s\"}",
-                    piece, w, d, h, wallKeys[wall], wallMats[wallMat].second, hex(wallPaints[paint]), floorMats[floorMat].second)
+                    "\"parede\":\"%s\",\"material\":\"%s\",\"cor_parede\":%s,\"piso\":\"%s\",\"escada\":\"%s\"}",
+                    piece, w, d, h, wallKeys[wall], wallMats[wallMat].second, hex(wallPaints[paint]), floorMats[floorMat].second,
+                    arrayOf("reta", "l", "u", "caracol")[stair])
                 addSpecToast(spec, "${names[piece]} criado no foco da câmera")
             }.setNegativeButton("Cancelar", null).show()
     }

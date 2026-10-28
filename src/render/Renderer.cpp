@@ -149,6 +149,10 @@ bool Renderer::init(const char* shaderDir) {
     glGenBuffers(1, &jointUbo_);
     glBindBuffer(GL_UNIFORM_BUFFER, jointUbo_);
     glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * kMaxJoints, nullptr, GL_DYNAMIC_DRAW);
+    glGenBuffers(1, &cutUbo_);
+    glBindBuffer(GL_UNIFORM_BUFFER, cutUbo_);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * kMaxCuts, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 2, cutUbo_);
     glGenBuffers(1, &instanceVbo_);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVbo_);
     glBufferData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * kMaxDraws, nullptr, GL_STREAM_DRAW);
@@ -207,7 +211,7 @@ void Renderer::shutdown() {
     for (Program* p : {&pbr_, &pbrInst_, &pbrSkin_, &shadow_, &shadowInst_, &shadowSkin_}) glDeleteProgram(p->id);
     glDeleteProgram(skyProg_);
     glDeleteProgram(lineProg_);
-    GLuint bufs[] = {sceneUbo_, jointUbo_, instanceVbo_, lineVbo_};
+    GLuint bufs[] = {sceneUbo_, jointUbo_, instanceVbo_, lineVbo_, cutUbo_};
     glDeleteBuffers(4, bufs);
     GLuint vaos[] = {lineVao_, emptyVao_};
     glDeleteVertexArrays(2, vaos);
@@ -342,6 +346,7 @@ void Renderer::submit(const GameObject& go, const glm::mat4& model, const glm::m
     if (mr.mesh >= meshCount_ || mr.material >= materialCount_) return;
     const Mesh& mesh = meshes_[mr.mesh];
     uint32_t mask = 0;
+    glm::mat4 m = model;
     if (palette) {
         // Skinned: a pose muda os limites; sem culling (são poucos objetos)
         mask = 1u | (mr.castShadows ? 0xEu : 0u);
@@ -353,10 +358,19 @@ void Renderer::submit(const GameObject& go, const glm::mat4& model, const glm::m
         if (mr.castShadows)
             for (int c = 0; c < shadowCascades; ++c)              // culling por cascata
                 if (cascadeFrustum_[c].planes[0] != glm::vec4(0.f) && cascadeFrustum_[c].intersects(world)) mask |= 2u << c;
+        // aberturas que encostam no objeto: bits na linha de baixo da matriz (o shader descarta o que fica dentro)
+        if (cutCount > 0 && !go.noCut && mask) {
+            uint32_t bits = 0;
+            for (int i = 0; i < cutCount && i < kMaxCuts; ++i) {
+                const AABB& b = cuts[i].bounds;
+                if (glm::all(glm::lessThanEqual(b.min, world.max)) && glm::all(glm::lessThanEqual(world.min, b.max))) bits |= 1u << i;
+            }
+            if (bits) { m[0][3] = float(bits & 0xFFFFu); m[1][3] = float(bits >> 16); }
+        }
     }
     if (!mask) return;
     if (mask & 1u) ++stats_.visibleObjects;
-    draws_[drawCount_++] = {(uint64_t(mr.material) << 32) | mr.mesh, model, mr.mesh, mr.material, palette, mask};
+    draws_[drawCount_++] = {(uint64_t(mr.material) << 32) | mr.mesh, m, mr.mesh, mr.material, palette, mask};
 }
 
 void Renderer::bindMaterial(const Program& p, const Material& m) {
@@ -447,6 +461,14 @@ void Renderer::render(const Camera& cam, const DirectionalLight& sun, const Envi
     glBindBuffer(GL_UNIFORM_BUFFER, sceneUbo_);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(u), &u);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, sceneUbo_);
+
+    if (cutCount > 0) {
+        glm::mat4 cm[kMaxCuts];
+        for (int i = 0; i < cutCount && i < kMaxCuts; ++i) cm[i] = cuts[i].worldToBox;
+        glBindBuffer(GL_UNIFORM_BUFFER, cutUbo_);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(glm::mat4) * std::min(cutCount, kMaxCuts), cm);
+    }
+    glBindBufferBase(GL_UNIFORM_BUFFER, 2, cutUbo_);
 
     // 2) ordena por (material, mesh) para formar lotes instanciáveis (std::sort não aloca)
     std::sort(draws_, draws_ + drawCount_, [](const DrawItem& a, const DrawItem& b) { return a.key < b.key; });

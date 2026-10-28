@@ -176,6 +176,7 @@ static RigidBody* attachShape(Engine* e, GameObject& go, ColliderType type, btCo
     RigidBody* rb = e->bodies.get(bh);
     if (!rb) { delete shape; return nullptr; }
     rb->centerOffset = offset;
+    if (mass > 0.f) go.noCut = true;  // objeto que se move (caixa, barril): não é cortado ao passar por uma abertura
     e->physics.attach(go, *rb, type, shape, mass);
     e->physics.syncFromTransform(*rb);
     return rb;
@@ -344,6 +345,9 @@ void clearScene(Engine* e) {
     e->recipes.clear();
     e->doors.clear();
     e->teles.clear();
+    e->openings.clear();
+    e->renderer.cutCount = 0;
+    e->physics.cuts.clear();
     e->doorMesh = kInvalidId;
     if (e->globeMode) {  // saindo da cena vendo o globo: volta o céu do planeta (senão o próximo mapa fica com céu de espaço)
         e->env = e->globeSavedEnv;
@@ -587,6 +591,7 @@ int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
     GameObject* w = e->scene.get(h);
     if (!w) return -1;
     addAccessories(e, *w, look.accessories, wb, look.file.empty());
+    Scene::forEachInSubtree(*w, [](GameObject& o) { o.noCut = true; });  // passa pela porta sem ser cortada
     if (ch >= 0 && ch < int(e->characters.size())) {
         CharacterInfo& c = e->characters[ch];
         if (e->scene.get(c.weapon)) {  // troca a arma antiga
@@ -887,6 +892,10 @@ bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bo
     bool grounded = e->physics.raycastIgnoring(center, center - glm::vec3(0, c.height * 0.5f + 0.25f, 0), b, hit, obj, frac);
     btVector3 nv(move.x * speed * mag, vel.y(), move.z * speed * mag);
     if (jump && grounded) nv.setY(5.2f);
+    // parado no chão (rampa, escada): sem gravidade, senão escorrega para baixo
+    const bool anchor = grounded && !jump && mag < 0.05f && vel.y() < 0.5f && frac * (c.height * 0.5f + 0.25f) < c.height * 0.5f + 0.08f;
+    b->setGravity(anchor ? btVector3(0, 0, 0) : btVector3(0, -9.81f, 0));
+    if (anchor) nv.setY(0.f);
     b->setLinearVelocity(nv);
     b->activate(true);
     c.aimTimer = std::max(0.f, c.aimTimer - dt);
@@ -1350,4 +1359,29 @@ static int finishModelCharacter(Engine* e, GameObject& rootRef, CharacterInfo& i
     return root->id;
 }
 
+}  // namespace eng
+
+namespace eng {
+// Aberturas: caixa de cada uma (no mundo) para o shader e para a física
+void updateCuts(Engine* e) {
+    e->renderer.cutCount = 0;
+    e->physics.cuts.clear();
+    for (size_t i = 0; i < e->openings.size();) {
+        const Opening& o = e->openings[i];
+        GameObject* g = e->scene.get(o.root);
+        if (!g) { e->openings.erase(e->openings.begin() + long(i)); continue; }  // apagada: a parede fecha de novo
+        ++i;
+        if (!g->active || e->renderer.cutCount >= Renderer::kMaxCuts) continue;
+        glm::mat4 box = g->transform.world() * glm::translate(glm::mat4(1.f), o.center) * glm::scale(glm::mat4(1.f), o.size);
+        Renderer::CutBox& c = e->renderer.cuts[e->renderer.cutCount++];
+        c.worldToBox = glm::inverse(box);
+        c.bounds = {glm::vec3(1e30f), glm::vec3(-1e30f)};
+        for (int k = 0; k < 8; ++k) {
+            glm::vec3 p = glm::vec3(box * glm::vec4(k & 1 ? 0.5f : -0.5f, k & 2 ? 0.5f : -0.5f, k & 4 ? 0.5f : -0.5f, 1.f));
+            c.bounds.min = glm::min(c.bounds.min, p);
+            c.bounds.max = glm::max(c.bounds.max, p);
+        }
+        e->physics.cuts.push_back(c.worldToBox);
+    }
+}
 }  // namespace eng

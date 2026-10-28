@@ -2,6 +2,8 @@
 #include <btBulletDynamicsCommon.h>
 #include <BulletCollision/CollisionShapes/btShapeHull.h>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 #include <glm/glm.hpp>
 #include "core/Pool.h"
 #include "scene/Scene.h"
@@ -65,6 +67,22 @@ public:
         world_ = new btDiscreteDynamicsWorld(dispatcher_, broadphase_, solver_, config_);
         world_->setGravity({0, -9.81f, 0});
         world_->getSolverInfo().m_numIterations = 8;  // poucas iterações: mobile
+        dispatcher_->setNearCallback(&Physics::cutNearCallback);
+    }
+
+    // Aberturas cortadas em paredes/muros (porta, janela, vão): caixas (mundo -> cubo unitário centrado).
+    // Contatos e raios em corpos estáticos dentro delas são ignorados: dá para passar e atirar pelo buraco.
+    // Corpos com userIndex2 == 1 não são cortados.
+    std::vector<glm::mat4> cuts;
+    bool insideCut(glm::vec3 p) const {
+        for (const glm::mat4& m : cuts) {
+            glm::vec3 q = glm::vec3(m * glm::vec4(p, 1.f));
+            if (std::abs(q.x) < 0.5f && std::abs(q.y) < 0.5f && std::abs(q.z) < 0.5f) return true;
+        }
+        return false;
+    }
+    bool cutHit(const btCollisionObject* o, glm::vec3 p) const {
+        return !cuts.empty() && o->isStaticObject() && o->getUserIndex2() != 1 && insideCut(p);
     }
     Physics(const Physics&) = delete;
     Physics& operator=(const Physics&) = delete;
@@ -187,11 +205,15 @@ public:
         struct Cb : btCollisionWorld::ClosestRayResultCallback {
             const btCollisionObject* ign;
             Cb(const btVector3& a, const btVector3& b, const btCollisionObject* i) : ClosestRayResultCallback(a, b), ign(i) {}
+            const Physics* ph;
             btScalar addSingleResult(btCollisionWorld::LocalRayResult& r, bool normalInWorld) override {
                 if (r.m_collisionObject == ign) return 1.f;
+                btVector3 p = m_rayFromWorld.lerp(m_rayToWorld, r.m_hitFraction);
+                if (ph->cutHit(r.m_collisionObject, {p.x(), p.y(), p.z()})) return 1.f;  // passou pela abertura
                 return ClosestRayResultCallback::addSingleResult(r, normalInWorld);
             }
         } cb({from.x, from.y, from.z}, {to.x, to.y, to.z}, ignore);
+        cb.ph = this;
         world_->rayTest(cb.m_rayFromWorld, cb.m_rayToWorld, cb);
         if (!cb.hasHit()) return false;
         hit = {cb.m_hitPointWorld.x(), cb.m_hitPointWorld.y(), cb.m_hitPointWorld.z()};
@@ -202,6 +224,7 @@ public:
 
     // Passo fixo com acumulador: determinístico e independente do FPS
     void step(float dt) {
+        active_ = this;
         accum_ += dt;
         int steps = 0;
         while (accum_ >= kFixedDt && steps < kMaxSubSteps) {
@@ -213,11 +236,26 @@ public:
     }
 
     bool raycast(glm::vec3 from, glm::vec3 to, glm::vec3& hit, GameObject*& obj) {
-        btCollisionWorld::ClosestRayResultCallback cb({from.x, from.y, from.z}, {to.x, to.y, to.z});
+        float f;
+        return raycastIgnoring(from, to, nullptr, hit, obj, f);
+    }
+    // Raio que também devolve a normal da superfície atingida
+    bool raycastNormal(glm::vec3 from, glm::vec3 to, glm::vec3& hit, glm::vec3& normal, const btCollisionObject* ignore = nullptr) {
+        struct Cb : btCollisionWorld::ClosestRayResultCallback {
+            const btCollisionObject* ign; const Physics* ph;
+            Cb(const btVector3& a, const btVector3& b) : ClosestRayResultCallback(a, b) {}
+            btScalar addSingleResult(btCollisionWorld::LocalRayResult& r, bool normalInWorld) override {
+                if (r.m_collisionObject == ign) return 1.f;
+                btVector3 p = m_rayFromWorld.lerp(m_rayToWorld, r.m_hitFraction);
+                if (ph->cutHit(r.m_collisionObject, {p.x(), p.y(), p.z()})) return 1.f;
+                return ClosestRayResultCallback::addSingleResult(r, normalInWorld);
+            }
+        } cb({from.x, from.y, from.z}, {to.x, to.y, to.z});
+        cb.ign = ignore; cb.ph = this;
         world_->rayTest(cb.m_rayFromWorld, cb.m_rayToWorld, cb);
         if (!cb.hasHit()) return false;
         hit = {cb.m_hitPointWorld.x(), cb.m_hitPointWorld.y(), cb.m_hitPointWorld.z()};
-        obj = static_cast<GameObject*>(cb.m_collisionObject->getUserPointer());
+        normal = glm::normalize(glm::vec3(cb.m_hitNormalWorld.x(), cb.m_hitNormalWorld.y(), cb.m_hitNormalWorld.z()));
         return true;
     }
 
@@ -225,6 +263,29 @@ public:
     static constexpr int kMaxSubSteps = 3;
 
 private:
+    // Depois da colisão normal, tira os contatos que caem dentro de uma abertura (só no lado do corpo estático)
+    static void cutNearCallback(btBroadphasePair& pair, btCollisionDispatcher& d, const btDispatcherInfo& info) {
+        btCollisionDispatcher::defaultNearCallback(pair, d, info);
+        const Physics* ph = active_;
+        if (!ph || ph->cuts.empty() || !pair.m_algorithm) return;
+        btManifoldArray arr;
+        pair.m_algorithm->getAllContactManifolds(arr);
+        for (int k = 0; k < arr.size(); ++k) {
+            btPersistentManifold* m = arr[k];
+            const btCollisionObject* a = m->getBody0();
+            const btCollisionObject* b = m->getBody1();
+            bool sa = a->isStaticObject(), sb = b->isStaticObject();
+            if (sa == sb) continue;
+            if ((sa ? a : b)->getUserIndex2() == 1) continue;
+            for (int i = m->getNumContacts() - 1; i >= 0; --i) {
+                const btManifoldPoint& p = m->getContactPoint(i);
+                const btVector3& w = sa ? p.getPositionWorldOnA() : p.getPositionWorldOnB();
+                if (ph->insideCut({w.x(), w.y(), w.z()})) m->removeContactPoint(i);
+            }
+        }
+    }
+    static inline thread_local const Physics* active_ = nullptr;
+
     btDefaultCollisionConfiguration* config_;
     btCollisionDispatcher* dispatcher_;
     btBroadphaseInterface* broadphase_;

@@ -574,6 +574,81 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         Scene::Handle h = e->objects.empty() ? Scene::Handle{} : e->objects.back();
         return finish(e, h, spec, false);
     }
+    if (tipo == "abertura" || tipo == "corte") {
+        // Porta, janela ou vão aberto em qualquer parede/muro/construção: a caixa corta a parede (imagem e colisão)
+        int style = lookup(str(spec, "estilo", tipo == "corte" ? "corte" : "porta"),
+                           {{"porta", 0}, {"vao", 1}, {"passagem", 1}, {"janela", 2}, {"corte", 3}, {"buraco", 3}, {"portao", 3}}, 0);
+        static const float defW[] = {0.9f, 0.9f, 1.2f, 1.5f}, defH[] = {2.1f, 2.1f, 1.1f, 2.2f};
+        float w = std::clamp(num(spec, "largura", defW[style]), 0.3f, 12.f);
+        float h = std::clamp(num(spec, "altura", defH[style]), 0.3f, 12.f);
+        float sill = style == 2 ? std::clamp(num(spec, "peitoril", 1.f), 0.f, 4.f) : 0.f;
+        float t = std::clamp(num(spec, "espessura", 0.25f), 0.05f, 2.f);
+        float side = num(spec, "altura_lados", h);  // até onde vão os acabamentos dos lados (corte: até o topo do muro)
+        if (!hasPos) {
+            // mira: o centro da tela aponta para a parede
+            glm::vec3 o, d, hit, n;
+            e->scene.updateTransforms();
+            e->camera.screenRay(e->width * 0.5f, e->height * 0.5f, float(e->width), float(e->height), o, d);
+            if (!e->physics.raycastNormal(o, o + d * 400.f, hit, n) || std::abs(n.y) > 0.7f)
+                return fail("aponte o centro da tela para uma parede, muro ou construção");
+            n.y = 0.f;
+            n = glm::normalize(n);
+            // espessura: raio voltando pelo outro lado da parede
+            glm::vec3 back, bn;
+            t = 0.25f;
+            if (e->physics.raycastNormal(hit - n * 1.6f, hit + n * 0.01f, back, bn)) {
+                float tt = glm::dot(hit - back, n);
+                if (tt > 0.03f && tt < 1.5f) t = tt;
+            }
+            glm::vec3 c = hit - n * (t * 0.5f);
+            // piso: o mais alto dos dois lados, abaixo do ponto mirado (porta do 2º andar pisa na laje)
+            float base = -1e9f;
+            for (float sgn : {1.f, -1.f}) {
+                glm::vec3 p0 = c + n * (sgn * (t * 0.5f + 0.35f)), fh, fn;
+                p0.y = hit.y;
+                if (e->physics.raycastNormal(p0, p0 - glm::vec3(0, 60.f, 0), fh, fn) && fh.y < hit.y - 0.05f) base = std::max(base, fh.y);
+            }
+            if (base < -1e8f) base = mapHeight(e, c.x, c.z);
+            if (style == 3) {  // corte no muro: do chão até acima do topo
+                glm::vec3 top, tn;
+                float wallTop = base + h;
+                if (e->physics.raycastNormal(glm::vec3(c.x, base + 40.f, c.z), glm::vec3(c.x, base + 0.05f, c.z), top, tn)) wallTop = top.y;
+                side = std::max(0.3f, wallTop - base);
+                if (!spec.contains("altura")) h = side + 0.15f;
+            }
+            pos = glm::vec3(c.x, base, c.z);
+            yaw = std::atan2(n.x, n.z);
+            spec["pos"] = {pos.x, pos.y, pos.z};
+            spec["rot_y"] = glm::degrees(yaw);
+            spec["espessura"] = t;
+            spec["altura"] = h;
+            spec["altura_lados"] = side;
+        }
+        side = std::min(side, h);
+        // acabamento em volta (fica dentro da caixa do corte; a própria abertura não é cortada)
+        Geo g;
+        g.place(glm::vec3(0.f), 0.f);
+        Mat fm = style == 3 ? Mat::Plaster : Mat::Wood;
+        if (int m = matOf(str(spec, "acabamento", "")); m >= 0) fm = Mat(m);
+        MeshBuilder& f = g[fm];
+        f.color = fm == Mat::Plaster ? glm::vec4(0.85f, 0.83f, 0.8f, 1.f) : glm::vec4(1.f);
+        f.uvTile = {1.f, 1.f};
+        const float b = style == 3 ? 0.03f : 0.06f, dz = t + 0.04f;
+        f.box({-w / 2, sill, -dz / 2}, {b, style == 3 ? side : h, dz});          // lado esquerdo
+        f.box({w / 2 - b, sill, -dz / 2}, {b, style == 3 ? side : h, dz});       // lado direito
+        if (style != 3) f.box({-w / 2, sill + h - b, -dz / 2}, {w, b, dz});      // em cima (verga)
+        if (style == 2) f.box({-w / 2 - 0.04f, sill - 0.04f, -dz / 2 - 0.04f}, {w + 0.08f, 0.05f, dz + 0.08f});  // peitoril
+        if (style == 0) g.door({-w / 2 + b, 0.f, 0.f}, w - 2 * b, h - b, 0);    // folha que abre sozinha
+        static const char* names[] = {"Porta (aberta na parede)", "Vão de porta", "Janela (aberta na parede)", "Abertura no muro"};
+        Scene::Handle hnd = spawnGeo(e, g, names[style], true, pos, yaw);
+        GameObject* go = e->scene.get(hnd);
+        if (!go) return fail("não consegui criar a abertura");
+        Scene::forEachInSubtree(*go, [](GameObject& o) { o.noCut = true; });
+        float y0 = style == 2 ? sill : 0.03f;  // porta/vão: deixa o piso de baixo inteiro
+        e->openings.push_back({hnd, glm::vec3(0.f, (y0 + sill + h) * 0.5f, 0.f), glm::vec3(w, sill + h - y0, t + 0.08f)});
+        spec["tipo"] = "abertura";
+        return finish(e, hnd, spec, false);
+    }
     if (tipo == "modulo" || tipo == "andar") {
         // Construção montada pelo usuário: andar/cômodo configurável ou peça avulsa (parede, piso, laje, varanda...)
         ModuleSpec ms;
@@ -596,8 +671,9 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         ms.slab = flag(spec, "laje", true);
         ms.parapet = flag(spec, "mureta", false);
         ms.porch = flag(spec, "varanda", false);
-        std::string esc = norm(str(spec, "escada", "nenhuma"));
-        ms.stairs = esc.find("intern") != std::string::npos ? 1 : esc.find("extern") != std::string::npos ? 2 : 0;
+        ms.stairs = lookup(str(spec, "escada", "nenhuma"), {{"nenhuma", SK_None}, {"sem", SK_None}, {"interna", SK_Straight}, {"reta", SK_Straight},
+            {"externa", SK_Outside}, {"lateral", SK_Outside}, {"l", SK_L}, {"em_l", SK_L}, {"u", SK_U}, {"em_u", SK_U},
+            {"caracol", SK_Spiral}, {"espiral", SK_Spiral}, {"helicoidal", SK_Spiral}}, SK_None);
         // empilhar: em cima do objeto escolhido (mesma posição e giro); andar de cima não tem piso próprio
         if (auto it = spec.find("sobre"); it != spec.end() && it->is_number()) {
             GameObject* base = rootOf(e, objectById(e, it->get<int>()));
@@ -639,8 +715,10 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         const char* name = "Andar";
         if (piece < 0) buildModule(g, ms);
         else {
+            // escada avulsa: reta (lateral) ou em L / U / caracol
+            if (piece == MP_StairsOut && (ms.stairs == SK_L || ms.stairs == SK_U || ms.stairs == SK_Spiral)) piece = MP_Stairs;
             buildModulePiece(g, piece, ms, wallKindOf(str(spec, "parede", "lisa")));
-            static const char* names[] = {"Piso", "Parede", "Laje", "Varanda", "Escada externa", "Telhado"};
+            static const char* names[] = {"Piso", "Parede", "Laje", "Varanda", "Escada externa", "Telhado", "Escada"};
             name = names[piece];
         }
         if (!hasPos) pos.y = mapHeight(e, pos.x, pos.z);

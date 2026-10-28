@@ -100,6 +100,12 @@ public:
     ParticleSystem* particles = nullptr;  // desenhado depois do céu, antes das linhas do editor
     GLuint targetFbo = 0;         // 0 = tela. Outro valor: renderiza em FBO (ex.: textura do Flutter)
     float shadowDistance = 40.f;
+    // Aberturas (porta/janela/vão cortados em paredes): o que estiver dentro da caixa some nos objetos
+    // marcados (não personagens, não objetos com noCut). Preenchidas pelo motor a cada frame.
+    static constexpr int kMaxCuts = 32;
+    struct CutBox { glm::mat4 worldToBox; AABB bounds; };
+    CutBox cuts[kMaxCuts];
+    int cutCount = 0;
 
 private:
     struct Program {
@@ -119,7 +125,7 @@ private:
     GLuint skyProg_ = 0, lineProg_ = 0;
     GLint skyInvVP_ = -1, skyZenith_ = -1, skyHorizon_ = -1, skyGround_ = -1, skyIntensity_ = -1, skyCapture_ = -1;
     GLuint emptyVao_ = 0, lineVao_ = 0, lineVbo_ = 0;
-    GLuint sceneUbo_ = 0, jointUbo_ = 0, instanceVbo_ = 0;
+    GLuint sceneUbo_ = 0, jointUbo_ = 0, instanceVbo_ = 0, cutUbo_ = 0;
     GLuint shadowTex_ = 0, shadowFbo_ = 0;
     GLuint envCube_ = 0, envFbo_ = 0;
     int envMips_ = 1;

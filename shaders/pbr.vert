@@ -19,6 +19,7 @@ out vec2 vUV;
 out vec4 vTangent;    // xyz tangente, w sinal da bitangente
 out float vViewDepth;
 out vec4 vColor;
+flat out uint vCut;      // aberturas que cortam o objeto
 
 void main() {
 #if defined(SKINNED)
@@ -30,6 +31,9 @@ void main() {
 #else
     mat4 model = uModel;
 #endif
+    // bits das aberturas que cortam este objeto vêm na linha de baixo da matriz (sempre 0 numa matriz afim)
+    vCut = uint(model[0][3] + 0.5) | (uint(model[1][3] + 0.5) << 16);
+    model[0][3] = 0.0; model[1][3] = 0.0;
     vec4 wp = model * vec4(aPos, 1.0);
     // inverse-transpose: normais corretas mesmo com escala não uniforme
     mat3 m3 = mat3(model);

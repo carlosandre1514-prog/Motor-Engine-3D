@@ -19,5 +19,16 @@ layout(std140, binding = 0) uniform SceneBlock {
     PointLightData uPoints[8];
 };
 
+// Aberturas cortadas em paredes (porta/janela/vão): caixa do mundo -> cubo unitário. Bits no objeto dizem quais valem.
+layout(std140, binding = 2) uniform CutBlock { mat4 uCuts[32]; };
+bool insideCut(vec3 p, uint mask) {
+    for (int i = 0; i < 32; ++i) {
+        if ((mask & (1u << uint(i))) == 0u) continue;
+        vec3 q = (uCuts[i] * vec4(p, 1.0)).xyz;
+        if (all(lessThan(abs(q), vec3(0.5)))) return true;
+    }
+    return false;
+}
+
 vec3 acesTonemap(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec3 toDisplay(vec3 hdr) { return pow(acesTonemap(hdr * uEnvParams.x), vec3(1.0 / 2.2)); }

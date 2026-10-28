@@ -428,19 +428,66 @@ void slabWithHole(Geo& g, Mat mat, float x0, float x1, float z0, float z1, float
 }
 
 // Escada reta subindo de (x, y0, zStart) até a altura `rise`, andando `run` metros para -Z
-void stairsRun(Geo& g, Mat mat, float x0, float width, float y0, float zStart, float run, float rise) {
+// baseY: de onde os degraus começam por baixo (lance de cima de uma escada em L/U fica maciço até o chão)
+void stairsRun(Geo& g, Mat mat, float x0, float width, float y0, float zStart, float run, float rise, float baseY = 1e9f) {
     MeshBuilder& m = g[mat];
     m.color = glm::vec4(1.f); m.uvTile = {1.f, 1.f};
+    if (baseY > y0) baseY = y0;
     int n = std::max(4, int(rise / 0.18f + 0.5f));
     for (int i = 0; i < n; ++i) {
         float z1 = zStart - run * i / n, z0 = zStart - run * (i + 1) / n;
-        m.box({x0, y0, z0}, {width, rise * (i + 1) / n, z1 - z0 + 0.001f});
+        m.box({x0, baseY, z0}, {width, y0 - baseY + rise * (i + 1) / n, z1 - z0 + 0.001f});
     }
     float th = std::atan2(rise, run), len = std::sqrt(rise * rise + run * run);
     glm::vec3 nrm(0.f, std::cos(th), std::sin(th));
     // rampa invisível por cima dos degraus (o personagem sobe andando)
     glm::vec3 c(x0 + width * 0.5f, y0 + rise * 0.5f, zStart - run * 0.5f);
     g.colliderTilted(c - nrm * 0.12f, {width * 0.5f, 0.12f, len * 0.5f}, th);
+}
+
+// Placa com vários buracos retangulares (escada em L, caracol...): divide em células e junta as cheias por linha
+void slabWithHoles(Geo& g, Mat mat, float x0, float x1, float z0, float z1, float y, float t, const std::vector<StairHole>& holes) {
+    if (holes.empty()) { slabWithHole(g, mat, x0, x1, z0, z1, y, t, false, 0, 0, 0, 0); return; }
+    MeshBuilder& m = g[mat];
+    m.color = glm::vec4(1.f); m.uvTile = {2.f, 2.f};
+    std::vector<float> xs{x0, x1}, zs{z0, z1};
+    for (const StairHole& h : holes) {
+        xs.push_back(std::clamp(h.x0, x0, x1)); xs.push_back(std::clamp(h.x1, x0, x1));
+        zs.push_back(std::clamp(h.z0, z0, z1)); zs.push_back(std::clamp(h.z1, z0, z1));
+    }
+    for (auto* v : {&xs, &zs}) { std::sort(v->begin(), v->end()); v->erase(std::unique(v->begin(), v->end()), v->end()); }
+    auto open = [&](float x, float z) {
+        for (const StairHole& h : holes) if (x > h.x0 && x < h.x1 && z > h.z0 && z < h.z1) return true;
+        return false;
+    };
+    for (size_t j = 0; j + 1 < zs.size(); ++j) {
+        float za = zs[j], zb = zs[j + 1];
+        if (zb - za < 0.01f) continue;
+        size_t i = 0;
+        while (i + 1 < xs.size()) {
+            if (open((xs[i] + xs[i + 1]) * 0.5f, (za + zb) * 0.5f)) { ++i; continue; }
+            size_t k = i;
+            while (k + 1 < xs.size() && !open((xs[k] + xs[k + 1]) * 0.5f, (za + zb) * 0.5f)) ++k;
+            if (xs[k] - xs[i] > 0.01f) {
+                m.box({xs[i], y, za}, {xs[k] - xs[i], t, zb - za});
+                g.collider({xs[i], y, za}, {xs[k] - xs[i], t, zb - za});
+            }
+            i = k;
+        }
+    }
+}
+
+// Desenha com o sistema local deslocado/girado (lances em outra direção, degraus do caracol)
+template <class F> void inFrame(Geo& g, glm::vec3 at, float yawRad, F&& fn) {
+    glm::mat4 keep[3][int(Mat::Count)];
+    for (int l = 0; l < 3; ++l) for (int k = 0; k < int(Mat::Count); ++k) keep[l][k] = g.layer(l)[k].xf;
+    const float keepYaw = g.yaw;
+    glm::mat4 local = glm::rotate(glm::translate(glm::mat4(1.f), at), yawRad, glm::vec3(0, 1, 0));
+    for (int l = 0; l < 3; ++l) for (int k = 0; k < int(Mat::Count); ++k) g.layer(l)[k].xf = keep[l][k] * local;
+    g.yaw += yawRad;
+    fn();
+    for (int l = 0; l < 3; ++l) for (int k = 0; k < int(Mat::Count); ++k) g.layer(l)[k].xf = keep[l][k];
+    g.yaw = keepYaw;
 }
 
 void railing(Geo& g, float x0, float z0, float x1, float z1, float y, float h) {
@@ -469,6 +516,86 @@ glm::mat4 wallXf(int side, float w, float d) {  // canto inicial e direção de 
 }
 }  // namespace
 
+// Escada encostada no canto esquerdo-fundo (xL = lado +X, zB = fundo -Z), subindo `rise` a partir de y0.
+// holes: onde a laje de cima precisa abrir (passagem da cabeça e saída no topo)
+static void cornerStairs(Geo& g, int kind, float xL, float zB, float roomW, float roomD, float y0, float rise, std::vector<StairHole>* holes) {
+    const float sw = 0.9f;
+    const int n = std::max(8, int(rise / 0.18f + 0.5f));
+    auto landing = [&](float x0, float x1, float z0, float z1, float top) {
+        MeshBuilder& m = g[Mat::Concrete];
+        m.color = glm::vec4(1.f); m.uvTile = {1.f, 1.f};
+        m.box({x0, y0, z0}, {x1 - x0, top - y0, z1 - z0});
+        g.collider({x0, y0, z0}, {x1 - x0, top - y0, z1 - z0});
+    };
+    switch (kind) {
+        case SK_Straight: default: {
+            const float run = std::min(roomD - 0.6f, rise * 1.55f), zStart = zB + run + 0.05f;
+            stairsRun(g, Mat::Concrete, xL - sw, sw, y0, zStart, run, rise);
+            if (holes) holes->push_back({xL - sw - 0.05f, xL + 0.01f, zB - 0.01f, zStart - 0.7f});
+            break;
+        }
+        case SK_L: {  // sobe pela parede esquerda, patamar no canto, segue pela parede do fundo
+            const int n1 = n / 2;
+            const float r1 = rise * n1 / n, r2 = rise - r1;
+            const float tread = std::clamp(std::min((roomD - sw - 0.4f) / n1, (roomW - sw - 0.4f) / (n - n1)), 0.18f, 0.29f);
+            const float run1 = tread * n1, run2 = tread * (n - n1);
+            stairsRun(g, Mat::Concrete, xL - sw, sw, y0, zB + sw + run1, run1, r1);
+            landing(xL - sw, xL, zB, zB + sw, y0 + r1);
+            inFrame(g, glm::vec3(0.f), 1.5707963f, [&] { stairsRun(g, Mat::Concrete, -(zB + sw), sw, y0 + r1, xL - sw, run2, r2, y0); });
+            if (holes) {
+                holes->push_back({xL - sw - run2 - 0.01f, xL + 0.01f, zB - 0.01f, zB + sw + 0.05f});
+                holes->push_back({xL - sw - 0.05f, xL + 0.01f, zB + sw, zB + sw + run1 * 0.6f});
+            }
+            break;
+        }
+        case SK_U: {  // dois lances paralelos com patamar no fundo; chega no topo virado para a frente
+            const int n1 = n / 2;
+            const float r1 = rise * n1 / n, r2 = rise - r1;
+            const float tread = std::clamp((roomD - sw - 0.4f) / (n - n1), 0.18f, 0.29f);
+            const float run1 = tread * n1, run2 = tread * (n - n1);
+            stairsRun(g, Mat::Concrete, xL - sw, sw, y0, zB + sw + run1, run1, r1);
+            landing(xL - 2 * sw, xL, zB, zB + sw, y0 + r1);
+            inFrame(g, glm::vec3(0.f), 3.14159265f, [&] { stairsRun(g, Mat::Concrete, -(xL - sw), sw, y0 + r1, -(zB + sw), run2, r2, y0); });
+            if (holes) holes->push_back({xL - 2 * sw - 0.05f, xL + 0.01f, zB - 0.01f, zB + sw + run2});
+            break;
+        }
+        case SK_Spiral: {  // caracol: degraus em leque em volta de um poste, uma volta inteira
+            const float R = std::clamp(std::min(roomW, roomD) * 0.5f - 0.3f, 0.7f, 1.f);
+            const float cx = xL - R - 0.03f, cz = zB + R + 0.03f, r0 = 0.07f;
+            const int ns = std::max(12, int(rise / 0.19f + 0.5f));
+            const float dth = 6.2831853f / ns, rm = (R + r0) * 0.5f;
+            const float stepRun = rm * dth, th = std::atan2(rise / ns, stepRun);
+            const glm::vec3 nrm(0.f, std::cos(th), std::sin(th));
+            {
+                MeshBuilder& p = g[Mat::GunMetal];
+                p.color = glm::vec4(1.f); p.uvTile = {1.f, 1.f};
+                p.cylinder({cx, y0, cz}, {cx, y0 + rise + 1.f, cz}, r0, r0, 10);
+                g.collider({cx - r0, y0, cz - r0}, {2 * r0, rise + 1.f, 2 * r0});
+            }
+            for (int i = 0; i < ns; ++i) {
+                const float top = y0 + rise * (i + 1) / ns, hw = R * std::tan(dth * 0.5f) + 0.03f;
+                inFrame(g, glm::vec3(cx, 0.f, cz), (i + 0.5f) * dth, [&] {
+                    MeshBuilder& m = g[Mat::Wood];
+                    m.color = glm::vec4(1.f); m.uvTile = {1.f, 1.f};
+                    m.box({r0, top - 0.06f, -hw}, {R - r0, 0.06f, 2 * hw});
+                    MeshBuilder& rail = g[Mat::GunMetal];
+                    rail.box({R - 0.05f, top, -0.02f}, {0.04f, 0.9f, 0.04f});  // poste do corrimão
+                    // rampa invisível pelo meio do degrau (o personagem sobe girando)
+                    glm::vec3 c(rm, y0 + rise * (i + 0.5f) / ns, 0.f);
+                    g.colliderTilted(c - nrm * 0.06f, {(R - r0) * 0.5f, 0.06f, stepRun * 0.6f}, th);
+                });
+            }
+            // a laje fica só em cima do primeiro quarto de volta (degraus baixos): o último degrau sai nela
+            const float e = R + 0.05f;
+            if (holes) {
+                holes->push_back({cx - e, cx, cz - e, cz + e});
+                holes->push_back({cx, cx + e, cz, cz + e});
+            }
+            break;
+        }
+    }
+}
+
 float moduleTop(const ModuleSpec& s) { return (s.floor ? kSlabT : 0.f) + s.h + (s.slab ? kSlabT : 0.f); }
 
 void buildModule(Geo& g, const ModuleSpec& s) {
@@ -479,19 +606,18 @@ void buildModule(Geo& g, const ModuleSpec& s) {
     for (int side = 0; side < 4; ++side) {
         float len = side < 2 ? w : d - 2 * kWallT;
         int kind = s.walls[side];
-        if (s.stairs == 1 && side == 2 && kind != MW_Open) kind = MW_Plain;  // a escada interna fica encostada nesta parede
+        bool inside = s.stairs != SK_None && s.stairs != SK_Outside;
+        // a escada interna fica encostada na parede esquerda (a em L também no fundo)
+        if (inside && kind != MW_Open && (side == 2 || (side == 1 && s.stairs == SK_L))) kind = MW_Plain;
         wallRun(g, s, wallXf(side, w, d), len, fy, s.h, kind);
     }
-    // escada interna: encostada na parede esquerda, sobe de frente para o fundo; a laje abre em cima dela
-    const float sw = 0.9f, sx0 = w / 2 - kWallT - sw;
-    const float run = std::min(d - 2 * kWallT - 0.6f, (s.h + kSlabT) * 1.55f);
-    const float zStart = -d / 2 + kWallT + run + 0.05f;
-    if (s.stairs == 1) stairsRun(g, Mat::Concrete, sx0, sw, fy, zStart, run, s.h + kSlabT);
+    // escada interna no canto esquerdo-fundo (reta, em L, em U ou caracol); a laje abre em cima dela
+    std::vector<StairHole> holes;
+    if (s.stairs != SK_None && s.stairs != SK_Outside)
+        cornerStairs(g, s.stairs, w / 2 - kWallT, -d / 2 + kWallT, w - 2 * kWallT, d - 2 * kWallT, fy, s.h + kSlabT, &holes);
     // laje (com buraco da escada)
     if (s.slab) {
-        bool hole = s.stairs == 1;
-        slabWithHole(g, Mat::Concrete, -w / 2, w / 2, -d / 2, d / 2, top, kSlabT, hole, sx0 - 0.05f, w / 2 - kWallT,
-                     -d / 2 + kWallT, zStart - 0.7f);
+        slabWithHoles(g, Mat::Concrete, -w / 2, w / 2, -d / 2, d / 2, top, kSlabT, holes);
         if (s.parapet) {  // mureta do terraço
             MeshBuilder& m = g[s.wallMat];
             m.color = s.wallMat == Mat::Plaster || s.wallMat == Mat::Concrete ? s.wallColor : glm::vec4(1.f);
@@ -505,7 +631,7 @@ void buildModule(Geo& g, const ModuleSpec& s) {
             }
         }
     }
-    if (s.stairs == 2) buildModulePiece(g, MP_StairsOut, s, 0);
+    if (s.stairs == SK_Outside) buildModulePiece(g, MP_StairsOut, s, 0);
     if (s.porch) buildModulePiece(g, MP_Porch, s, 0);
 }
 
@@ -515,6 +641,9 @@ void buildModulePiece(Geo& g, int piece, const ModuleSpec& s, int wallKind) {
         case MP_Floor: slabWithHole(g, s.floorMat, -w / 2, w / 2, -d / 2, d / 2, 0.f, kSlabT, false, 0, 0, 0, 0); break;
         case MP_Wall:  wallRun(g, s, glm::translate(glm::mat4(1.f), {-w / 2, 0, kWallT / 2}), w, 0.f, s.h, wallKind); break;
         case MP_Slab:  slabWithHole(g, Mat::Concrete, -w / 2, w / 2, -d / 2, d / 2, 0.f, kSlabT, false, 0, 0, 0, 0); break;
+        case MP_Stairs:  // escada avulsa em L, U ou caracol, dentro de w x d, subindo a altura h
+            cornerStairs(g, s.stairs, w / 2, -d / 2, w, d, 0.f, s.h, nullptr);
+            break;
         case MP_StairsOut: {  // pela lateral direita (-X), de frente para o fundo, até o topo da laje; corrimão do lado de fora
             const float sw = 1.f, x0 = -w / 2 - sw, rise = top + (s.slab ? kSlabT : 0.f);
             stairsRun(g, Mat::Concrete, x0, sw, 0.f, d / 2, d, rise);
