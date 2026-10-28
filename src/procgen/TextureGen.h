@@ -38,10 +38,18 @@ enum class Mat : uint8_t {
     Graffiti,      // muro de reboco com grafites coloridos e pichação (tile 4 x 2 m)
     ChainLink,     // alambrado / tela de arame (alfa recortado, tile 1 x 1 m)
     Corrugated,    // telha ondulada de fibrocimento (ondas ao longo de u, tile 2 x 2 m)
+    Mural,         // atlas de pichações/grafites com texto (2 x 4 murais de 4 x 2 m, fundo transparente)
+    Lamp,          // lâmpada (emissiva: acende à noite)
+    Cement,        // cimentado do chão (becos, quintais): concreto que não faz sombra (tile 2 x 2 m)
     Count
 };
 
 const char* matName(Mat m);
+
+// Murais do atlas Mat::Mural: textos e coordenadas de textura de cada um
+constexpr int kMuralCount = 8;
+const char* muralName(int i);
+glm::vec4 muralUV(int i);  // u0, v0, u1, v1 (v0 = topo)
 
 struct TexData {
     int w = 0, h = 0;

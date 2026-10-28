@@ -129,9 +129,12 @@ class Assistant(
                       "quantidade" to mapOf("type" to "integer"), "tempo" to mapOf("type" to "number"),
                       "vida_jogador" to mapOf("type" to "number"), "titulo" to mapOf("type" to "string"),
                       "descricao" to mapOf("type" to "string"))),
-            tool("definir_ambiente", "Hora do dia (0-24; 19-5 é noite), exposição da câmera, força do sol e neblina (0 a 0.02).",
+            tool("definir_ambiente", "Hora do dia (0-24; 19-5 é noite), exposição da câmera, força do sol, neblina (0 a 0.02), " +
+                    "ciclo de dia e noite no Play (minutos por dia inteiro; 0 = hora parada) e chuva (nunca, automatica, sempre).",
                 mapOf("hora" to mapOf("type" to "number"), "exposicao" to mapOf("type" to "number"),
-                      "sol" to mapOf("type" to "number"), "neblina" to mapOf("type" to "number"))),
+                      "sol" to mapOf("type" to "number"), "neblina" to mapOf("type" to "number"),
+                      "ciclo_min" to mapOf("type" to "number"),
+                      "chuva" to mapOf("type" to "string", "enum" to listOf("nunca", "automatica", "sempre")))),
             tool("altura_terreno", "Altura do chão em pontos [x,z] (favela e infinito têm morros). Use para pousar objetos no chão.",
                 mapOf("pontos" to mapOf("type" to "array", "items" to mapOf("type" to "array", "items" to mapOf("type" to "number")))),
                 listOf("pontos")),
@@ -156,6 +159,7 @@ madeira, metal, metal_escuro, plastico, vidro, agua, pintura), comportamentos (l
 - {"tipo":"construcao","modelo":"casa|sobrado|barraco|predio|arranha_ceu|escola|arvore|pinheiro|palmeira|carro|poste|muro","semente":123,"andares":2}  (andares opcional)
 - {"tipo":"modulo","largura":5,"profundidade":4,"altura":2.8,"paredes":["porta","janela","lisa","janela"],"material":"tijolo|tijolo_vermelho|reboco|concreto|madeira|pedra","cor_parede":"#e0a060","piso":"ceramica|pedra|calcada|asfalto|concreto|madeira|marmore|terra|grama","laje":true,"mureta":false,"varanda":true,"escada":"nenhuma|reta|l|u|caracol|externa"}  (andar/cômodo montado; paredes = frente, fundo, esquerda, direita: lisa|porta|janela|aberta; "sobre":ID empilha em cima do andar ID com o mesmo tamanho)
 - {"tipo":"modulo","peca":"piso|parede|laje|varanda|escada|telhado","largura":4,"profundidade":4,"parede":"lisa|porta|janela","piso":"pedra","escada":"reta|l|u|caracol"}  (peça avulsa)
+- {"tipo":"imagem","mural":0,"largura":3,"pos":[x,y,z],"rot_y":0}  (pichação na parede: 0 Favela venceu, 1 Paz e amor, 2 O crime é nós, 3 Rei Pelé 10, 4 Neymar Jr 10, 5 Fé em Deus, 6 pichos, 7 Comunidade; ou "arquivo":"/caminho/imagem.png" em vez de "mural"; sem "pos" cola onde o centro da tela aponta)
 - {"tipo":"abertura","estilo":"porta|vao|janela|corte","largura":1.0,"altura":2.1,"pos":[x,y,z],"rot_y":0,"espessura":0.2}  (corta porta/janela/vão em parede ou muro já existente; sem "pos" usa o ponto no centro da tela)
 - {"tipo":"personagem","jogador":true,"arma":"pistola|fuzil|escopeta|sniper|faca|taco","aparencia":"aleatorio" ou
    {"altura":1.75,"corpo":"magro|normal|forte","pele":"clara|morena|parda|negra","camisa":cor,"calca":cor,"tenis":cor,

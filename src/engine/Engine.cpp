@@ -1,5 +1,6 @@
 #include "engine/Engine.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -139,6 +140,8 @@ void ensureBasics(Engine* e) {
             m.doubleSided = true;
         }
         if (Mat(k) == Mat::ChainLink) m.alphaCutoff = 0.5f;  // alambrado: só o arame aparece
+        if (Mat(k) == Mat::Mural) m.alphaCutoff = 0.35f;     // pichação: só a tinta, a parede aparece atrás
+        if (Mat(k) == Mat::Lamp) m.emissive_factor = glm::vec3(0.f);  // acende à noite (updateLamps)
         if (Mat(k) == Mat::Terrain) {
             // terreno padrão: camadas de textura reais (shaders/terrain); a ordem é a mesma do pbr.frag
             static const char* kLayers[] = {"grama", "campo", "floresta", "chao", "areia", "terra", "seixos"};
@@ -290,7 +293,7 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
             // pisos planos só recebem sombra (economiza draw calls no shadow pass)
             Mat m = Mat(k);
             mr->castShadows = !(m == Mat::Asphalt || m == Mat::Road || m == Mat::Sidewalk || m == Mat::Grass || m == Mat::Court || m == Mat::Terrain ||
-                                 m == Mat::ChainLink);  // tela: a sombra sairia cheia
+                                 m == Mat::ChainLink || m == Mat::Mural || m == Mat::Cement);  // tela/pichação: a sombra sairia cheia
             if (layer) mr->lodFar = layer == 2 ? std::min(detailFar, kInteriorFar) : detailFar;  // LOD: detalhe/interior só perto
         }
         if (local) registerObject(e, ch);
@@ -348,6 +351,7 @@ void clearScene(Engine* e) {
     e->doors.clear();
     e->teles.clear();
     e->openings.clear();
+    e->mapLamps.clear();
     e->renderer.cutCount = 0;
     e->physics.cuts.clear();
     e->doorMesh = kInvalidId;
@@ -607,6 +611,15 @@ int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
         c.weapon = h;
         c.weaponKind = kind;
         c.muzzle = muzzle;
+        // som: cada fuzil do kit tem o seu; os outros pelo tipo
+        {
+            std::string f = look.file;
+            std::transform(f.begin(), f.end(), f.begin(), [](unsigned char ch2) { return char(std::tolower(ch2)); });
+            static const char* byKind[] = {"tiro_pistola", "tiro_m4", "tiro_escopeta", "tiro_sniper", "golpe_faca", "golpe_taco"};
+            c.shotSound = f.find("ak47") != std::string::npos ? "tiro_ak47"
+                        : f.find("ak74") != std::string::npos ? "tiro_ak74"
+                        : f.find("m4") != std::string::npos ? "tiro_m4" : byKind[std::clamp(kind, 0, WK_Count - 1)];
+        }
         // onde a mão esquerda segura: guarda-mão (ou a empunhadura frontal, se tiver)
         c.hasSupport = kind == WK_Rifle || kind == WK_Shotgun || kind == WK_Sniper || kind == WK_Pistol;
         if (c.hasSupport && kind != WK_Pistol) {  // pistola: a mão esquerda segura o pulso direito (veja updateSupportHands)
@@ -793,11 +806,14 @@ static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* sel
     glm::vec3 hit; GameObject* obj = nullptr; float frac = 1.f;
     bool any = e->physics.raycastIgnoring(from, from + dir * range, self, hit, obj, frac);
     glm::vec3 end = any ? hit : from + dir * range;
+    if (melee) playSound(e, c.shotSound.empty() ? "golpe_faca" : c.shotSound.c_str(), from, 0.8f);
     if (!melee) {
         glm::vec3 muzzle = end;
         if (GameObject* w = e->scene.get(c.weapon)) muzzle = glm::vec3(w->transform.world() * glm::vec4(c.muzzle, 1.f));
         glm::vec3 shotDir = glm::normalize(end - muzzle);
         addFlash(e, fxMuzzleFlash(e->particles, e->fxRng, muzzle, shotDir), 0.06f);
+        playSound(e, c.shotSound.empty() ? "tiro_m4" : c.shotSound.c_str(), muzzle, 1.f);
+        if (any) playSound(e, "impacto", end, 0.5f);
         int pellets = kind == WK_Shotgun ? 6 : 1;
         for (int k = 0; k < pellets; ++k) {
             glm::vec3 jitter = k ? glm::vec3(e->fxRng.range(-1.f, 1.f), e->fxRng.range(-1.f, 1.f), e->fxRng.range(-1.f, 1.f)) * 0.04f * glm::length(end - muzzle) : glm::vec3(0.f);
@@ -979,6 +995,7 @@ void updatePlayer(Engine* e, float dt) {
                 c.ammo = 30;
                 const AnimationClip* rc = c.anim && c.clipMap[CC_Reload] >= 0 ? c.anim->clipAt(c.clipMap[CC_Reload]) : nullptr;
                 c.reloadTimer = rc ? rc->duration / 1.4f : 2.f;
+                playSound(e, "recarga", go->transform.position, 0.8f);
                 if (c.anim && c.clipMap[CC_Reload] >= 0) c.anim->setClip(c.clipMap[CC_Reload]);
                 e->game.message = "Recarregando...";
             }
@@ -1214,6 +1231,23 @@ int gatherLights(Engine* e, PointLight* out, int max) {
     for (auto& f : e->flashes)
         if (f.life > 0.f) { FxLight l = f.light; l.intensity *= f.life / f.maxLife; push(l); }
     for (auto& b : e->bolts) if (b.life > 0.f) push({b.pts[b.n / 2], b.color, 20.f, 14.f});
+    // postes acesos à noite: só os mais perto da câmera (o shader tem poucas luzes)
+    if (e->night > 0.05f && !e->mapLamps.empty()) {
+        std::pair<float, int> near[24];
+        int nn = 0;
+        for (int i = 0; i < int(e->mapLamps.size()); ++i) {
+            glm::vec3 d = e->mapLamps[i] - cam;
+            float d2 = glm::dot(d, d);
+            if (d2 > 90.f * 90.f) continue;
+            if (nn < 24) near[nn++] = {d2, i};
+            else {
+                int worst = 0;
+                for (int k = 1; k < 24; ++k) if (near[k].first > near[worst].first) worst = k;
+                if (d2 < near[worst].first) near[worst] = {d2, i};
+            }
+        }
+        for (int k = 0; k < nn; ++k) push({e->mapLamps[near[k].second], glm::vec3(1.f, 0.78f, 0.5f), 110.f * e->night, 20.f});
+    }
     std::sort(c, c + nc, [](const Cand& a, const Cand& b) { return a.score < b.score; });
     for (int i = 0; i < nc && n < max; ++i) out[n++] = {c[i].l.pos, c[i].l.radius, c[i].l.color, c[i].l.intensity};
     return n;
@@ -1385,5 +1419,12 @@ void updateCuts(Engine* e) {
         }
         e->physics.cuts.push_back(c.worldToBox);
     }
+}
+}  // namespace eng
+
+namespace eng {
+void updateLamps(Engine* e) {
+    // luz quente de vapor de sódio; de dia o vidro fica apagado (um pouco claro)
+    e->renderer.setEmissive(e->mats[int(Mat::Lamp)], glm::vec3(1.f, 0.8f, 0.55f) * (0.05f + 7.f * e->night));
 }
 }  // namespace eng

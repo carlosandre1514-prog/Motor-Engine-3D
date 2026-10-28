@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include "json.hpp"
 #include "platform/engine_c_api.h"
+#include "procgen/TextureGen.h"
 
 static const int W = 960, H = 540;
 static GLuint g_fbo = 0;
@@ -808,6 +809,15 @@ int main(int argc, char** argv) {
             save(out, (std::string(v.name) + ".png").c_str());
             stats(e, v.name);
         }
+        // noite: postes acesos e as pichações
+        engine_tool_call(e, "definir_ambiente", R"({"hora":21.5})");
+        for (const View& v : {views[1], views[4], views[3]}) {
+            float y = v.ground ? hAt(v.x, v.z) + v.y : v.y;
+            engine_set_camera(e, v.x, y, v.z, v.yaw, v.pitch, v.dist);
+            frames(e, 4);
+            save(out, (std::string(v.name) + "_noite.png").c_str());
+        }
+        engine_tool_call(e, "definir_ambiente", R"({"hora":16.9})");
         // desempenho andando no Play
         int pl = -1;
         for (int id = 0; id < engine_object_count(e) && pl < 0; ++id)
@@ -830,7 +840,41 @@ int main(int argc, char** argv) {
         if (wp < 6) { std::printf("  [ERRO] não chegou ao campinho pelas escadarias\n"); ++g_fail; }
         save(out, "31_play_campinho.png");
         engine_set_play(e, 0);
+        // chuva forte no Play: gotas, respingos, céu fechado, trovão
+        engine_select(e, pl);
+        engine_create_weapon_ex(e, 1, "kit:armas/ak47", 0, 1.f, 0);
+        engine_tool_call(e, "definir_ambiente", R"({"chuva":"sempre","ciclo_min":10})");
+        engine_set_play(e, 1);
+        float wt[3] = {0, 0, 0};
+        int thunder = 0, shots = 0;
+        for (int k = 0; k < 900; ++k) {
+            if (k % 40 == 0) engine_player_fire(e);
+            frames(e, 1);
+            std::string snd = engine_poll_sounds(e);
+            if (snd.find("trovao") != std::string::npos) ++thunder;
+            if (snd.find("tiro_ak47") != std::string::npos) ++shots;
+        }
+        engine_get_weather(e, wt);
+        std::printf("  chuva %.2f, hora %.2f (andou com o ciclo), trovões %d, tiros com som %d\n", wt[0], wt[2], thunder, shots);
+        if (wt[0] < 0.9f) { std::printf("  [ERRO] não choveu\n"); ++g_fail; }
+        if (shots == 0) { std::printf("  [ERRO] tiro sem som\n"); ++g_fail; }
+        save(out, "31_chuva.png");
+        engine_set_play(e, 0);
+        engine_tool_call(e, "definir_ambiente", R"({"chuva":"automatica"})");
     };
+    if (std::getenv("SO_MURAIS")) {  // atlas das pichações (confere as fontes)
+        eng::setMaterialTextureDir((std::string(argv[1]) + "/materials").c_str());
+        const eng::TexData& t = eng::proceduralTexture(eng::Mat::Mural);
+        std::vector<uint8_t> px(t.albedo);
+        for (size_t i = 0; i < px.size(); i += 4) {  // fundo cinza onde é transparente
+            float a = px[i + 3] / 255.f;
+            for (int c = 0; c < 3; ++c) px[i + c] = uint8_t(px[i + c] * a + 120 * (1.f - a));
+            px[i + 3] = 255;
+        }
+        stbi_write_png((out + "/murais.png").c_str(), t.w, t.h, 4, px.data(), t.w * 4);
+        engine_destroy(e);
+        return 0;
+    }
     if (std::getenv("SO_FAVELA")) { favela(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ESCADAS")) { stairs(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ABERTURAS")) { openings(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }

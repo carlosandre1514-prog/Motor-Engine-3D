@@ -772,10 +772,13 @@ void buildStreetLight(Geo& g) {
     MeshBuilder& m = g[Mat::Metal];
     m.cylinder({0, 0, 0}, {0, 7.f, 0}, 0.1f, 0.07f, 8, false);
     m.cylinder({0, 7.f, 0}, {0, 7.2f, 1.4f}, 0.06f, 0.05f, 6, false);
-    MeshBuilder& p = g[Mat::Painted];
-    p.color = srgb(255, 250, 220);
-    p.box({-0.18f, 6.95f, 1.2f}, {0.36f, 0.15f, 0.5f});
+    MeshBuilder& p = g[Mat::GunMetal];
     p.color = glm::vec4(1.f);
+    p.box({-0.2f, 7.05f, 1.15f}, {0.4f, 0.12f, 0.55f});   // luminária
+    MeshBuilder& l = g[Mat::Lamp];
+    l.color = glm::vec4(1.f);
+    l.box({-0.15f, 6.97f, 1.2f}, {0.3f, 0.08f, 0.45f});   // vidro que acende
+    g.lamp({0.f, 6.8f, 1.42f});
 }
 
 }  // namespace eng

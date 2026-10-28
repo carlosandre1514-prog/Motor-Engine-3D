@@ -4,6 +4,9 @@
 #include <functional>
 #include <string>
 #include <stb_image.h>
+#define STB_TRUETYPE_IMPLEMENTATION
+#define STBTT_STATIC
+#include "third_party/stb_truetype.h"
 #include "procgen/Noise.h"
 
 namespace eng {
@@ -13,7 +16,7 @@ const char* matName(Mat m) {
                                   "Telha", "Concreto", "Asfalto", "Rua", "Calçada", "Grama", "Madeira", "Metal", "Metal escuro",
                                   "Plástico", "Quadra", "Água", "Terreno", "Pintura lisa", "Vidro", "Tijolo vermelho",
                                   "Fachada de tijolo", "Ardósia", "Mármore", "Terra", "Pedra", "Cerâmica", "Grafite",
-                                  "Alambrado", "Telha ondulada"};
+                                  "Alambrado", "Telha ondulada", "Pichações", "Lâmpada", "Cimentado"};
     return names[int(m)];
 }
 
@@ -26,6 +29,7 @@ MatParams matParams(Mat m) {
         case Mat::RoofTile: return {1.f, 0.f, 0, true};   // telhado visto por baixo também
         case Mat::Slate: return {1.f, 0.f, 0, true};
         case Mat::ChainLink: return {1.f, 1.f, 0, true};   // tela vista dos dois lados
+        case Mat::Mural: return {1.f, 0.f, 0, false};
         case Mat::Corrugated: return {1.f, 0.f, 0, true};
         default: return {1.f, 1.f, 0, false};
     }
@@ -547,6 +551,237 @@ TexData genCorrugated() {
     return finish(im, true, 4.f);
 }
 
+// ---------- pichações e grafites com texto (fontes livres em materials/fontes) ----------
+struct Font {
+    std::vector<uint8_t> data;
+    stbtt_fontinfo info{};
+    bool ok = false;
+};
+Font loadFont(const char* file) {
+    Font f;
+    if (gTexDir.empty()) return f;
+    FILE* fp = std::fopen((gTexDir + "/fontes/" + file).c_str(), "rb");
+    if (!fp) return f;
+    std::fseek(fp, 0, SEEK_END);
+    long n = std::ftell(fp);
+    std::fseek(fp, 0, SEEK_SET);
+    f.data.resize(size_t(std::max(0L, n)));
+    if (n > 0 && std::fread(f.data.data(), 1, size_t(n), fp) == size_t(n))
+        f.ok = stbtt_InitFont(&f.info, f.data.data(), stbtt_GetFontOffsetForIndex(f.data.data(), 0)) != 0;
+    std::fclose(fp);
+    return f;
+}
+std::vector<int> utf8(const char* s) {
+    std::vector<int> out;
+    for (const unsigned char* p = (const unsigned char*)s; *p;) {
+        int c = *p++;
+        if (c >= 0xC0 && c < 0xE0 && *p) c = ((c & 0x1F) << 6) | (*p++ & 0x3F);
+        else if (c >= 0xE0 && c < 0xF0 && p[0] && p[1]) { c = ((c & 0x0F) << 12) | ((p[0] & 0x3F) << 6) | (p[1] & 0x3F); p += 2; }
+        out.push_back(c);
+    }
+    return out;
+}
+// Camada do mural (1024 x 512): máscara de cobertura 0..1
+struct Layer {
+    int w, h;
+    std::vector<float> m;
+    Layer(int W, int H) : w(W), h(H), m(W * H, 0.f) {}
+    float at(int x, int y) const { return x < 0 || y < 0 || x >= w || y >= h ? 0.f : m[y * w + x]; }
+};
+// Texto centrado em (cx, cy), cabendo em maxW; wobble: letras sobem e descem (jeito de spray). Retorna a largura usada.
+float drawText(Layer& L, const Font& f, const char* text, float cx, float cy, float maxW, float px, float wobble, uint32_t seed) {
+    if (!f.ok) return 0.f;
+    std::vector<int> cps = utf8(text);
+    float scale = stbtt_ScaleForPixelHeight(&f.info, px);
+    auto width = [&](float sc) {
+        float w = 0.f;
+        for (size_t i = 0; i < cps.size(); ++i) {
+            int adv, lsb;
+            stbtt_GetCodepointHMetrics(&f.info, cps[i], &adv, &lsb);
+            w += adv * sc;
+            if (i + 1 < cps.size()) w += stbtt_GetCodepointKernAdvance(&f.info, cps[i], cps[i + 1]) * sc;
+        }
+        return w;
+    };
+    float tw = width(scale);
+    if (tw > maxW) { scale *= maxW / tw; tw = maxW; }
+    int asc, desc, gap;
+    stbtt_GetFontVMetrics(&f.info, &asc, &desc, &gap);
+    float base = cy + (asc + desc) * 0.5f * scale;
+    float x = cx - tw * 0.5f;
+    for (size_t i = 0; i < cps.size(); ++i) {
+        int adv, lsb, x0, y0, x1, y1;
+        stbtt_GetCodepointHMetrics(&f.info, cps[i], &adv, &lsb);
+        stbtt_GetCodepointBitmapBox(&f.info, cps[i], scale, scale, &x0, &y0, &x1, &y1);
+        int gw = x1 - x0, gh = y1 - y0;
+        if (gw > 0 && gh > 0) {
+            std::vector<uint8_t> bmp(size_t(gw * gh));
+            stbtt_MakeCodepointBitmap(&f.info, bmp.data(), gw, gh, gw, scale, scale, cps[i]);
+            float dy = (hashf(int(i), 3, seed) - 0.5f) * 2.f * wobble;
+            int ox = int(x + x0), oy = int(base + y0 + dy);
+            for (int yy = 0; yy < gh; ++yy)
+                for (int xx = 0; xx < gw; ++xx) {
+                    int X = ox + xx, Y = oy + yy;
+                    if (X < 0 || Y < 0 || X >= L.w || Y >= L.h) continue;
+                    float& d = L.m[Y * L.w + X];
+                    d = std::max(d, bmp[yy * gw + xx] / 255.f);
+                }
+        }
+        x += adv * scale;
+        if (i + 1 < cps.size()) x += stbtt_GetCodepointKernAdvance(&f.info, cps[i], cps[i + 1]) * scale;
+    }
+    return tw;
+}
+// Distância (px) até a máscara (chanfro 3-4, duas passadas)
+std::vector<float> distOutside(const Layer& L) {
+    const float INF = 1e9f, a = 1.f, b = 1.4142f;
+    std::vector<float> d(L.m.size());
+    for (size_t i = 0; i < d.size(); ++i) d[i] = L.m[i] > 0.5f ? 0.f : INF;
+    auto D = [&](int x, int y) { return x < 0 || y < 0 || x >= L.w || y >= L.h ? INF : d[y * L.w + x]; };
+    for (int y = 0; y < L.h; ++y)
+        for (int x = 0; x < L.w; ++x) {
+            float& v = d[y * L.w + x];
+            v = std::min({v, D(x - 1, y) + a, D(x, y - 1) + a, D(x - 1, y - 1) + b, D(x + 1, y - 1) + b});
+        }
+    for (int y = L.h - 1; y >= 0; --y)
+        for (int x = L.w - 1; x >= 0; --x) {
+            float& v = d[y * L.w + x];
+            v = std::min({v, D(x + 1, y) + a, D(x, y + 1) + a, D(x + 1, y + 1) + b, D(x - 1, y + 1) + b});
+        }
+    return d;
+}
+// Formas: coroa, coração e bola (somadas à máscara: ganham contorno junto com as letras)
+void crown(Layer& L, float cx, float cy, float w) {
+    float h = w * 0.55f;
+    for (int y = int(cy - h); y <= int(cy); ++y)
+        for (int x = int(cx - w / 2); x <= int(cx + w / 2); ++x) {
+            if (x < 0 || y < 0 || x >= L.w || y >= L.h) continue;
+            float u = (x - (cx - w / 2)) / w, v = (cy - y) / h;  // v: 0 embaixo, 1 no alto
+            float tri = 1.f - std::abs(std::fmod(u * 6.f, 2.f) - 1.f);  // 0 nos vales, 1 nas 3 pontas
+            bool in = v < 0.45f || v < 0.45f + 0.55f * tri * (u > 0.02f && u < 0.98f ? 1.f : 0.f);
+            if (in) L.m[y * L.w + x] = 1.f;
+        }
+}
+void heart(Layer& L, float cx, float cy, float s) {
+    for (int y = int(cy - s); y <= int(cy + s); ++y)
+        for (int x = int(cx - s); x <= int(cx + s); ++x) {
+            if (x < 0 || y < 0 || x >= L.w || y >= L.h) continue;
+            float X = (x - cx) / s * 1.3f, Y = -(y - cy) / s * 1.3f + 0.25f;
+            float q = X * X + Y * Y - 1.f;
+            if (q * q * q - X * X * Y * Y * Y <= 0.f) L.m[y * L.w + x] = 1.f;
+        }
+}
+void disc(Layer& L, float cx, float cy, float r) {
+    for (int y = int(cy - r); y <= int(cy + r); ++y)
+        for (int x = int(cx - r); x <= int(cx + r); ++x)
+            if (x >= 0 && y >= 0 && x < L.w && y < L.h && (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) L.m[y * L.w + x] = 1.f;
+}
+
+struct MuralDef { const char* name; const char* text; const char* text2; const char* font; glm::vec3 a, b, line; int deco; int style; };
+const MuralDef kMurals[kMuralCount] = {
+    {"Favela venceu", "FAVELA VENCEU", "", "RubikWetPaint.ttf", {1.f, 0.85f, 0.1f}, {0.1f, 0.75f, 0.25f}, {0.02f, 0.02f, 0.03f}, 0, 0},
+    {"Paz e amor", "PAZ E AMOR", "", "Bangers.ttf", {0.3f, 0.9f, 1.f}, {0.1f, 0.35f, 0.9f}, {0.02f, 0.02f, 0.05f}, 1, 0},
+    {"O crime é nós", "O CRIME É NÓS", "", "PermanentMarker.ttf", {0.04f, 0.04f, 0.05f}, {0.04f, 0.04f, 0.05f}, {0.8f, 0.08f, 0.08f}, 0, 1},
+    {"Rei Pelé 10", "REI PELÉ", "10", "Bangers.ttf", {1.f, 0.85f, 0.2f}, {0.95f, 0.45f, 0.05f}, {0.03f, 0.03f, 0.03f}, 2, 0},
+    {"Neymar Jr 10", "NEYMAR JR", "10", "Bangers.ttf", {1.f, 0.9f, 0.1f}, {0.1f, 0.65f, 0.3f}, {0.05f, 0.15f, 0.6f}, 3, 0},
+    {"Fé em Deus", "FÉ EM DEUS", "", "RubikWetPaint.ttf", {1.f, 0.55f, 0.15f}, {0.95f, 0.2f, 0.55f}, {0.02f, 0.02f, 0.03f}, 0, 0},
+    {"Pichações", "NÓS POR NÓS", "", "PermanentMarker.ttf", {0.05f, 0.05f, 0.06f}, {0.05f, 0.05f, 0.06f}, {0.f, 0.f, 0.f}, 0, 2},
+    {"Comunidade", "COMUNIDADE", "", "Bangers.ttf", {0.75f, 0.35f, 1.f}, {1.f, 0.3f, 0.6f}, {0.02f, 0.02f, 0.03f}, 0, 0},
+};
+
+TexData genMurals() {
+    const int CW = 1024, CH = 512;
+    Img im(CW * 2, CH * 4);
+    std::vector<float> alpha(im.w * im.h, 0.f);
+    std::string loaded[3];
+    Font fonts[3];
+    auto font = [&](const char* name) -> const Font& {
+        for (int i = 0; i < 3; ++i) if (loaded[i] == name) return fonts[i];
+        for (int i = 0; i < 3; ++i) if (loaded[i].empty()) { loaded[i] = name; fonts[i] = loadFont(name); return fonts[i]; }
+        return fonts[0];
+    };
+    for (int k = 0; k < kMuralCount; ++k) {
+        const MuralDef& M = kMurals[k];
+        const int ox = (k % 2) * CW, oy = (k / 2) * CH;
+        Layer L(CW, CH);
+        const Font& F = font(M.font);
+        auto put = [&](int x, int y, glm::vec3 c, float a) {
+            int i = (oy + y) * im.w + ox + x;
+            im.col[i] = glm::mix(im.col[i], c, a);
+            alpha[i] = std::max(alpha[i], a);
+            im.rough[i] = 0.55f;
+        };
+        if (M.style == 2) {  // parede de pichação: várias tags finas
+            const char* tags[] = {"NÓS POR NÓS", "MORRO", "VILA", "PAZ", "ZN", "QUEBRADA", "LOKO", "FAVELA"};
+            const glm::vec3 cols[] = {{0.05f, 0.05f, 0.06f}, {0.8f, 0.1f, 0.1f}, {0.1f, 0.3f, 0.9f}, {0.05f, 0.05f, 0.06f}};
+            for (int t = 0; t < 8; ++t) {
+                Layer T(CW, CH);
+                float cx = 200.f + (t % 3) * 320.f + (hashf(t, 1, 501) - 0.5f) * 80.f, cy = 90.f + (t / 3) * 150.f + (hashf(t, 2, 501) - 0.5f) * 40.f;
+                drawText(T, F, tags[t], cx, cy, 330.f, 90.f + hashf(t, 3, 501) * 50.f, 8.f, 600 + t);
+                glm::vec3 c = cols[t % 4];
+                for (int y = 0; y < CH; ++y) for (int x = 0; x < CW; ++x) if (float v = T.at(x, y); v > 0.f) put(x, y, c, v);
+            }
+            continue;
+        }
+        bool big2 = M.text2[0] != 0;
+        float textY = M.deco >= 2 ? 300.f : 256.f;
+        drawText(L, F, M.text, big2 ? 420.f : 512.f, textY, big2 ? 640.f : 940.f, M.style == 1 ? 230.f : 250.f, M.style == 1 ? 10.f : 14.f, 500 + k);
+        if (big2) drawText(L, font("Bangers.ttf"), M.text2, 885.f, textY + 10.f, 170.f, 260.f, 6.f, 700 + k);
+        if (M.deco == 1) heart(L, 930.f, 120.f, 70.f);
+        if (M.deco >= 2) crown(L, 420.f, 165.f, 230.f);
+        Layer ball(CW, CH);
+        if (M.deco == 2) disc(ball, 120.f, 400.f, 70.f);
+        for (size_t i = 0; i < ball.m.size(); ++i) L.m[i] = std::max(L.m[i], ball.m[i]);
+        std::vector<float> d = distOutside(L);
+        const float outline = M.style == 1 ? 6.f : 13.f;
+        const int sx = M.style == 1 ? 7 : 12, sy = M.style == 1 ? 7 : 12;
+        for (int y = 0; y < CH; ++y)
+            for (int x = 0; x < CW; ++x) {
+                int i = y * CW + x;
+                float v = L.m[i];
+                // nuvem de spray atrás (só nas peças)
+                if (M.style == 0 && d[i] < 34.f) {
+                    float n = tileNoise(float(x) / CW, float(y) / CH, 18.f, 3, 520 + k);
+                    if (d[i] < 20.f + n * 22.f) put(x, y, glm::mix(M.b, glm::vec3(1.f), 0.65f), 0.75f);
+                }
+                // sombra 3D
+                int xs = x - sx, ys = y - sy;
+                if (xs >= 0 && ys >= 0 && d[ys * CW + xs] < outline) put(x, y, M.style == 1 ? M.line : glm::vec3(0.05f), 1.f);
+                if (d[i] < outline) put(x, y, M.line, 1.f);
+                if (v > 0.5f) {
+                    float t = std::clamp((y - 120.f) / 300.f, 0.f, 1.f);
+                    glm::vec3 c = glm::mix(M.a, M.b, t);
+                    if (L.at(x - 5, y - 5) < 0.5f && M.style == 0) c = glm::mix(c, glm::vec3(1.f), 0.7f);  // brilho
+                    if (ball.at(x, y) > 0.5f) {  // bola: branca com gomos pretos
+                        float bx = (x - 120.f) / 70.f, by = (y - 400.f) / 70.f;
+                        float r = std::sqrt(bx * bx + by * by);
+                        float a = std::atan2(by, bx);
+                        bool patch = r < 0.32f && std::cos(5.f * a) * 0.06f + 0.26f > r;  // pentágono do meio
+                        for (int g = 0; g < 5 && !patch; ++g) {
+                            float ga = g * 1.2566f - 1.5708f;
+                            patch = glm::length(glm::vec2(bx - std::cos(ga) * 0.78f, by - std::sin(ga) * 0.78f)) < 0.2f;
+                        }
+                        c = patch ? glm::vec3(0.05f) : glm::vec3(0.97f);
+                    }
+                    put(x, y, c, std::min(1.f, v * 1.3f));
+                }
+            }
+        // escorridos de tinta embaixo
+        for (int col = 0; col < CW; col += 6) {
+            if (hashf(col, k, 531) < 0.86f) continue;
+            int top = -1;
+            for (int y = CH - 1; y >= 0; --y) if (L.m[y * CW + col] > 0.5f) { top = y; break; }
+            if (top < 0) continue;
+            int len = 20 + int(hashf(col, 1, 531) * 70.f);
+            for (int y = top; y < std::min(CH, top + len); ++y)
+                for (int x = col - 2; x <= col + 2; ++x) if (x >= 0 && x < CW) put(x, y, M.a, 1.f);
+        }
+    }
+    TexData t = finish(im, false);
+    for (int i = 0; i < im.w * im.h; ++i) t.albedo[i * 4 + 3] = to8(alpha[i]);
+    return t;
+}
+
 // Prédio de tijolo vermelho: tijolo do kit, laje de concreto, janela com sala iluminada e cortina
 TexData genFacadeBrick() {
     Pic brick = loadPic("tijolo_vermelho_alb.jpg"), bn = loadPic("tijolo_vermelho_nrm.jpg");
@@ -606,6 +841,9 @@ TexData generate(Mat m) {
         case Mat::Graffiti: return genGraffiti();
         case Mat::ChainLink: return genChainLink();
         case Mat::Corrugated: return genCorrugated();
+        case Mat::Mural: return genMurals();
+        case Mat::Cement: return generate(Mat::Concrete);
+        case Mat::Lamp: return genSolid(rgb(255, 245, 225), 0.3f, 0.f, 541, 0.f);
         default: return genSolid(rgb(200, 200, 200), 0.8f, 0.f, 1, 0.f);
     }
 }
@@ -616,6 +854,13 @@ void setMaterialTextureDir(const char* dir) {
     if (gTexDir == dir) return;
     gTexDir = dir;
     for (TexData& t : gCache) t = TexData{};  // regenera com as imagens novas
+}
+
+const char* muralName(int i) { return i >= 0 && i < kMuralCount ? kMurals[i].name : ""; }
+glm::vec4 muralUV(int i) {
+    i = std::clamp(i, 0, kMuralCount - 1);
+    float u0 = (i % 2) * 0.5f, v0 = (i / 2) * 0.25f;
+    return {u0, v0, u0 + 0.5f, v0 + 0.25f};
 }
 
 const TexData& proceduralTexture(Mat m) {

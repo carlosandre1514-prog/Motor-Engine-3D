@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <set>
 #include "assets/MeshUtils.h"
 #include "engine/Engine.h"
 #include "procgen/Noise.h"
@@ -376,6 +377,7 @@ struct Cells {
         return g;
     }
     void flush(Engine* e) {
+        for (auto& [k, g] : m) { e->mapLamps.insert(e->mapLamps.end(), g.lamps.begin(), g.lamps.end()); g.lamps.clear(); }
         if (gEditable) {  // cada construção vira objeto editável
             for (auto& [k, g] : m) spawnPieces(e, g);
             m.clear();
@@ -716,6 +718,18 @@ void wire(MeshBuilder& m, glm::vec3 a, glm::vec3 b, float sag) {
     }
 }
 
+// Pichação/grafite do atlas (Mat::Mural) colada numa parede: centro, normal para fora (horizontal), largura (altura = metade)
+void muralQuad(Geo& g, int idx, glm::vec3 c, glm::vec3 n, float w) {
+    MeshBuilder& m = g[Mat::Mural];
+    m.color = glm::vec4(1.f); m.uvTile = {0.f, 0.f};
+    glm::vec3 right = glm::normalize(glm::cross(-n, glm::vec3(0, 1, 0))), up(0, 1, 0);
+    float h = w * 0.5f;
+    glm::vec4 uv = muralUV(idx);
+    glm::vec2 q[4] = {{uv.x, uv.w}, {uv.z, uv.w}, {uv.z, uv.y}, {uv.x, uv.y}};
+    glm::vec3 o = c + n * 0.02f;
+    m.quad(o - right * (w / 2) - up * (h / 2), o + right * (w / 2) - up * (h / 2), o + right * (w / 2) + up * (h / 2), o - right * (w / 2) + up * (h / 2), q);
+}
+
 // Casa da favela, andar por andar (módulos de verdade: entra, sobe a escada, anda na laje).
 // Origem: centro da base no topo da fundação; frente +Z. footLow: quanto o chão desce abaixo da base (fundação).
 void favelaHouse(Geo& g, Rng& r, float w, float d, int floors, float footLow, bool frontOpen) {
@@ -765,6 +779,13 @@ void favelaHouse(Geo& g, Rng& r, float w, float d, int floors, float footLow, bo
         y += moduleTop(ms);
     }
     g.offset({-bx, 0.f, -bz});
+    // pichação/grafite numa parede lateral lisa do térreo
+    if (r.chance(0.28f) && bd > 3.2f) {
+        bool plus = outsideStairs || r.chance(0.5f);  // do lado da escada externa não
+        float mw = std::min(bd - 0.6f, 3.2f);
+        muralQuad(g, r.irange(0, kMuralCount - 1), {bx + (plus ? bw / 2 : -bw / 2), 0.15f + 0.4f + mw * 0.25f, bz},
+                  {plus ? 1.f : -1.f, 0.f, 0.f}, mw);
+    }
     // laje: caixa d'água, telhado de fibrocimento, varal, antena, parabólica, vergalhões
     DetailScope ds(g);
     const float top = y;
@@ -855,6 +876,28 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
     Cells cells(30.f, 2);
     std::vector<BoxCollider> treeBoxes;
 
+    // ---- chão cimentado (becos, quintais, entre as casas), com alguns cantos de terra ----
+    {
+        std::set<Geo*> started;
+        for (float z = -62.f; z < 60.f; z += 1.f)
+            for (float x = -64.f; x < 64.f; x += 1.f) {
+                float cx = x + 0.5f, cz = z + 0.5f;
+                if (favelaEdge(cx, cz) > 0.94f) continue;
+                bool onPad = false;
+                for (int k = 0; k < FP_Count && !onPad; ++k) onPad = padDist(pads[k], cx, cz) < 0.3f;
+                if (onPad || (std::abs(cx) < 3.6f && cz > 54.f)) continue;
+                if (fbm(cx * 0.07f + 3.f, cz * 0.07f, 3, seed + 41) > 0.63f) continue;  // canto de terra
+                Geo& g = cells.at({cx, 0.f, cz});
+                if (started.insert(&g).second) g.place(glm::vec3(0.f), 0.f);
+                MeshBuilder& m = g[Mat::Cement];
+                float tone = 0.82f + 0.25f * fbm(cx * 0.2f, cz * 0.2f, 2, seed + 43);
+                m.color = glm::vec4(tone, tone, tone * 0.97f, 1.f);
+                glm::vec2 uv[4] = {{x / 2.f, z / 2.f}, {x / 2.f, (z + 1) / 2.f}, {(x + 1) / 2.f, (z + 1) / 2.f}, {(x + 1) / 2.f, z / 2.f}};
+                m.quad({x, H(x, z) + 0.04f, z}, {x, H(x, z + 1) + 0.04f, z + 1}, {x + 1, H(x + 1, z + 1) + 0.04f, z + 1},
+                       {x + 1, H(x + 1, z) + 0.04f, z}, uv);
+            }
+    }
+
     // ---- rotas principais (escadarias de concreto pelos becos) ----
     const auto& routes = favelaRoutes();
     const auto& entries = favelaEntries(seed);
@@ -883,6 +926,7 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
     // ---- postes com fiação ----
     {
         std::vector<glm::vec3> poles;
+        std::vector<glm::vec2> poleSide;  // de que lado da escadaria o poste está
         for (size_t ri = 0; ri + 1 < routes.size(); ++ri)
             for (size_t i = 0; i + 1 < routes[ri].size(); ++i) {
                 const auto& rt = routes[ri];
@@ -891,6 +935,7 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
                 for (float s = 4.f; s < L; s += 16.f) {
                     glm::vec2 q = a + dir * s + side * 1.7f;
                     poles.push_back({q.x, H(q.x, q.y), q.y});
+                    poleSide.push_back(side);
                 }
             }
         for (size_t k = 0; k < poles.size(); ++k) {
@@ -906,6 +951,16 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
             m.color = glm::vec4(1.f); m.uvTile = {0.f, 0.f};
             m.box({-0.7f, 7.3f, -0.05f}, {1.4f, 0.1f, 0.1f});
             m.box({-0.25f, 6.2f, -0.2f}, {0.5f, 0.6f, 0.4f});  // transformador / caixa de luz
+            if (k % 3 != 2) {  // braço com luminária virada para a escadaria
+                glm::vec2 to = glm::normalize(glm::vec2(-poleSide[k].x, -poleSide[k].y));
+                glm::vec3 arm(to.x * 1.3f, 6.7f, to.y * 1.3f);
+                segBox(m, {0.f, 6.3f, 0.f}, arm, 0.06f);
+                m.box(arm + glm::vec3(-0.18f, 0.f, -0.18f), {0.36f, 0.1f, 0.36f});
+                MeshBuilder& l = g[Mat::Lamp];
+                l.color = glm::vec4(1.f); l.uvTile = {0.f, 0.f};
+                l.box(arm + glm::vec3(-0.13f, -0.07f, -0.13f), {0.26f, 0.07f, 0.26f});
+                g.lamp(arm - glm::vec3(0, 0.25f, 0));
+            }
             g.place(glm::vec3(0.f), 0.f);
             if (k + 1 < poles.size() && glm::length(poles[k + 1] - p) < 22.f)
                 for (float o : {-0.6f, 0.f, 0.6f}) wire(g[Mat::Polymer], p + glm::vec3(o, 7.35f, 0), poles[k + 1] + glm::vec3(o, 7.35f, 0), 0.6f);
@@ -990,6 +1045,20 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
                 glm::vec3 mnp(q.x - size.x / 2, y0, q.y - size.z / 2);
                 m.box(mnp, size);
                 g.collider(mnp, size);
+                // grafite no lado que aparece (aterro: por fora; corte: virado para o patamar)
+                float vis = diff < 0.f ? P.y + 0.9f - ho : ho - P.y;
+                auto wallAt = [&](float off) {  // vizinho também tem muro do mesmo tipo?
+                    glm::vec2 o2 = q + t * off + n * 2.2f;
+                    float d2 = favelaRaw(o2.x, o2.y, seed) - P.y;
+                    return std::abs(d2) >= 0.5f && (d2 < 0.f) == (diff < 0.f) && std::abs(s + segL * 0.5f + off) < len / 2;
+                };
+                if (vis > 1.2f && segL > 1.9f && wallAt(-2.f) && wallAt(2.f) && r.chance(0.4f)) {
+                    float mw = std::min(3.6f, (vis - 0.2f) * 2.f);
+                    glm::vec3 nn = diff < 0.f ? glm::vec3(n.x, 0, n.y) : glm::vec3(-n.x, 0, -n.y);
+                    glm::vec3 face = glm::vec3(q.x, 0, q.y) + nn * 0.2f;
+                    float cy = diff < 0.f ? (ho + P.y + 0.9f) * 0.5f : (P.y + ho) * 0.5f;
+                    muralQuad(g, r.irange(0, kMuralCount - 1), {face.x, cy, face.z}, nn, std::min(mw, 2.f * 1.95f));
+                }
             }
         }
     }
@@ -1195,9 +1264,18 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
             glm::vec2 uv[4] = {{0, z / 4.f}, {0, (z + 1) / 4.f}, {1.5f, (z + 1) / 4.f}, {1.5f, z / 4.f}};
             road.quad({-3.5f, h0, z}, {-3.5f, h1, z + 1.f}, {3.5f, h1, z + 1.f}, {3.5f, h0, z}, uv);
         }
+        // postes de rua subindo a entrada (luz de verdade à noite)
+        for (int k = 0; k < 3; ++k) {
+            float z = 62.f + k * 11.f, x = k % 2 ? 4.4f : -4.4f;
+            glm::vec3 p(x, H(x, z), z);
+            Geo& gl = cells.at(p);
+            gl.place(p, x > 0 ? -1.5707963f : 1.5707963f);
+            buildStreetLight(gl);
+        }
+        g.place(glm::vec3(0.f), 0.f);
         // acesso rápido da área baixa (estrada de terra até a rua)
-        MeshBuilder& dirt = g[Mat::Dirt];
-        dirt.color = glm::vec4(1.f); dirt.uvTile = {0.f, 0.f};
+        MeshBuilder& dirt = g[Mat::Cement];  // ladeira cimentada
+        dirt.color = glm::vec4(0.9f, 0.9f, 0.88f, 1.f); dirt.uvTile = {0.f, 0.f};
         {
             glm::vec2 a(52.f, 36.f), b(64.f, 88.f), dir = glm::normalize(b - a), side(-dir.y, dir.x);
             float L = glm::length(b - a);
@@ -1251,8 +1329,8 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
         glm::vec3 c(P.c.x, P.y, P.c.y);
         Geo& g = cells.at(c);
         g.place(c, 0.f);
-        MeshBuilder& b = g[Mat::Dirt];
-        b.color = glm::vec4(1.6f, 1.45f, 1.3f, 1.f); b.uvTile = {3.f, 3.f};
+        MeshBuilder& b = g[Mat::Concrete];
+        b.color = glm::vec4(0.9f, 0.9f, 0.88f, 1.f); b.uvTile = {2.f, 2.f};
         b.box({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
         g.collider({-P.half.x, -0.4f, -P.half.y}, {P.half.x * 2, 0.45f, P.half.y * 2});
         MeshBuilder& w = g[Mat::Wood];
@@ -1284,6 +1362,12 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
             Geo& gb = cells.at(p);
             gb.place(p, 3.14159265f);
             buildApartment(gb, r, r.range(14.f, 18.f), 12.f, r.irange(3, 6), buildingPaint(r));
+        }
+        for (float x = -100.f; x <= 100.f; x += 25.f) {  // postes da rua do bairro
+            glm::vec3 p(x, 4.4f, 98.6f);
+            Geo& gl = cells.at(p);
+            gl.place(p, 3.14159265f);
+            buildStreetLight(gl);
         }
         for (int k = 0; k < 5; ++k) {
             glm::vec3 cp(r.range(-90.f, 90.f), 4.22f, 96.2f);
@@ -1362,6 +1446,8 @@ void genFavela(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
     spawnYaw = 3.14159265f;  // olhando para dentro da favela (norte)
     e->renderer.fogDensity = 0.0018f;
     setTimeOfDay(e, 16.9f);   // fim de tarde, luz dourada
+    e->dayCycleMin = 10.f;    // no Play: dia e noite em 10 minutos
+    e->rainMode = 1;          // e chove em algum momento
 }
 
 void genSchool(Engine* e, Rng& r, glm::vec3& spawn, float& spawnYaw) {
@@ -1537,6 +1623,7 @@ void clearWorld(Engine* e) {
     e->water = {};
     e->mapPieces.clear();
     e->mapEditable = false;
+    e->mapLamps.clear();
 }
 
 void updateWorld(Engine* e) {
@@ -1548,6 +1635,8 @@ void loadMap(Engine* e, int kind, uint32_t seed, bool withPlayer, bool editable)
     clearScene(e);
     e->mapKind = kind;
     e->mapSeed = seed;
+    e->dayCycleMin = 0.f;  // cada mapa escolhe (a favela liga o ciclo e a chuva)
+    e->rainMode = 0;
     Rng r(seed);
     applyMapSwaps(e, true, false);   // texturas trocadas antes (os protótipos usam os materiais)
     makeProtos(e, seed);

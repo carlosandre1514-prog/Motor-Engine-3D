@@ -576,6 +576,62 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         Scene::Handle h = e->objects.empty() ? Scene::Handle{} : e->objects.back();
         return finish(e, h, spec, false);
     }
+    if (tipo == "imagem" || tipo == "pichacao" || tipo == "grafite") {
+        // Pichação pronta (atlas de murais) ou imagem do celular colada numa parede
+        int mural = inum(spec, "mural", -1);
+        std::string file = str(spec, "arquivo");
+        MaterialId mat = kInvalidId;
+        glm::vec4 uv(0.f, 0.f, 1.f, 1.f);
+        float aspect = 2.f;
+        if (mural >= 0 || file.empty()) {
+            mural = std::clamp(mural, 0, kMuralCount - 1);
+            spec["mural"] = mural;
+            mat = e->mats[int(Mat::Mural)];
+            uv = muralUV(mural);
+        } else {
+            int w = 0, h = 0, comp;
+            GLuint tex = TextureManager::instance().named("img:" + file);
+            if (!tex) {
+                unsigned char* px = stbi_load(file.c_str(), &w, &h, &comp, 4);
+                if (!px) return fail("não consegui abrir a imagem: " + file);
+                tex = TextureManager::instance().fromPixels(px, w, h, 4, true);
+                stbi_image_free(px);
+                TextureManager::instance().setNamed("img:" + file, tex);
+                TextureManager::instance().setNamed("img:" + file + ":aspecto", GLuint(std::lround(float(w) / std::max(h, 1) * 1000.f)));
+            }
+            aspect = std::max(0.05f, TextureManager::instance().named("img:" + file + ":aspecto") / 1000.f);
+            Material m;
+            m.albedo = tex; m.normal = TextureManager::instance().flatNormal(); m.orm = TextureManager::instance().white();
+            m.emissive = TextureManager::instance().white();
+            m.roughness = 0.8f; m.metallic = 0.f; m.alphaCutoff = 0.1f;  // PNG com fundo transparente
+            mat = e->renderer.createMaterial(m);
+        }
+        float W = std::clamp(num(spec, "largura", mural >= 0 ? 3.f : 1.5f), 0.2f, 20.f), Hh = W / aspect;
+        if (!hasPos) {
+            glm::vec3 o, d, hit, n;
+            e->scene.updateTransforms();
+            e->camera.screenRay(e->width * 0.5f, e->height * 0.5f, float(e->width), float(e->height), o, d);
+            if (!e->physics.raycastNormal(o, o + d * 400.f, hit, n) || std::abs(n.y) > 0.7f)
+                return fail("aponte o centro da tela para uma parede ou muro");
+            n.y = 0.f;
+            n = glm::normalize(n);
+            pos = hit + n * 0.015f;
+            yaw = std::atan2(n.x, n.z);
+            spec["pos"] = {pos.x, pos.y, pos.z};
+            spec["rot_y"] = glm::degrees(yaw);
+        }
+        MeshBuilder mb;
+        glm::vec2 q[4] = {{uv.x, uv.w}, {uv.z, uv.w}, {uv.z, uv.y}, {uv.x, uv.y}};
+        mb.quad({-W / 2, -Hh / 2, 0.f}, {W / 2, -Hh / 2, 0.f}, {W / 2, Hh / 2, 0.f}, {-W / 2, Hh / 2, 0.f}, q);
+        MeshId mesh = mb.build(e->renderer);
+        Scene::Handle h = addMeshObject(e, mural >= 0 ? muralName(mural) : "Imagem", mesh, mat, pos, glm::vec3(1.f), glm::vec3(0.f, glm::degrees(yaw), 0.f));
+        if (GameObject* go = e->scene.get(h)) {
+            go->noCut = true;
+            if (go->meshRenderer) go->meshRenderer->castShadows = false;
+        }
+        spec["tipo"] = "imagem";
+        return finish(e, h, spec, false);
+    }
     if (tipo == "abertura" || tipo == "corte") {
         // Porta, janela ou vão aberto em qualquer parede/muro/construção: a caixa corta a parede (imagem e colisão)
         int style = lookup(str(spec, "estilo", tipo == "corte" ? "corte" : "porta"),
@@ -877,6 +933,7 @@ void setTimeOfDay(Engine* e, float hour) {
     glm::vec2 h0 = glm::normalize(glm::vec2(0.55f, 0.25f));
     glm::vec2 hz(h0.x * std::cos(az) - h0.y * std::sin(az), h0.x * std::sin(az) + h0.y * std::cos(az));
     float day = glm::smoothstep(-0.08f, 0.2f, el);
+    e->night = 1.f - glm::smoothstep(-0.06f, 0.1f, el);  // postes acendem no fim da tarde
     float warm = 1.f - glm::smoothstep(0.05f, 0.45f, el);
     // vendo o globo, o céu e o sol "de verdade" ficam guardados (o globo usa céu de espaço e sol atrás da câmera)
     glm::vec3& sunDir = e->globeMode ? e->globeSavedSun : e->sun.direction;
@@ -888,12 +945,12 @@ void setTimeOfDay(Engine* e, float hour) {
     } else {  // noite: luar azulado
         sunDir = glm::normalize(glm::vec3(-0.3f, -1.f, 0.2f));
         e->sun.color = {0.55f, 0.65f, 1.f};
-        e->sun.intensity = 0.3f;
+        e->sun.intensity = 0.45f;
     }
     Environment& target = e->globeMode ? e->globeSavedEnv : e->env;
     Environment env = target;
     env.ground = Environment{}.ground;
-    glm::vec3 nightZ(0.01f, 0.015f, 0.05f), nightH(0.04f, 0.05f, 0.1f);
+    glm::vec3 nightZ(0.015f, 0.02f, 0.06f), nightH(0.06f, 0.07f, 0.13f);
     env.zenith = glm::mix(nightZ, glm::mix(glm::vec3(0.18f, 0.36f, 0.75f), glm::vec3(0.25f, 0.3f, 0.6f), warm), day);
     env.horizon = glm::mix(nightH, glm::mix(glm::vec3(0.70f, 0.78f, 0.88f), glm::vec3(0.95f, 0.6f, 0.4f), warm), day);
     env.skyIntensity = 0.12f + 0.43f * day;
@@ -913,7 +970,8 @@ std::string exportProject(Engine* e, bool withIds) {
     if (!e->texSwaps.empty()) j["mapa"]["texturas"] = e->texSwaps;
     json pieces = json::object();  // mapa editável: só o que mudou em relação ao mapa base
     j["ambiente"] = {{"hora", r3(e->timeOfDay)}, {"exposicao", r3(e->env.exposure)}, {"sol", r3(e->sun.intensity)},
-                     {"grade", e->showGrid}, {"neblina", e->renderer.fogDensity}};
+                     {"grade", e->showGrid}, {"neblina", e->renderer.fogDensity}, {"ciclo_min", r3(e->dayCycleMin)},
+                     {"chuva", e->rainMode == 0 ? "nunca" : e->rainMode == 1 ? "automatica" : "sempre"}};
     const Engine::CamState cam = e->playing ? e->savedCam
         : Engine::CamState{e->editorCam.target, e->editorCam.yaw, e->editorCam.pitch, e->editorCam.distance};
     j["camera"] = {{"alvo", arr3(cam.target)}, {"yaw", r3(cam.yaw)}, {"pitch", r3(cam.pitch)}, {"distancia", r3(cam.distance)}};
@@ -1029,6 +1087,8 @@ bool importProject(Engine* e, const std::string& text, std::string* err) {
     if (amb.contains("sol")) e->sun.intensity = std::clamp(num(amb, "sol", 3.2f), 0.f, 20.f);
     e->showGrid = flag(amb, "grade", true);
     if (amb.contains("neblina")) e->renderer.fogDensity = std::clamp(num(amb, "neblina", 0.f), 0.f, 0.05f);
+    if (amb.contains("ciclo_min")) e->dayCycleMin = std::clamp(num(amb, "ciclo_min", 0.f), 0.f, 240.f);
+    if (amb.contains("chuva")) e->rainMode = lookup(str(amb, "chuva"), {{"nunca", 0}, {"nao", 0}, {"automatica", 1}, {"auto", 1}, {"sempre", 2}}, 0);
     const json reg = j.value("regras", json::object());
     e->rules = GameRules{};
     e->rules.objetivo = norm(str(reg, "objetivo", "livre"));
@@ -1180,6 +1240,8 @@ std::string toolCall(Engine* e, const std::string& name, const std::string& inpu
         if (in.contains("exposicao")) e->env.exposure = std::clamp(num(in, "exposicao", 1.f), 0.05f, 8.f);
         if (in.contains("sol")) e->sun.intensity = std::clamp(num(in, "sol", 3.2f), 0.f, 20.f);
         if (in.contains("neblina")) e->renderer.fogDensity = std::clamp(num(in, "neblina", 0.f), 0.f, 0.05f);
+        if (in.contains("ciclo_min")) e->dayCycleMin = std::clamp(num(in, "ciclo_min", 0.f), 0.f, 240.f);
+        if (in.contains("chuva")) e->rainMode = lookup(str(in, "chuva"), {{"nunca", 0}, {"nao", 0}, {"automatica", 1}, {"auto", 1}, {"sempre", 2}}, 0);
         ++e->revision;
         return json{{"ok", true}}.dump();
     }

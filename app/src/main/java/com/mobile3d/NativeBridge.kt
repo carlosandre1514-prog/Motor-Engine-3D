@@ -9,6 +9,8 @@ object NativeBridge {
     @JvmStatic external fun nativeResize(w: Int, h: Int)
     @JvmStatic external fun nativeFrame(dt: Float)
     @JvmStatic external fun nativeSetQuality(q: Int)
+    @JvmStatic external fun nativePollSounds(): String
+    @JvmStatic external fun nativeGetWeather(out3: FloatArray)
     @JvmStatic external fun nativeCreateWeaponEx(kind: Int, file: String, flip: Boolean, size: Float, accessories: Int): Int
     @JvmStatic external fun nativeTouch(action: Int, ids: IntArray, xy: FloatArray)
 

@@ -33,3 +33,12 @@ Texturas do chão (grama, campo, floresta, chão batido, areia, terra arada, sei
 Bibliotecas
   GLM (MIT), tinygltf (MIT), nlohmann/json (MIT), stb_image / stb_image_write (domínio público / MIT),
   ufbx (MIT / domínio público), Bullet Physics (zlib).
+
+Fontes das pichações e grafites (shaders/materials/fontes)
+  Permanent Marker — Font Diner — Licença Apache 2.0
+  Bangers — The Bangers Project Authors — SIL Open Font License 1.1
+  Rubik Wet Paint — The Rubik Filtered Project Authors — SIL Open Font License 1.1
+  (textos das licenças na mesma pasta; uso comercial permitido)
+
+Sons (app/src/main/assets/sons)
+  Sintetizados por tools/gerar_sons.py (tiros de cada arma, recarga, impacto, golpes, chuva e trovão): sem gravações de terceiros.

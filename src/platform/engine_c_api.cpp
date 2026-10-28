@@ -96,6 +96,7 @@ void engine_frame(Engine* e, float dt) {
         eng::updatePlayer(e, dt);
         eng::gameUpdate(e, dt);
         e->physics.step(dt);
+        eng::weatherUpdate(e, dt);
     } else {
         for (auto& t : e->tracers) t.life = 0.f;
     }
@@ -122,6 +123,7 @@ void engine_frame(Engine* e, float dt) {
     eng::updateAttachments(e);
     eng::updateSupportHands(e, dt);
     eng::updateCuts(e);
+    eng::updateLamps(e);
 
     auto ts = std::chrono::steady_clock::now();
     e->renderer.beginFrame(e->camera, sun);
@@ -177,7 +179,13 @@ void engine_frame(Engine* e, float dt) {
     eng::PointLight lights[eng::kMaxPointLights];
     int nLights = eng::gatherLights(e, lights, eng::kMaxPointLights);
     auto tr = std::chrono::steady_clock::now();
-    e->renderer.render(e->camera, sun, e->env, lights, nLights);
+    eng::Environment env = e->env;
+    float fog = e->renderer.fogDensity;
+    eng::weatherLook(e, env, sun, fog);  // chuva: céu fechado, neblina, clarão dos raios
+    const float keepFog = e->renderer.fogDensity;
+    e->renderer.fogDensity = fog;
+    e->renderer.render(e->camera, sun, env, lights, nLights);
+    e->renderer.fogDensity = keepFog;
     e->profRender = ms(tr, std::chrono::steady_clock::now());
 
     // estatísticas (janela de 0,5 s)
@@ -218,6 +226,9 @@ void engine_set_play(Engine* e, int playing) {
         e->moveInput = glm::vec2(0.f);
         e->runInput = e->jumpRequest = e->fireRequest = false;
         e->playing = true;  // a lógica de jogo só cria/danifica com o Play ligado
+        e->playStartHour = e->timeOfDay;
+        eng::weatherStart(e);
+        e->sounds.clear();
         eng::gameStart(e);
         if (e->player >= 0) {  // câmera atrás do jogador
             if (GameObject* pg = e->scene.get(e->characters[e->player].root)) {
@@ -229,6 +240,9 @@ void engine_set_play(Engine* e, int playing) {
         }
     } else {
         eng::gameStop(e);
+        if (e->dayCycleMin > 0.f) eng::setTimeOfDay(e, e->playStartHour);  // volta à hora de antes do Play
+        e->rain = e->rainTarget = e->lightning = 0.f;
+        e->sounds.clear();
         for (auto& s : e->snapshot)
             if (GameObject* g = e->scene.get(s.h)) {
                 g->transform.setPosition(s.p); g->transform.setRotation(s.r); g->transform.setScale(s.s);
@@ -247,6 +261,39 @@ void engine_set_play(Engine* e, int playing) {
     e->playing = p;
 }
 int engine_is_playing(Engine* e) { return e && e->playing; }
+
+// Sons pedidos desde a última chamada: linhas "nome\tvolume\tpan" (volume 0..1 já com a distância; pan -1..1)
+const char* engine_poll_sounds(Engine* e) {
+    if (!e) return "";
+    e->soundText.clear();
+    const glm::vec3 cam = e->camera.position;
+    const glm::mat4 v = e->camera.view();
+    const glm::vec3 right(v[0][0], v[1][0], v[2][0]);
+    char b[160];
+    for (const auto& s : e->sounds) {
+        float vol = s.gain, pan = 0.f;
+        std::string name = s.name;
+        if (s.positional) {
+            glm::vec3 d = s.pos - cam;
+            float dist = glm::length(d);
+            vol = s.gain / (1.f + std::pow(dist / 14.f, 1.4f));
+            if (dist > 1e-3f) pan = std::clamp(glm::dot(d / dist, right), -1.f, 1.f) * std::min(1.f, dist / 6.f);
+            if (dist > 45.f) name += "_longe";  // de longe: o app usa a versão abafada (se tiver)
+        }
+        if (vol < 0.01f) continue;
+        std::snprintf(b, sizeof(b), "%s\t%.3f\t%.2f\n", name.c_str(), std::min(vol, 1.f), pan);
+        e->soundText += b;
+    }
+    e->sounds.clear();
+    return e->soundText.c_str();
+}
+// Estado do tempo para o app: chuva 0..1, noite 0..1, hora
+void engine_get_weather(Engine* e, float* out3) {
+    if (!e || !out3) return;
+    out3[0] = e->playing ? e->rain : 0.f;
+    out3[1] = e->night;
+    out3[2] = e->timeOfDay;
+}
 
 // ---------- cenas ----------
 void engine_new_scene(Engine* e) {

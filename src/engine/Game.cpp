@@ -165,6 +165,7 @@ void enemyAttack(Engine* e, CharacterInfo& c, GameObject& go, Behavior& b, Chara
     glm::vec3 chest = go.transform.position + glm::vec3(0, c.height * 0.72f, 0);
     glm::vec3 target = pg.transform.position + glm::vec3(0, pc.height * 0.6f, 0);
     if (!isGunKind(c.weaponKind)) {  // corpo a corpo
+        playSound(e, c.shotSound.empty() ? "golpe_faca" : c.shotSound.c_str(), chest, 0.8f);
         if (glm::distance(chest, target) < 2.f) {
             fxImpact(e->particles, e->fxRng, target, glm::normalize(target - chest));
             hurtPlayer(e, b.dano);
@@ -182,6 +183,7 @@ void enemyAttack(Engine* e, CharacterInfo& c, GameObject& go, Behavior& b, Chara
     bool any = e->physics.raycastIgnoring(chest, chest + dir * (dist + 30.f), self, hit, obj, frac);
     glm::vec3 end = any ? hit : chest + dir * (dist + 30.f);
     addFlash(e, fxMuzzleFlash(e->particles, e->fxRng, muzzle, glm::normalize(end - muzzle)), 0.06f);
+    playSound(e, c.shotSound.empty() ? "tiro_pistola" : c.shotSound.c_str(), muzzle, 1.f);
     fxBullet(e->particles, muzzle, end);
     if (any) fxImpact(e->particles, e->fxRng, hit, dir);
     if (any && rootOf(e, obj) == &pg) hurtPlayer(e, b.dano);

@@ -45,6 +45,7 @@ add_library(mobile3d SHARED
   src/engine/World.cpp
   src/engine/Project.cpp
   src/engine/Game.cpp
+  src/engine/Weather.cpp
   src/engine/Export.cpp
   src/engine/AnimEdit.cpp
   src/engine/Planet.cpp

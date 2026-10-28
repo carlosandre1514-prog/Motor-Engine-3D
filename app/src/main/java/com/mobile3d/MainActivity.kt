@@ -74,6 +74,8 @@ class MainActivity : Activity() {
     private lateinit var visualPanel: LinearLayout
     private lateinit var hud: FrameLayout
     private lateinit var aimOverlay: FrameLayout
+    private val sound by lazy { SoundManager(this) }
+    private val weather = FloatArray(3)
     private var aimSpec = ""  // abertura a cortar quando o usuário apertar "Cortar aqui"
     private lateinit var joystick: JoystickView
     private lateinit var runBtn: TextView
@@ -126,6 +128,10 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         store = ProjectStore(this)
         view = EngineView(this, copyShaders())
+        view.afterFrame = { frame ->
+            sound.playEvents(NativeBridge.nativePollSounds())  // tiros, recarga, trovão...
+            if (frame % 10 == 0) { NativeBridge.nativeGetWeather(weather); sound.setRain(weather[0]) }
+        }
         view.onReady = { openStartupProject() }  // thread GL: motor (re)criado -> abre o projeto salvo
         applySavedQuality()
 
@@ -172,12 +178,13 @@ class MainActivity : Activity() {
 
     // Fechar/minimizar: salva antes de pausar a thread GL (espera até 2 s)
     override fun onPause() {
+        sound.pause()
         saveBlocking()
         super.onPause()
         view.onPause()
     }
-    override fun onResume() { super.onResume(); view.onResume() }
-    override fun onDestroy() { ui.removeCallbacksAndMessages(null); super.onDestroy() }
+    override fun onResume() { super.onResume(); view.onResume(); sound.resume() }
+    override fun onDestroy() { ui.removeCallbacksAndMessages(null); sound.release(); super.onDestroy() }
 
     // ---------------- projeto: abrir, salvar, autosave ----------------
     private val autosave = object : Runnable {
@@ -576,6 +583,7 @@ class MainActivity : Activity() {
                             "⬆ Empilhar um andar em cima do selecionado…",
                             "🏠 Casa / sobrado / barraco / prédio (escolher quantos andares)…",
                             "✂ Abrir porta / janela / vão numa parede ou muro…",
+                            "🎨 Pichação / grafite / imagem na parede…",
                             "🪨 Piso avulso (pedra, calçada, asfalto, cerâmica…)…",
                             "▮ Parede avulsa (lisa, com porta, com janela)…",
                             "⛱ Varanda coberta avulsa…", "🪜 Escada avulsa (reta, em L, em U, caracol)…", "▬ Laje avulsa…", "⌂ Telhado avulso…",
@@ -601,12 +609,13 @@ class MainActivity : Activity() {
                     }
                 }
                 3 -> openingDialog()
-                4 -> pieceDialog("piso")
-                5 -> pieceDialog("parede")
-                6 -> pieceDialog("varanda")
-                7 -> pieceDialog("escada")
-                8 -> pieceDialog("laje")
-                9 -> pieceDialog("telhado")
+                4 -> wallImageDialog()
+                5 -> pieceDialog("piso")
+                6 -> pieceDialog("parede")
+                7 -> pieceDialog("varanda")
+                8 -> pieceDialog("escada")
+                9 -> pieceDialog("laje")
+                10 -> pieceDialog("telhado")
                 else -> {
                     val kinds = intArrayOf(11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
                     list("Outras peças", arrayOf("Muro", "🛣 Rua (pista)", "✚ Cruzamento", "Calçada", "Escada", "Rampa", "Piso / laje",
@@ -662,7 +671,7 @@ class MainActivity : Activity() {
             if (k != 3) p.addView(slider("Altura (m)", 0.5f, 4f, h) { h = it })
             else p.addView(label("Altura: do chão até o topo do muro"))
             if (k == 2) p.addView(slider("Altura do peitoril (m)", 0f, 2f, sill) { sill = it })
-            p.addView(label("Depois gire a câmera até a mira (+) ficar em cima da parede e toque em \"Cortar aqui\". " +
+            p.addView(label("Depois gire a câmera até a mira (+) ficar em cima da parede e toque em \"Aplicar aqui\". " +
                             "Para fechar de novo: selecione a abertura e apague."))
             dialog().setTitle(styles[k]).setView(ScrollView(this).apply { addView(p) })
                 .setPositiveButton("Mirar") { _, _ ->
@@ -674,6 +683,20 @@ class MainActivity : Activity() {
         }
     }
 
+    // Pichações prontas (atlas do motor) ou uma imagem do celular: escolhe e mira na parede
+    private val murals = arrayOf("Favela venceu", "Paz e amor", "O crime é nós", "Rei Pelé 10 (coroa e bola)", "Neymar Jr 10 (coroa)",
+                                 "Fé em Deus", "Parede de pichos", "Comunidade")
+    private fun wallImageDialog() {
+        val items = murals.map { "🎨 $it" }.toTypedArray() + "📷 Imagem do celular (foto, desenho, PNG transparente)…"
+        list("Pichação / imagem na parede", items) { k ->
+            if (k < murals.size) {
+                aimSpec = "{\"tipo\":\"imagem\",\"mural\":$k,\"largura\":3}"
+                aimOverlay.visibility = View.VISIBLE
+                toast("Mire a parede com a mira (+) e toque em \"Aplicar aqui\" para colar")
+            } else pickFile(REQ_WALL_IMAGE)
+        }
+    }
+
     private fun buildAimOverlay(): FrameLayout {
         val f = FrameLayout(this)
         f.addView(TextView(this).apply {
@@ -681,12 +704,12 @@ class MainActivity : Activity() {
             setShadowLayer(4f, 0f, 0f, Color.BLACK)
         }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        row.addView(button("✂ Cortar aqui", true) {
+        row.addView(button("✔ Aplicar aqui", true) {
             val spec = aimSpec
             gl {
                 val id = NativeBridge.addSpec(spec)
                 if (id < 0) toast("Não deu: " + NativeBridge.nativeLastError())
-                else { toast("Aberto! Mova com as setas ou apague para fechar."); saveIfChanged() }
+                else { toast(if (spec.contains("abertura")) "Aberto! Mova com as setas ou apague para fechar." else "Colado na parede! Dá para mover, girar, aumentar ou apagar."); saveIfChanged() }
             }
             aimOverlay.visibility = View.GONE
         })
@@ -1658,6 +1681,20 @@ class MainActivity : Activity() {
         p.addView(slider("Exposição", 0.1f, 3f, 1f) { v -> gl { NativeBridge.nativeSetExposure(v) } })
         p.addView(slider("Hora do dia", 0f, 24f, 13f) { v -> gl { NativeBridge.nativeSetTimeOfDay(v) } })
         p.addView(slider("Sol", 0f, 8f, 3.2f) { v -> gl { NativeBridge.nativeSetSunIntensity(v) } })
+        val cycles = intArrayOf(0, 5, 10, 20, 40)
+        p.addView(choice("Dia e noite no Play (minutos)", arrayOf("Parado", "5", "10", "20", "40"), 2) { i ->
+            gl { NativeBridge.toolCall("definir_ambiente", "{\"ciclo_min\":${cycles[i]}}"); saveIfChanged() }
+        })
+        val rains = arrayOf("nunca", "automatica", "sempre")
+        p.addView(choice("Chuva no Play", arrayOf("Nunca", "Às vezes", "Sempre"), 1) { i ->
+            gl { NativeBridge.toolCall("definir_ambiente", "{\"chuva\":\"${rains[i]}\"}"); saveIfChanged() }
+        })
+        p.addView(CheckBox(this).apply {
+            text = "Som (tiros, chuva, trovão)"
+            setTextColor(Color.WHITE)
+            isChecked = true
+            setOnCheckedChangeListener { _, c -> sound.enabled = c; if (!c) sound.setRain(0f) }
+        })
         p.addView(CheckBox(this).apply {
             text = "Grade do editor"
             setTextColor(Color.WHITE)
@@ -1826,7 +1863,7 @@ class MainActivity : Activity() {
     private fun pickFile(req: Int) {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (req == REQ_IMAGE || req == REQ_SWAP_TEX) "image/*" else "*/*"  // .glb não tem MIME confiável em todos os aparelhos
+            type = if (req == REQ_IMAGE || req == REQ_SWAP_TEX || req == REQ_WALL_IMAGE) "image/*" else "*/*"  // .glb não tem MIME confiável em todos os aparelhos
         }
         startActivityForResult(i, req)
     }
@@ -1878,10 +1915,18 @@ class MainActivity : Activity() {
         toast("Carregando $name…")
         Thread {
             try {
-                val dir = File(filesDir, if (requestCode == REQ_IMAGE || requestCode == REQ_SWAP_TEX) "textures" else "models").apply { mkdirs() }
+                val dir = File(filesDir, if (requestCode == REQ_IMAGE || requestCode == REQ_SWAP_TEX || requestCode == REQ_WALL_IMAGE) "textures" else "models").apply { mkdirs() }
                 if (lower.endsWith(".gltf")) toast("Dica: .gltf com arquivos .bin/texturas separados pode abrir sem textura; prefira .glb")
                 val dst = File(dir, name.replace('/', '_'))
                 contentResolver.openInputStream(uri)!!.use { input -> dst.outputStream().use { input.copyTo(it) } }
+                if (requestCode == REQ_WALL_IMAGE) {  // imagem para colar: agora mira na parede
+                    runOnUiThread {
+                        aimSpec = "{\"tipo\":\"imagem\",\"arquivo\":${org.json.JSONObject.quote(dst.absolutePath)},\"largura\":1.5}"
+                        aimOverlay.visibility = View.VISIBLE
+                        toast("Mire a parede com a mira (+) e toque em \"Aplicar aqui\"")
+                    }
+                    return@Thread
+                }
                 gl {
                     if (requestCode == REQ_SWAP_MODEL || requestCode == REQ_SWAP_TEX) {
                         toast("Aplicando no mapa…")
@@ -1979,6 +2024,7 @@ class MainActivity : Activity() {
         private const val REQ_GLB = 46
         private const val REQ_CHARACTER = 47
         private const val REQ_WEAPON = 61
+        private const val REQ_WALL_IMAGE = 62
         private const val REQ_SWAP_MODEL = 48
         private const val REQ_SWAP_TEX = 49
         private const val AUTOSAVE_MS = 30_000L
@@ -1986,6 +2032,7 @@ class MainActivity : Activity() {
 }
 
 class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceView(activity) {
+    var afterFrame: ((Int) -> Unit)? = null
     val snapshot = EngineSnapshot()
     var onReady: (() -> Unit)? = null  // chamado na thread GL quando o motor é (re)criado
     // Qualidade: resolução do desenho (fração da tela) e limite de quadros (30 = esquenta menos e não engasga)
@@ -2038,6 +2085,7 @@ class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceV
                 val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
                 last = now
                 NativeBridge.nativeFrame(dt)
+                afterFrame?.invoke(frame)   // sons (tiros, chuva...) na thread GL
                 if (++frame % 15 == 0) publish()
             }
 

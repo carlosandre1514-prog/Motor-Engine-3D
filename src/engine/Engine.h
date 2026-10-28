@@ -43,6 +43,7 @@ struct CharacterInfo {
     glm::mat4 handFix{1.f};    // corrige o referencial da mão de modelos importados
     Scene::Handle weapon;      // arma equipada (opcional)
     int weaponKind = -1;
+    std::string shotSound;     // som do tiro/golpe da arma equipada (ex.: "tiro_ak47")
     glm::vec3 muzzle{0.f};     // ponta do cano no espaço da arma
     float aimTimer = 0.f;      // > 0: mirando/atacando (arma apontada para frente)
     bool aimHold = false;      // botão "Mirar" segurado (jogador)
@@ -249,6 +250,21 @@ struct Engine {
     uint64_t revision = 0;              // muda a cada edição (salvamento automático)
     std::string projectName = "Projeto";
     float timeOfDay = 13.f;
+    float night = 0.f;                   // 0 dia .. 1 noite (postes acesos)
+    // dia/noite e chuva (Weather.cpp): valem no Play
+    float dayCycleMin = 0.f;             // minutos de um dia inteiro (0 = a hora fica parada)
+    int rainMode = 0;                    // 0 nunca, 1 automática (em algum momento do ciclo), 2 sempre
+    float rain = 0.f, rainTarget = 0.f, rainClock = 0.f, cycleAccum = 0.f;
+    float lightning = 0.f, lightningNext = 0.f, thunderIn = -1.f;
+    static constexpr int kRainGrid = 25;
+    std::vector<float> rainCover;
+    glm::vec2 rainCoverOrigin{0.f}, rainCoverCenter{1e9f};
+    float rainCoverTimer = 0.f, playStartHour = 13.f;
+    // sons pedidos pelo jogo (o app lê e toca: tiros, recarga, trovão...)
+    struct SoundEvent { std::string name; glm::vec3 pos; float gain; bool positional; };
+    std::vector<SoundEvent> sounds;
+    std::string soundText;
+    std::vector<glm::vec3> mapLamps;     // postes do mapa
     std::vector<LightObject> lightObjects;
     std::vector<DoorRT> doors;
     std::vector<Opening> openings;  // máx. Renderer::kMaxCuts ativas
@@ -356,6 +372,13 @@ bool setupHumanoid(Engine* e, GameObject& root, Animator* anim);
 Animator* animatorOf(GameObject& root);
 // Atualiza as caixas das aberturas no renderizador e na física (antes de desenhar)
 void updateCuts(Engine* e);
+// Lâmpadas dos postes: brilho conforme a noite
+void updateLamps(Engine* e);
+// Tempo e chuva (Weather.cpp)
+void weatherStart(Engine* e);
+void weatherUpdate(Engine* e, float dt);
+void weatherLook(const Engine* e, Environment& env, DirectionalLight& sun, float& fog);
+void playSound(Engine* e, const char* name, glm::vec3 pos, float gain = 1.f, bool positional = true);
 void applyCustomAnims(Engine* e, GameObject& root, const std::string& arrJson);  // "animacoes" da receita
 void forgetClipStores(Engine* e, const std::vector<Animator*>& gone);
 int animEditBegin(Engine* e);                       // ossos ou -1 (lastError)

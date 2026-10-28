@@ -39,6 +39,8 @@ struct Geo {
     // Mapa editável: cada place() começa uma "peça" (uma construção, um poste, um carro...) que vira objeto próprio
     std::vector<DoorSpec> doors;
     std::vector<TeleSpec> teles;
+    std::vector<glm::vec3> lamps;  // luzes de poste (mundo): acendem à noite
+    void lamp(glm::vec3 local) { lamps.push_back(glm::vec3(mats[0].xf * glm::vec4(local, 1.f))); }
     struct Mark {
         uint32_t v[3][int(Mat::Count)], i[3][int(Mat::Count)];
         size_t col, door = 0, tele = 0;
