@@ -806,6 +806,8 @@ int main(int argc, char** argv) {
             {"31_lado_norte", 3.f, 6.f, -80.f, 3.14159f, 0.25f, 45.f, true},
             {"31_lado_leste", 80.f, 6.f, 20.f, -1.5708f, 0.25f, 45.f, true},
             {"31_lado_oeste", -80.f, 6.f, 26.f, 1.5708f, 0.25f, 45.f, true},
+            {"31_degraus", 4.f, 1.2f, -80.f, 3.14159f + 0.5f, 0.2f, 5.f, true},
+            {"31_degraus_2", 85.f, 1.2f, 20.5f, -1.5708f + 0.4f, 0.25f, 6.f, true},
         };
         for (const View& v : views) {
             float y = v.ground ? hAt(v.x, v.z) + v.y : v.y;
