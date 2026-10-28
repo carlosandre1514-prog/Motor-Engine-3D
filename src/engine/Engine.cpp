@@ -279,7 +279,7 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
     root->transform.setPosition(pos);
     root->transform.setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
     if (local) registerObject(e, rootH);  // raiz antes dos filhos na hierarquia
-    for (int layer = 0; layer < 3; ++layer)
+    for (int layer = 0; layer < Geo::kLayers; ++layer)
     for (int k = 0; k < int(Mat::Count); ++k) {
         MeshBuilder& mb = g.layer(layer)[k];
         if (mb.empty()) continue;
@@ -295,7 +295,8 @@ Scene::Handle spawnGeo(Engine* e, Geo& g, const char* name, bool local, glm::vec
             Mat m = Mat(k);
             mr->castShadows = !(m == Mat::Asphalt || m == Mat::Road || m == Mat::Sidewalk || m == Mat::Grass || m == Mat::Court || m == Mat::Terrain ||
                                  m == Mat::ChainLink || m == Mat::Mural || m == Mat::Cement);  // tela/pichação: a sombra sairia cheia
-            if (layer) mr->lodFar = layer == 2 ? std::min(detailFar, kInteriorFar) : detailFar;  // LOD: detalhe/interior só perto
+            if (layer == 3) mr->lodNear = detailFar;  // versão simples: só onde o detalhe já sumiu
+            else if (layer) mr->lodFar = layer == 2 ? std::min(detailFar, kInteriorFar) : detailFar;  // LOD: detalhe/interior só perto
         }
         if (local) registerObject(e, ch);
     }

@@ -376,7 +376,7 @@ constexpr float kDoorW = 1.f, kDoorH = 2.1f, kWinW = 1.2f, kWinH = 1.1f, kSill =
 void wallRun(Geo& g, const ModuleSpec& s, const glm::mat4& xf, float len, float y0, float hgt, int kind) {
     if (kind == MW_Open) return;
     MeshBuilder& m = g[s.wallMat];
-    MeshBuilder& frame = g[Mat::Wood];
+    MeshBuilder& frame = g.interiorMats[int(Mat::Wood)];  // batentes: só desenhados de perto (camada de interior)
     glm::mat4 keep = m.xf, keepF = frame.xf, keepG = g.mats[0].xf;
     const float keepYaw = g.yaw;
     glm::mat4 base = m.xf * xf;
@@ -479,14 +479,14 @@ void slabWithHoles(Geo& g, Mat mat, float x0, float x1, float z0, float z1, floa
 
 // Desenha com o sistema local deslocado/girado (lances em outra direção, degraus do caracol)
 template <class F> void inFrame(Geo& g, glm::vec3 at, float yawRad, F&& fn) {
-    glm::mat4 keep[3][int(Mat::Count)];
-    for (int l = 0; l < 3; ++l) for (int k = 0; k < int(Mat::Count); ++k) keep[l][k] = g.layer(l)[k].xf;
+    glm::mat4 keep[Geo::kLayers][int(Mat::Count)];
+    for (int l = 0; l < Geo::kLayers; ++l) for (int k = 0; k < int(Mat::Count); ++k) keep[l][k] = g.layer(l)[k].xf;
     const float keepYaw = g.yaw;
     glm::mat4 local = glm::rotate(glm::translate(glm::mat4(1.f), at), yawRad, glm::vec3(0, 1, 0));
-    for (int l = 0; l < 3; ++l) for (int k = 0; k < int(Mat::Count); ++k) g.layer(l)[k].xf = keep[l][k] * local;
+    for (int l = 0; l < Geo::kLayers; ++l) for (int k = 0; k < int(Mat::Count); ++k) g.layer(l)[k].xf = keep[l][k] * local;
     g.yaw += yawRad;
     fn();
-    for (int l = 0; l < 3; ++l) for (int k = 0; k < int(Mat::Count); ++k) g.layer(l)[k].xf = keep[l][k];
+    for (int l = 0; l < Geo::kLayers; ++l) for (int k = 0; k < int(Mat::Count); ++k) g.layer(l)[k].xf = keep[l][k];
     g.yaw = keepYaw;
 }
 
@@ -613,8 +613,10 @@ void buildModule(Geo& g, const ModuleSpec& s) {
     }
     // escada interna no canto esquerdo-fundo (reta, em L, em U ou caracol); a laje abre em cima dela
     std::vector<StairHole> holes;
-    if (s.stairs != SK_None && s.stairs != SK_Outside)
+    if (s.stairs != SK_None && s.stairs != SK_Outside) {
+        InteriorScope in(g);  // de fora não aparece: só desenhada de perto (a colisão vale sempre)
         cornerStairs(g, s.stairs, w / 2 - kWallT, -d / 2 + kWallT, w - 2 * kWallT, d - 2 * kWallT, fy, s.h + kSlabT, &holes);
+    }
     // laje (com buraco da escada)
     if (s.slab) {
         slabWithHoles(g, Mat::Concrete, -w / 2, w / 2, -d / 2, d / 2, top, kSlabT, holes);

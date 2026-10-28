@@ -803,6 +803,9 @@ int main(int argc, char** argv) {
             {"31_lajes", 8.f, 9.f, 2.f, 0.8f, 0.28f, 26.f, true},
             {"31_area_alta", -46.f, 1.7f, -45.f, 3.6f, 0.08f, 2.f, true},
             {"31_area_baixa", 45.f, 1.f, 22.f, -2.4f, 0.3f, 22.f, true},
+            {"31_lado_norte", 3.f, 6.f, -80.f, 3.14159f, 0.25f, 45.f, true},
+            {"31_lado_leste", 80.f, 6.f, 20.f, -1.5708f, 0.25f, 45.f, true},
+            {"31_lado_oeste", -80.f, 6.f, 26.f, 1.5708f, 0.25f, 45.f, true},
         };
         for (const View& v : views) {
             float y = v.ground ? hAt(v.x, v.z) + v.y : v.y;
@@ -847,6 +850,25 @@ int main(int argc, char** argv) {
         if (wp < 6) { std::printf("  [ERRO] não chegou ao campinho pelas escadarias\n"); ++g_fail; }
         save(out, "31_play_campinho.png");
         engine_set_play(e, 0);
+        // entrada norte: sobe da rua de baixo até o campinho pela escadaria
+        {
+            float p[3], r[3], sc[3];
+            engine_get_transform(e, pl, p, r, sc);
+            p[0] = 3.f; p[2] = -96.f; p[1] = hAt(3.f, -96.f) + 0.3f;
+            engine_set_transform(e, pl, p, r, sc);
+            engine_set_play(e, 1);
+            frames(e, 10);
+            const glm::vec2 np[] = {{4, -70}, {2, -53}, {2, -45}};
+            size_t w2 = 0;
+            glm::vec3 en = steer(pl, 900, [&](glm::vec3 q) -> glm::vec2 {
+                while (w2 < 3 && glm::length(glm::vec2(q.x, q.z) - np[w2]) < 1.2f) ++w2;
+                if (w2 >= 3) return {0.f, 0.f};
+                return glm::normalize(np[w2] - glm::vec2(q.x, q.z));
+            }, 1);
+            std::printf("  pela entrada norte chegou em %.1f %.1f %.1f, ponto %zu de 3\n", en.x, en.y, en.z, w2);
+            if (w2 < 3) { std::printf("  [ERRO] não subiu pela entrada norte\n"); ++g_fail; }
+            engine_set_play(e, 0);
+        }
         // chuva forte no Play: gotas, respingos, céu fechado, trovão
         engine_select(e, pl);
         engine_create_weapon_ex(e, 1, "kit:armas/ak47", 0, 1.f, 0);

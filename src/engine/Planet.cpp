@@ -301,7 +301,7 @@ void planetDecorateChunk(Engine* e, TerrainChunk& chunk, float x0, float z0, flo
     // malhas: reaproveita as de chunks já descarregados (o mundo é carregado e descarregado enquanto anda)
     Scene::Handle rootH = e->scene.create("Cidade");
     chunk.objects.push_back(rootH);
-    for (int layer = 0; layer < 3; ++layer)
+    for (int layer = 0; layer < Geo::kLayers; ++layer)
         for (int k = 0; k < int(Mat::Count); ++k) {
             MeshBuilder& mb = g.layer(layer)[k];
             if (mb.empty()) continue;
@@ -323,7 +323,8 @@ void planetDecorateChunk(Engine* e, TerrainChunk& chunk, float x0, float z0, flo
                 mr->mesh = id; mr->material = e->mats[k]; go->meshRenderer = mr;
                 Mat mm = Mat(k);
                 mr->castShadows = !(mm == Mat::Asphalt || mm == Mat::Road || mm == Mat::Sidewalk || mm == Mat::Grass);
-                if (layer) mr->lodFar = layer == 2 ? kInteriorFar : kDetailFar;
+                if (layer == 3) mr->lodNear = kDetailFar;
+                else if (layer) mr->lodFar = layer == 2 ? kInteriorFar : kDetailFar;
             }
         }
     spawnGeoExtras(e, g, rootH, false, kDetailFar);

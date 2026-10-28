@@ -28,13 +28,16 @@ struct Geo {
     MeshBuilder mats[int(Mat::Count)];
     MeshBuilder detailMats[int(Mat::Count)];
     MeshBuilder interiorMats[int(Mat::Count)];  // por dentro (móveis, reboco interno): só desenhado bem perto
+    MeshBuilder farMats[int(Mat::Count)];       // versão simples para longe (só desenhada a partir de onde o detalhe some)
+    static constexpr int kLayers = 4;
     std::vector<BoxCollider> colliders;
     glm::vec3 origin{0.f};
     float yaw = 0.f;
     bool detail = false;  // true: as próximas peças vão para a camada de detalhe
     bool interior = false;  // true: camada de interior
-    MeshBuilder* layer(int l) { return l == 0 ? mats : l == 1 ? detailMats : interiorMats; }
-    const MeshBuilder* layer(int l) const { return l == 0 ? mats : l == 1 ? detailMats : interiorMats; }
+    bool far = false;       // true: camada "de longe"
+    MeshBuilder* layer(int l) { return l == 0 ? mats : l == 1 ? detailMats : l == 2 ? interiorMats : farMats; }
+    const MeshBuilder* layer(int l) const { return l == 0 ? mats : l == 1 ? detailMats : l == 2 ? interiorMats : farMats; }
 
     // Mapa editável: cada place() começa uma "peça" (uma construção, um poste, um carro...) que vira objeto próprio
     std::vector<DoorSpec> doors;
@@ -42,7 +45,7 @@ struct Geo {
     std::vector<glm::vec3> lamps;  // luzes de poste (mundo): acendem à noite
     void lamp(glm::vec3 local) { lamps.push_back(glm::vec3(mats[0].xf * glm::vec4(local, 1.f))); }
     struct Mark {
-        uint32_t v[3][int(Mat::Count)], i[3][int(Mat::Count)];
+        uint32_t v[4][int(Mat::Count)], i[4][int(Mat::Count)];
         size_t col, door = 0, tele = 0;
         glm::vec3 origin;
         float yaw;
@@ -51,7 +54,7 @@ struct Geo {
     std::vector<Mark> marks;
     Mark mark() const {
         Mark m{};
-        for (int l = 0; l < 3; ++l)
+        for (int l = 0; l < kLayers; ++l)
             for (int k = 0; k < int(Mat::Count); ++k) { m.v[l][k] = uint32_t(layer(l)[k].v.size()); m.i[l][k] = uint32_t(layer(l)[k].idx.size()); }
         m.col = colliders.size();
         m.door = doors.size(); m.tele = teles.size();
@@ -59,17 +62,17 @@ struct Geo {
         return m;
     }
 
-    MeshBuilder& operator[](Mat m) { return interior ? interiorMats[int(m)] : detail ? detailMats[int(m)] : mats[int(m)]; }
+    MeshBuilder& operator[](Mat m) { return interior ? interiorMats[int(m)] : far ? farMats[int(m)] : detail ? detailMats[int(m)] : mats[int(m)]; }
     // Posiciona as próximas peças (origem da construção no chão + rotação em Y)
     void place(glm::vec3 pos, float yawRad) {
         origin = pos; yaw = yawRad;
         if (recordMarks) marks.push_back(mark());
         glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1.f), pos), yawRad, glm::vec3(0, 1, 0));
-        for (auto* arr : {mats, detailMats, interiorMats})
+        for (auto* arr : {mats, detailMats, interiorMats, farMats})
             for (int k = 0; k < int(Mat::Count); ++k) { arr[k].xf = m; arr[k].color = glm::vec4(1.f); arr[k].uvTile = glm::vec2(0.f); }
     }
     void offset(glm::vec3 local) {  // desloca o sistema local atual
-        for (auto* arr : {mats, detailMats, interiorMats})
+        for (auto* arr : {mats, detailMats, interiorMats, farMats})
             for (int k = 0; k < int(Mat::Count); ++k) arr[k].xf = arr[k].xf * glm::translate(glm::mat4(1.f), local);
     }
     // Collider em coordenadas locais da construção atual (min + size, como MeshBuilder::box)
@@ -93,6 +96,7 @@ struct Geo {
         for (auto& b : mats) if (!b.empty()) return false;
         for (auto& b : detailMats) if (!b.empty()) return false;
         for (auto& b : interiorMats) if (!b.empty()) return false;
+        for (auto& b : farMats) if (!b.empty()) return false;
         return true;
     }
 };
@@ -102,6 +106,11 @@ struct DetailScope {
     Geo& g; bool prev;
     explicit DetailScope(Geo& geo) : g(geo), prev(geo.detail) { g.detail = true; }
     ~DetailScope() { g.detail = prev; }
+};
+struct FarScope {
+    Geo& g; bool prev;
+    explicit FarScope(Geo& geo) : g(geo), prev(geo.far) { g.far = true; }
+    ~FarScope() { g.far = prev; }
 };
 struct InteriorScope {
     Geo& g; bool prev;
