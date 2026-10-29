@@ -104,6 +104,17 @@ object NativeBridge {
     @JvmStatic external fun nativeAnimEditSelect(bone: Int)
     @JvmStatic external fun nativeAnimEditSelected(): Int
     @JvmStatic external fun nativePlayerAim(on: Boolean)
+    // jogo: primeira pessoa, escolhas antes do Play (lado, roupa, arma), troca rápida, granada, recarga e HUD
+    @JvmStatic external fun nativeSetFirstPerson(on: Boolean)
+    @JvmStatic external fun nativeTeamLoadout(team: Int, skin: Int, primary: String, secondary: String)
+    @JvmStatic external fun nativeTeamGunSkin(gun: String, skin: String)
+    @JvmStatic external fun nativePlayerSwap(): Boolean
+    @JvmStatic external fun nativePlayerGrenade(): Boolean
+    @JvmStatic external fun nativePlayerReload()
+    @JvmStatic external fun nativeHudJson(): ByteArray
+    @JvmStatic external fun nativeLook(dx: Float, dy: Float)
+    @JvmStatic external fun nativeSetEditorOverlay(on: Boolean)
+    @JvmStatic external fun nativeSetCamera(tx: Float, ty: Float, tz: Float, yaw: Float, pitch: Float, dist: Float)
     @JvmStatic external fun nativeInteractLabel(): ByteArray
     @JvmStatic external fun nativeInteract(): Boolean
     @JvmStatic external fun nativeTeamMode(): Boolean

@@ -34,3 +34,5 @@ parar_de_costas.anim;-;Parar de costas (fuzil);1
 pulo_para_tras.anim;-;Pulo para trás;0
 morte_direita.anim;-;Morte (tiro da direita);0
 andando_e_morrendo.anim;-;Andando e morrendo;0
+recarregar_2.anim;-;Recarregando 2 (fuzil);1
+fuzil_andando_2.anim;-;Andando 2 (fuzil);1

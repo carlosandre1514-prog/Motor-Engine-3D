@@ -127,11 +127,7 @@
    "tipo": "loja"
   },
   {
-   "arquivo": "kit:personagens/roupas/pm",
-   "equipamento": [
-    "colete_pm",
-    "cinto_tatico"
-   ],
+   "arquivo": "kit:personagens/skins/pm",
    "nome": "Sgt. Rocha",
    "personagem": true,
    "pos": [
@@ -145,12 +141,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/camisa_time",
-   "equipamento": [
-    "bone_tras_branco",
-    "corrente_ouro",
-    "cinto_tatico_marrom"
-   ],
+   "arquivo": "kit:personagens/skins/rubro",
    "nome": "Magrão",
    "personagem": true,
    "pos": [
@@ -163,12 +154,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/pm_camuflada",
-   "equipamento": [
-    "colete_pm",
-    "cinto_tatico",
-    "capacete_preto"
-   ],
+   "arquivo": "kit:personagens/skins/civil",
    "nome": "Cb. Lima",
    "personagem": true,
    "pos": [
@@ -182,13 +168,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/regata",
-   "equipamento": [
-    "bone_tras_vermelho",
-    "corrente_ouro_grossa",
-    "relogio_ouro",
-    "cinto_tatico_marrom"
-   ],
+   "arquivo": "kit:personagens/skins/alvinegro",
    "nome": "Baixinho",
    "personagem": true,
    "pos": [
@@ -201,11 +181,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/civil",
-   "equipamento": [
-    "colete_civil",
-    "cinto_tatico"
-   ],
+   "arquivo": "kit:personagens/skins/exercito",
    "nome": "Sd. Nunes",
    "personagem": true,
    "pos": [
@@ -219,12 +195,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/moletom",
-   "equipamento": [
-    "bone_tras_preto",
-    "relogio_ouro",
-    "cinto_tatico_marrom"
-   ],
+   "arquivo": "kit:personagens/skins/tricolor",
    "nome": "Cabeça",
    "personagem": true,
    "pos": [
@@ -237,12 +208,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/bope",
-   "equipamento": [
-    "colete_bope",
-    "cinto_tatico",
-    "capacete_preto"
-   ],
+   "arquivo": "kit:personagens/skins/choque",
    "nome": "Ten. Costa",
    "personagem": true,
    "pos": [
@@ -256,12 +222,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/vermelho_preto",
-   "equipamento": [
-    "bone_tras_preto",
-    "corrente_ouro",
-    "cinto_tatico_marrom"
-   ],
+   "arquivo": "kit:personagens/skins/canarinho",
    "nome": "Zóio",
    "personagem": true,
    "pos": [
@@ -274,11 +235,7 @@
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/pm",
-   "equipamento": [
-    "colete_pm",
-    "cinto_tatico"
-   ],
+   "arquivo": "kit:personagens/skins/especial",
    "nome": "Sd. Alves",
    "personagem": true,
    "pos": [
@@ -287,17 +244,12 @@
     104.0
    ],
    "rot_y": 180.0,
-   "roupa": 0,
+   "roupa": 4,
    "time": "policia",
    "tipo": "modelo"
   },
   {
-   "arquivo": "kit:personagens/roupas/camisa_time",
-   "equipamento": [
-    "bone_tras_branco",
-    "corrente_ouro",
-    "cinto_tatico_marrom"
-   ],
+   "arquivo": "kit:personagens/skins/faixa",
    "nome": "Bigode",
    "personagem": true,
    "pos": [
@@ -305,7 +257,7 @@
     23.5,
     -38.0
    ],
-   "roupa": 0,
+   "roupa": 4,
    "time": "bandidos",
    "tipo": "modelo"
   }

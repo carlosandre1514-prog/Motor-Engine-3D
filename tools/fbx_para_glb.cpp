@@ -151,6 +151,11 @@ int main(int argc, char** argv) {
         for (size_t pi = 0; pi < mesh->material_parts.count; ++pi) {
             const ufbx_mesh_part& part = mesh->material_parts.data[pi];
             const ufbx_material* mat = pi < mesh->materials.count ? mesh->materials.data[pi] : nullptr;
+            if (mat) {  // --sem também tira as partes pelo nome do material (ex.: a bala solta junto da pistola)
+                bool skipMat = false;
+                for (const auto& w : without) skipMat |= lower(mat->name.data).find(w) != std::string::npos;
+                if (skipMat) continue;
+            }
             Prim& P = prims[mat];
             std::unordered_map<std::string, uint32_t> seen;
             for (size_t fi = 0; fi < part.face_indices.count; ++fi) {

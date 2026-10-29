@@ -14,6 +14,9 @@ public:
     glm::vec3 target{0.f};
     float yaw = 0.6f, pitch = 0.4f, distance = 8.f;  // radianos / unidades
     float maxDistance = 500.f;                        // planeta: bem maior (zoom até ver o globo)
+    float turnSpeed = 0.008f;                         // radianos por pixel arrastado (primeira pessoa: menor)
+    float minPitch = -1.5f, maxPitch = 1.5f;
+    bool zoomEnabled = true;
 
     void onTouchBegin(const TouchPoint* t, int n) { reset(t, n); }
     void onTouchEnd(const TouchPoint* t, int n) { reset(t, n); }  // reinicia referências ao mudar nº de dedos
@@ -21,9 +24,9 @@ public:
     void onTouchMove(const TouchPoint* t, int n, float viewportH, const Camera& cam) {
         if (n == 1 && prevCount_ == 1) {
             float dx = t[0].x - prev_[0].x, dy = t[0].y - prev_[0].y;
-            yaw -= dx * 0.008f;
-            pitch = std::clamp(pitch + dy * 0.008f, -1.5f, 1.5f);
-        } else if (n == 2 && prevCount_ == 2) {
+            yaw -= dx * turnSpeed;
+            pitch = std::clamp(pitch + dy * turnSpeed, minPitch, maxPitch);
+        } else if (n == 2 && prevCount_ == 2 && zoomEnabled) {
             glm::vec2 mid{(t[0].x + t[1].x) * .5f, (t[0].y + t[1].y) * .5f};
             glm::vec2 pmid{(prev_[0].x + prev_[1].x) * .5f, (prev_[0].y + prev_[1].y) * .5f};
             float d = glm::length(glm::vec2(t[0].x - t[1].x, t[0].y - t[1].y));

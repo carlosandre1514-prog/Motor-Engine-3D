@@ -62,6 +62,15 @@ struct CharacterInfo {
     glm::vec3 butt{0.f, 0.03f, -0.25f};  // meio da soleira da coronha (vai no bolso do ombro)
     glm::vec3 gripPt{0.f, -0.04f, 0.f}, guardPt{0.f, 0.01f, 0.25f};  // centro do cabo e do guarda-mão (espaço da arma)
     float adsW = 0.f;
+    // primeira pessoa (só o jogador): inclinação do olhar (radianos, + para cima) e se a câmera está no olho
+    float viewPitch = 0.f;
+    bool firstPerson = false;
+    bool scope = false;        // arma com luneta (mirando: a tela da luneta, com mais zoom)
+    float raiseW = 0.f;        // arma apontada para a frente (atirando sem mirar); adsW: no olho (mirando)
+    // arma da partida de times: dano por tiro/bago, intervalo, dispersão, bagos, queda do dano com a distância,
+    // pente e balas de reserva (-1 = sem fim). gunDmg 0 = armas fora da partida (tabela antiga por tipo)
+    float gunDmg = 0.f, gunInterval = 0.1f, gunSpread = 0.f, gunFalloff = 1e9f;
+    int gunPellets = 1, magSize = 30, reserve = -1;
 };
 // Animação de morte (não repete); sem ela, congela parado
 void playDeath(CharacterInfo& c);
@@ -141,12 +150,16 @@ struct Fighter {
     int skin = 0;                  // roupa (índice na lista do time)
     std::string weapon = "pistola";
     std::vector<int> owned;        // armas/roupas compradas (ids da loja)
+    // jogador: arma principal e secundária (troca rápida), balas de cada uma e granadas
+    std::string primary, secondary;
+    int slot = 0, mag[2] = {0, 0}, reserve[2] = {0, 0}, grenades = 2;
     // robô
     std::vector<int> path;
     size_t pathPos = 0;
     int target = -1;
     float think = 0.f, fireTimer = 0.f, stuckTimer = 0.f, strafe = 1.f, strafeTimer = 0.f;
     int burst = 0;
+    float shotAgo = 99.f;          // segundos desde o último tiro (aparece no minimapa do inimigo)
     glm::vec3 lastPos{0.f}, goal{0.f};
 };
 struct ShopRT { Scene::Handle obj; int kind = 0; int team = 0; };  // kind 0 armas, 1 roupas
@@ -163,6 +176,15 @@ struct TeamMatch {
     int openShop = -1;                         // loja aberta pelo jogador
     int attacker = -1;                         // quem está atirando agora (crédito do abate)
     float feedTimer = 0.f;
+    // escolhas do jogador antes do Play (app do jogo): roupa (índice na lista do time) e arma principal
+    int playerSkin = -1;
+    std::string playerPrimary, playerSecondary;
+    std::map<std::string, std::string> gunSkins;   // skin escolhida de cada arma do jogador
+    struct Nade { Scene::Handle h; glm::vec3 pos{0.f}, vel{0.f}; float t = 3.f; int owner = -1; };
+    std::vector<Nade> nades;                   // granadas no ar/no chão (explodem em 3 s)
+    struct Feed { std::string killer, victim, weapon; int kt = 0, vt = 0; bool you = false; float age = 0.f; };
+    std::vector<Feed> feed;                    // últimos abates (quadro do HUD)
+    float lastDamage = 0.f;                    // tempo desde o último dano no jogador
 };
 
 // Animações criadas no editor (ou carregadas do projeto) acrescentadas à lista de um Animator
@@ -284,7 +306,7 @@ struct Engine {
     // Jogador
     int player = -1;                 // índice em characters
     glm::vec2 moveInput{0.f};
-    bool runInput = false, jumpRequest = false, fireRequest = false, aimInput = false, crouchInput = false;
+    bool runInput = false, jumpRequest = false, fireRequest = false, aimInput = false, crouchInput = false, reloadRequest = false;
     float fireCooldown = 0.f;
     Tracer tracers[16];
     struct CamState { glm::vec3 target; float yaw, pitch, distance; } savedCam{};
@@ -318,6 +340,15 @@ struct Engine {
     GameState game;
     TeamMatch match;
     float nearOverride = 0.f;  // > 0: plano de corte próximo fixo (primeira pessoa: não desenha a própria cabeça)
+    // Primeira pessoa (jogo): câmera no olho do jogador, cabeça escondida, arma e braços à vista
+    bool firstPerson = false;
+    bool editorOverlay = true;  // jogo: sem borda do mapa, caixa de seleção e ícones do editor fora do Play
+    glm::vec3 fpEye{0.f};
+    bool fpEyeValid = false;
+    bool fpScoped = false;      // olhando pela luneta (arma e braços escondidos)
+    float baseFov = 60.f;
+    float hitMarker = 0.f;      // > 0: acertou alguém agora (marcador no centro da tela)
+    bool hitHead = false;
     std::string toolResult;             // resposta da última chamada de ferramenta (IA)
     std::vector<std::unique_ptr<ClipStore>> clipStores;
     AnimEditState animEdit;
@@ -395,6 +426,9 @@ void updatePlayer(Engine* e, float dt);
 void updateAttachments(Engine* e);
 // Mão esquerda segura o guarda-mão das armas longas (IK de dois ossos depois da animação)
 void updateSupportHands(Engine* e, float dt);
+// Primeira pessoa: olho do jogador (antes do IK) e câmera/cabeça (depois do IK)
+void updateFirstPersonEye(Engine* e, float dt);
+void applyFirstPerson(Engine* e);
 void updateDoors(Engine* e, float dt);                 // abre/fecha portas perto de personagens
 std::string interactLabel(Engine* e, int* which = nullptr);  // botão de interação do jogador ("" = nenhum)
 bool interact(Engine* e);
@@ -481,6 +515,13 @@ bool attachGear(Engine* e, int character, const std::string& name);
 std::string gameStatusText(Engine* e);
 // Partida de times: escolha do lado, lojas (o app mostra a lista e compra), caminhos dos robôs
 void teamChoose(Engine* e, int team);
+// Antes do Play: lado, roupa (0..4 na lista do lado) e arma principal ("m4a1", "ak47"...; "" = a do projeto)
+void teamLoadout(Engine* e, int team, int skin, const std::string& primary, const std::string& secondary = "");
+bool teamSwapWeapon(Engine* e);     // troca rápida principal <-> segunda arma
+void teamGunSkin(Engine* e, const std::string& gun, const std::string& skin);  // skin da arma do jogador ("" = padrão)
+void applyKitTexture(Engine* e, GameObject& g, const std::string& kitName);    // textura de cor do kit no objeto
+bool teamThrowGrenade(Engine* e);   // joga granada para onde a câmera olha
+std::string hudJson(Engine* e);     // estado da partida para o HUD do jogo (JSON)
 std::string shopLabel(Engine* e);            // botão perto de uma loja ("" = nenhuma)
 bool shopInteract(Engine* e);
 std::string shopJson(Engine* e);             // loja aberta: itens, preços, dinheiro ("" = nenhuma)

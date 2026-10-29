@@ -38,3 +38,5 @@ walk_backwards_stop.fbx;parar_de_costas.anim;-;Parar de costas (fuzil);lugar
 jump_backward.fbx;pulo_para_tras.anim;-;Pulo para trás;pose
 Death_From_Right.fbx;morte_direita.anim;-;Morte (tiro da direita);solto
 walking_to_dying.fbx;andando_e_morrendo.anim;-;Andando e morrendo;solto
+Reload.fbx;recarregar_2.anim;-;Recarregando 2 (fuzil);lugar
+Rifle_Walk_2.fbx;fuzil_andando_2.anim;-;Andando 2 (fuzil);lugar

@@ -580,6 +580,14 @@ static void addAccessories(Engine* e, GameObject& weapon, uint32_t acc, const AA
 
 int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
     kind = std::clamp(kind, 0, WK_Count - 1);
+    // armas feitas de formas geométricas foram retiradas: sem arquivo, vira o modelo realista (pistola: TT-33;
+    // as outras: M4A1); faca e taco saem
+    if (look.file.empty()) {
+        if (kind == WK_Knife || kind == WK_Bat) { e->lastError = "faca e taco foram retirados (só armas realistas)"; return -1; }
+        WeaponLook real = look;
+        real.file = kind == WK_Pistol ? "kit:armas/tt33" : "kit:armas/m4a1";
+        return createWeapon(e, kind == WK_Pistol ? WK_Pistol : WK_Rifle, ch, real);
+    }
     glm::vec3 pos = e->editorCam.target + glm::vec3(0, 0.6f, 0);
     glm::vec3 muzzle;
     Scene::Handle h;
@@ -640,6 +648,7 @@ int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
             std::string f = look.file;
             std::transform(f.begin(), f.end(), f.begin(), [](unsigned char ch2) { return char(std::tolower(ch2)); });
             static const char* byKind[] = {"tiro_pistola", "tiro_m4", "tiro_escopeta", "tiro_sniper", "golpe_faca", "golpe_taco"};
+            c.scope = f.find("m4colt") != std::string::npos;  // modelos com luneta
             c.shotSound = f.find("ak47") != std::string::npos ? "tiro_ak47"
                         : f.find("ak74") != std::string::npos ? "tiro_ak74"
                         : f.find("m4") != std::string::npos ? "tiro_m4" : byKind[std::clamp(kind, 0, WK_Count - 1)];
@@ -659,6 +668,10 @@ int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
             c.butt = glm::vec3(0.f, wb.min.y + hgt * 0.62f, wb.min.z + 0.01f);
             c.gripPt = glm::vec3(0.f, wb.min.y + hgt * 0.4f, wb.min.z + len * 0.315f);
             c.guardPt = glm::vec3(0.f, wb.min.y + hgt * 0.68f, wb.min.z + len * 0.63f);
+        } else if (kind == WK_Pistol) {  // pistola: alça de mira em cima, atrás; cabo embaixo, atrás
+            const float len = wb.max.z - wb.min.z, hgt = wb.max.y - wb.min.y;
+            c.sight = glm::vec3(0.f, wb.max.y - hgt * 0.03f, wb.min.z + len * 0.15f);
+            c.gripPt = glm::vec3(0.f, wb.min.y + hgt * 0.35f, wb.min.z + len * 0.2f);
         }
         int base = armedClipBase(kind);
         if (c.anim && base >= 0 && c.clipMap[base + AP_Idle] >= 0) c.anim->setClip(c.clipMap[base + AP_Idle]);
@@ -794,7 +807,11 @@ void updateSupportHands(Engine* e, float dt) {
         bool want = armed && !c.dying && c.reloadTimer <= 0.f;
         c.supportW = want ? std::min(1.f, c.supportW + dt * 6.f) : std::max(0.f, c.supportW - dt * 6.f);
         // mirando com arma longa: a arma sobe até o olho (bochecha na coronha, coronha no ombro)
-        bool ads = !pistol && want && (c.aimHold || c.aimTimer > 0.f) && !(c.clipMap[CC_Rifle + AP_Run] >= 0 && a->clipIndex == c.clipMap[CC_Rifle + AP_Run]);
+        // primeira pessoa: atirar sem mirar só aponta a arma (no ombro); mirar leva a alça de mira ao olho
+        const bool running = c.clipMap[CC_Rifle + AP_Run] >= 0 && a->clipIndex == c.clipMap[CC_Rifle + AP_Run];
+        bool raise = want && (c.aimHold || c.aimTimer > 0.f) && !running && (!pistol || c.firstPerson);
+        bool ads = raise && (c.firstPerson ? c.aimHold : !pistol);
+        c.raiseW = raise ? std::min(1.f, c.raiseW + dt * 9.f) : std::max(0.f, c.raiseW - dt * 7.f);
         c.adsW = ads ? std::min(1.f, c.adsW + dt * 7.f) : std::max(0.f, c.adsW - dt * 7.f);
         if (c.supportW <= 0.f) continue;
         int up, fo, ha, rup, rfo, rha, head;
@@ -816,13 +833,6 @@ void updateSupportHands(Engine* e, float dt) {
         };
         glm::vec3 R = palmOf(rfo, rha), L = palmOf(fo, ha);
         GameObject* body = e->scene.get(c.root);
-        if (pistol) {  // reforço para o coice: a mão esquerda envolve o pulso direito, por baixo e do lado de dentro
-            glm::vec3 lft = body ? body->transform.rotation * glm::vec3(1.f, 0.f, 0.f) : glm::vec3(1.f, 0.f, 0.f);
-            glm::vec3 wr = world(rha) + (lft * 0.04f - glm::vec3(0.f, 0.045f, 0.f)) * (c.height / 1.75f);
-            glm::vec3 now = glm::vec3(a->global[ha][3]);
-            twoBoneIK(*a, up, fo, ha, glm::mix(now, glm::vec3(glm::inverse(space) * glm::vec4(wr, 1.f)), c.supportW));
-            continue;
-        }
         glm::vec3 fwd = body ? body->transform.rotation * glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 0.f, 1.f);
         // Empunhadura de fuzil como no treino de tiro: a soleira da coronha fica no "bolso" do ombro direito (entre a
         // clavícula e o deltoide). Pronto baixo: cano 35° para baixo e um pouco para dentro. Mirando: cano para a
@@ -836,22 +846,75 @@ void updateSupportHands(Engine* e, float dt) {
             glm::vec3 z = glm::normalize(glm::cross(x, y));
             return glm::mat3(x, glm::cross(z, x), z);
         };
-        const float down = glm::radians(35.f);
-        glm::vec3 dLow = glm::normalize(fwd * std::cos(down) - upW * std::sin(down) + left * 0.18f);
-        glm::vec3 d = glm::normalize(glm::mix(dLow, fwd, c.adsW));
+        const bool fpView = c.firstPerson && e->fpEyeValid && !c.dying;
+        // pronto baixo: 35° (em primeira pessoa 20°, para a arma aparecer na diagonal embaixo da tela)
+        const float down = glm::radians(fpView ? 14.f : 35.f);
+        // para onde se olha (o jogador em primeira pessoa olha para cima e para baixo; os robôs, reto)
+        const glm::vec3 view = fwd * std::cos(c.viewPitch) + upW * std::sin(c.viewPitch);
+        const glm::vec3 viewUp = -fwd * std::sin(c.viewPitch) + upW * std::cos(c.viewPitch);
+        glm::vec3 dLow = glm::normalize(view * std::cos(down) - viewUp * std::sin(down) + left * (fpView ? 0.30f : 0.18f));
+        glm::vec3 d = glm::normalize(glm::mix(dLow, view, c.firstPerson ? c.raiseW : c.adsW));
+        if (fpView) {  // primeira pessoa: baixa na diagonal parado, quase reta atirando sem mirar, no olho mirando
+            glm::vec3 dHip = glm::normalize(view * std::cos(0.05f) - viewUp * std::sin(0.05f) + left * 0.03f);
+            d = glm::normalize(glm::mix(glm::mix(dLow, dHip, c.raiseW), view, c.adsW));
+        }
+        glm::mat4 toSkel = glm::inverse(space);
+        if (pistol && fpView) {
+            // pistola em primeira pessoa: à frente do olho, um pouco à direita e abaixo; mirando, a alça de mira
+            // vem para o centro. A mão direita vai ao cabo (IK) e a esquerda envolve a direita.
+            glm::vec3 dp = glm::normalize(glm::mix(view * std::cos(0.15f) - viewUp * std::sin(0.15f) + left * 0.06f, view, c.adsW));
+            glm::quat qp = glm::normalize(glm::quat_cast(basis(dp, upW) * glm::transpose(basis(glm::vec3(0.f, 0.f, 1.f), upW))));
+            glm::quat cur = w->transform.rotation;
+            if (glm::dot(cur, qp) < 0.f) qp = -qp;
+            glm::vec3 sightAt = e->fpEye + (view * glm::mix(0.34f, 0.30f, c.adsW) - viewUp * glm::mix(0.10f, 0.012f, c.adsW)
+                                            - left * glm::mix(0.09f, 0.f, c.adsW)) * scale;
+            w->transform.position = glm::mix(w->transform.position, sightAt - qp * c.sight, c.supportW);
+            w->transform.rotation = glm::normalize(glm::slerp(cur, qp, c.supportW));
+            w->transform.markDirty();
+            if (!w->transform.parent) w->transform.updateWorld(glm::mat4(1.f), false);
+            glm::vec3 wf = glm::normalize(glm::vec3(toSkel * glm::vec4(w->transform.rotation * glm::vec3(0, 0, 1), 0.f)));
+            glm::vec3 wu = glm::normalize(glm::vec3(toSkel * glm::vec4(w->transform.rotation * glm::vec3(0, 1, 0), 0.f)));
+            glm::vec3 wl = glm::normalize(glm::cross(wu, wf));
+            if (rup >= 0) {
+                glm::vec3 g = glm::vec3(toSkel * w->transform.world() * glm::vec4(c.gripPt, 1.f));
+                glm::vec3 wristR = g - wf * (0.05f * scale) - wl * (0.02f * scale) + wu * (0.035f * scale);
+                glm::vec3 poleR = glm::vec3(toSkel * glm::vec4(-upW - left * 0.6f, 0.f));
+                twoBoneIK(*a, rup, rfo, rha, glm::mix(glm::vec3(a->global[rha][3]), wristR, c.supportW), poleR);
+                poseHand(*a, rha, false, glm::normalize(wf * 0.6f - wu * 0.6f + wl * 0.2f), glm::normalize(wu + wf * 0.3f), glm::normalize(-wu + wf * 0.3f), -1.2f, c.supportW);
+            }
+            glm::vec3 wr = world(rha) + (left * 0.035f - upW * 0.04f) * scale;
+            glm::vec3 poleL = glm::vec3(toSkel * glm::vec4(-upW + left * 0.5f, 0.f));
+            twoBoneIK(*a, up, fo, ha, glm::mix(glm::vec3(a->global[ha][3]), glm::vec3(toSkel * glm::vec4(wr, 1.f)), c.supportW), poleL);
+            // mão esquerda fechada por cima da direita (dedos envolvendo os dedos da mão do cabo)
+            poseHand(*a, ha, true, glm::normalize(wf * 0.3f - wl * 0.7f - wu * 0.3f), glm::normalize(wu + wf * 0.4f), wf, -1.1f, c.supportW);
+            continue;
+        }
+        if (pistol) {  // reforço para o coice: a mão esquerda envolve o pulso direito, por baixo e do lado de dentro
+            glm::vec3 lft = body ? body->transform.rotation * glm::vec3(1.f, 0.f, 0.f) : glm::vec3(1.f, 0.f, 0.f);
+            glm::vec3 wr = world(rha) + (lft * 0.04f - glm::vec3(0.f, 0.045f, 0.f)) * (c.height / 1.75f);
+            glm::vec3 now = glm::vec3(a->global[ha][3]);
+            twoBoneIK(*a, up, fo, ha, glm::mix(now, glm::vec3(glm::inverse(space) * glm::vec4(wr, 1.f)), c.supportW));
+            continue;
+        }
         glm::quat q = glm::normalize(glm::quat_cast(basis(d, upW) * glm::transpose(basis(glm::vec3(0.f, 0.f, 1.f), upW))));
         glm::vec3 shoulder = rup >= 0 ? world(rup) : R;
         glm::vec3 pocket = shoulder + (fwd * glm::mix(0.09f, 0.05f, c.adsW) + left * 0.07f - upW * glm::mix(0.035f, -0.03f, c.adsW)) * scale;
         {
             glm::quat cur = w->transform.rotation;
             if (glm::dot(cur, q) < 0.f) q = -q;
-            w->transform.position = glm::mix(w->transform.position, pocket - q * c.butt, c.supportW);
+            glm::vec3 place = pocket - q * c.butt;
+            if (fpView) {  // primeira pessoa: a arma fica num ponto fixo em relação ao olho (a câmera)
+                const glm::vec3 lowAt = e->fpEye + (view * 0.32f - viewUp * 0.115f - left * 0.10f) * scale;
+                const glm::vec3 hipAt = e->fpEye + (view * 0.30f - viewUp * 0.105f - left * 0.095f) * scale;
+                const glm::vec3 adsAt = e->fpEye + (view * 0.26f - viewUp * 0.012f) * scale;
+                place = glm::mix(glm::mix(lowAt, hipAt, c.raiseW), adsAt, c.adsW) - q * c.sight;
+            }
+            w->transform.position = glm::mix(w->transform.position, place, c.supportW);
             w->transform.rotation = glm::normalize(glm::slerp(cur, q, c.supportW));
             w->transform.markDirty();
             if (!w->transform.parent) w->transform.updateWorld(glm::mat4(1.f), false);
         }
-        glm::mat4 toSkel = glm::inverse(space);
-        if (c.adsW > 0.f && head >= 0) {  // cabeça na coronha: o olho direito vai para trás da alça de mira
+        if (c.adsW > 0.f && head >= 0 && !fpView) {  // cabeça na coronha: o olho direito vai para trás da alça de mira
             glm::vec3 hp = world(head);
             glm::vec3 eye = hp + (upW * 0.075f + fwd * 0.085f - left * 0.032f) * scale;
             glm::vec3 sightW = w->transform.position + w->transform.rotation * c.sight;
@@ -878,7 +941,7 @@ void updateSupportHands(Engine* e, float dt) {
             glm::vec3 poleR = glm::vec3(toSkel * glm::vec4(-upW - left * 0.55f - fwd * 0.1f, 0.f));  // cotovelo direito para baixo e para fora
             twoBoneIK(*a, rup, rfo, rha, glm::mix(nowR, wristR, c.supportW), poleR);
             glm::vec3 gripAxis = glm::normalize(-wu + wf * 0.3f);
-            const float cr = -0.45f;  // dedos fechando em volta do cabo
+            const float cr = fpView ? -1.1f : -0.45f;  // dedos fechando em volta do cabo
             poseHand(*a, rha, false, glm::normalize(wf * 0.8f + wl * 0.35f - wu * 0.35f), glm::normalize(wu + wl * 0.4f), gripAxis, cr, c.supportW);
         }
         // mão esquerda no guarda-mão: palma por baixo, dedos subindo pelo lado direito, polegar pelo lado esquerdo
@@ -888,8 +951,93 @@ void updateSupportHands(Engine* e, float dt) {
             glm::vec3 nowL = glm::vec3(a->global[ha][3]);
             glm::vec3 poleL = glm::vec3(toSkel * glm::vec4(-upW + left * 0.35f, 0.f));  // cotovelo esquerdo por baixo da arma
             twoBoneIK(*a, up, fo, ha, glm::mix(nowL, wristL, c.supportW), poleL);
-            const float cl = -0.4f;   // dedos subindo pelo lado do guarda-mão
+            const float cl = fpView ? -1.0f : -0.4f;   // dedos subindo pelo lado do guarda-mão (de perto: bem fechados)
             poseHand(*a, ha, true, glm::normalize(wf * 0.5f - wl * 0.6f + wu * 0.25f), glm::normalize(wf + wu * 0.5f), wf, cl, c.supportW);
+        }
+    }
+}
+
+// ---------------- primeira pessoa ----------------
+static int headJointOf(const Animator& a) {
+    if (const Retarget* rt = a.retarget) return rt->targetOf[CJ_Head];
+    return a.skeleton && a.skeleton->jointCount == CJ_Total ? int(CJ_Head) : -1;
+}
+
+// Olho do jogador: um pouco acima e à frente do osso da cabeça (pose da animação, antes do IK das mãos).
+// A altura é suavizada (o balanço da corrida não sacode a tela); na horizontal acompanha o corpo sem atraso.
+void updateFirstPersonEye(Engine* e, float dt) {
+    if (!e->playing || !e->firstPerson || e->player < 0 || e->player >= int(e->characters.size())) { e->fpEyeValid = false; return; }
+    CharacterInfo& c = e->characters[e->player];
+    GameObject* body = e->scene.get(c.root);
+    Animator* a = c.anim;
+    int head = a && a->skeleton ? headJointOf(*a) : -1;
+    if (!body || c.dying) { e->fpEyeValid = false; return; }
+    const float scale = c.height / 1.75f;
+    glm::vec3 fwd = body->transform.rotation * glm::vec3(0.f, 0.f, 1.f);
+    glm::vec3 eye;
+    if (head >= 0) {
+        glm::mat4 space = a->space ? a->space->world() : glm::mat4(1.f);
+        eye = glm::vec3(space * a->global[head][3]) + (glm::vec3(0.f, 0.085f, 0.f) + fwd * 0.11f) * scale;
+    } else {
+        eye = body->transform.position + glm::vec3(0.f, c.height * (c.crouch ? 0.62f : 0.93f), 0.f) + fwd * 0.1f;
+    }
+    if (e->fpEyeValid) eye.y = glm::mix(e->fpEye.y, eye.y, 1.f - std::exp(-14.f * dt));
+    e->fpEye = eye;
+    e->fpEyeValid = true;
+}
+
+// Câmera no olho olhando para onde o dedo apontou; a cabeça (com capacete/boné) some para não tapar a vista.
+// Mirando, o campo de visão fecha um pouco (sniper: luneta, bem mais).
+void applyFirstPerson(Engine* e) {
+    // arma escondida enquanto se olha pela luneta (volta ao sair da mira)
+    auto showWeapon = [&](CharacterInfo* c, bool on) {
+        if (!c) return;
+        if (GameObject* w = e->scene.get(c->weapon))
+            if (w->active != on) Scene::forEachInSubtree(*w, [&](GameObject& o) { o.active = on; });
+    };
+    CharacterInfo* pc = e->player >= 0 && e->player < int(e->characters.size()) ? &e->characters[e->player] : nullptr;
+    if (!e->firstPerson || !e->playing || !e->fpEyeValid || !pc) {
+        e->camera.fovYDeg = e->baseFov;
+        if (e->fpScoped) { showWeapon(pc, true); e->fpScoped = false; }
+        return;
+    }
+    CharacterInfo& c = *pc;
+    glm::vec3 view = e->editorCam.forward();
+    const bool scoped = c.scope && c.adsW > 0.85f;
+    if (scoped != e->fpScoped) { showWeapon(&c, !scoped); e->fpScoped = scoped; }
+    if (scoped) {  // luneta: a mira balança devagar (respiração), e o tiro vai junto
+        const float t = e->renderer.time;
+        glm::vec3 rt = glm::normalize(glm::cross(view, glm::vec3(0, 1, 0)));
+        glm::vec3 up = glm::cross(rt, view);
+        view = glm::normalize(view + rt * (0.0045f * std::sin(t * 0.9f)) + up * (0.0035f * std::sin(t * 1.4f + 0.7f)));
+    }
+    static const bool outside = std::getenv("MOTOR_FP_DE_FORA") != nullptr;  // testes: vê a pose de fora
+    if (outside) {
+        e->camera.lookAt(e->fpEye + glm::vec3(1.1f, 0.15f, 0.45f), e->fpEye + view * 0.3f - glm::vec3(0, 0.15f, 0));
+        return;
+    }
+    e->camera.lookAt(e->fpEye, e->fpEye + view);
+    e->camera.nearZ = 0.035f;
+    const float zoom = c.scope ? 0.36f : 0.72f;
+    e->camera.fovYDeg = e->baseFov * glm::mix(1.f, zoom, c.adsW);
+    e->editorCam.turnSpeed = 0.0042f * e->camera.fovYDeg / e->baseFov;  // com zoom, o dedo gira menos
+    // a cabeça (com capacete/boné) some para não tapar a vista; na luneta, os braços também
+    if (Animator* a = c.anim; a && a->skeleton) {
+        int head = headJointOf(*a);
+        if (head < 0) return;
+        const Skeleton& S = *a->skeleton;
+        int arms[2] = {-1, -1};
+        if (scoped && a->retarget) { arms[0] = a->retarget->targetOf[CJ_LUpper]; arms[1] = a->retarget->targetOf[CJ_RUpper]; }
+        for (int root : {head, arms[0], arms[1]}) {
+            if (root < 0) continue;
+            glm::vec3 hp = glm::vec3(a->global[root][3]);
+            glm::mat4 M = glm::translate(glm::mat4(1.f), hp) * glm::scale(glm::mat4(1.f), glm::vec3(1e-3f)) * glm::translate(glm::mat4(1.f), -hp);
+            bool in[kMaxJoints] = {};
+            for (int k = 0; k < S.jointCount; ++k) {
+                int i = S.order[k];
+                in[i] = i == root || (S.parent[i] >= 0 && in[S.parent[i]]);
+                if (in[i]) a->palette[i] = M * a->global[i] * S.inverseBind[i];
+            }
         }
     }
 }
@@ -898,12 +1046,58 @@ void updateSupportHands(Engine* e, float dt) {
 // Mira de terceira pessoa: um pouco acima do centro da câmera (a câmera fica inclinada para baixo)
 static glm::vec3 aimDirection(Engine* e) {
     glm::vec3 f = glm::normalize(e->camera.rotation * glm::vec3(0, 0, -1));
+    if (e->firstPerson) return f;  // primeira pessoa: o tiro vai para o centro da tela
     return glm::normalize(f + glm::vec3(0.f, 0.28f, 0.f));
+}
+
+// Tiro com arma da partida: dano da tabela (cabeça 2,5x), queda com a distância, bagos da escopeta, dispersão
+// menor mirando (sniper sem mirar é bem imprecisa)
+static void fireGun(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* self) {
+    glm::vec3 aim = aimDirection(e), from = e->camera.position;
+    if (!e->firstPerson) {
+        glm::quat q = glm::angleAxis(std::atan2(aim.x, aim.z), glm::vec3(0, 1, 0));
+        btTransform t = self->getWorldTransform();
+        t.setRotation({q.x, q.y, q.z, q.w});
+        self->setWorldTransform(t);
+        root.transform.setRotation(q);
+    }
+    e->fireCooldown = c.gunInterval;
+    c.aimTimer = 1.5f;
+    float spread = c.gunSpread * (c.aimHold ? 0.25f : 1.f);
+    if (c.weaponKind == WK_Sniper && !c.aimHold) spread = 0.06f;
+    if (c.gunPellets > 1) spread = c.gunSpread;
+    glm::vec3 muzzle = from + aim;
+    if (GameObject* w = e->scene.get(c.weapon)) muzzle = glm::vec3(w->transform.world() * glm::vec4(c.muzzle, 1.f));
+    playSound(e, c.shotSound.empty() ? "tiro_m4" : c.shotSound.c_str(), muzzle, 1.f);
+    addFlash(e, fxMuzzleFlash(e->particles, e->fxRng, muzzle, aim), 0.06f);
+    for (int k = 0; k < c.gunPellets; ++k) {
+        glm::vec3 j(e->fxRng.range(-1.f, 1.f), e->fxRng.range(-1.f, 1.f), e->fxRng.range(-1.f, 1.f));
+        glm::vec3 dir = glm::normalize(aim + j * spread);
+        glm::vec3 hit; GameObject* obj = nullptr; float frac = 1.f;
+        bool any = e->physics.raycastIgnoring(from, from + dir * 300.f, self, hit, obj, frac);
+        glm::vec3 end = any ? hit : from + dir * 300.f;
+        fxBullet(e->particles, muzzle, end);
+        if (!any) continue;
+        fxImpact(e->particles, e->fxRng, hit, dir);
+        if (k == 0) playSound(e, "impacto", end, 0.5f);
+        if (!obj) continue;
+        float dist = glm::length(hit - from);
+        float dmg = c.gunDmg * (dist > c.gunFalloff ? std::max(0.3f, 1.f - 0.7f * (dist - c.gunFalloff) / (1.5f * c.gunFalloff)) : 1.f);
+        GameObject* r = rootOf(e, obj);
+        for (const CharacterInfo& o : e->characters)
+            if (r && e->scene.get(o.root) == r && &o != &c) {
+                bool head = hit.y > r->transform.position.y + o.height * 0.83f;
+                if (head) dmg *= 2.5f;
+                e->hitMarker = 0.25f; e->hitHead = head;
+            }
+        damageAt(e, obj, dmg, from);
+    }
 }
 
 static void fire(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* self) {
     int kind = c.weaponKind;
     bool melee = !isGun(kind);
+    if (!melee && c.gunDmg > 0.f) { fireGun(e, c, root, self); return; }
     glm::vec3 camFwd = aimDirection(e);
     glm::vec3 from, dir;
     float range, power, cooldown;
@@ -1113,15 +1307,49 @@ void updatePlayer(Engine* e, float dt) {
     glm::vec3 fwd(-std::sin(yaw), 0.f, -std::cos(yaw)), right(std::cos(yaw), 0.f, -std::sin(yaw));
     glm::vec3 move = alive ? right * e->moveInput.x + fwd * e->moveInput.y : glm::vec3(0.f);
     c.aimHold = alive && e->aimInput && c.weaponKind >= 0;
-    glm::vec3 face = c.aimHold || c.aimTimer > 0.f ? fwd : glm::vec3(0.f);
+    const bool fp = e->firstPerson && alive;
+    c.firstPerson = e->firstPerson;
+    c.viewPitch = fp ? -e->editorCam.pitch : 0.f;
+    glm::vec3 face = fp || c.aimHold || c.aimTimer > 0.f ? fwd : glm::vec3(0.f);
     c.crouch = alive && e->crouchInput && c.weaponKind >= 0 && c.weaponKind != WK_Pistol;
     float speed = c.crouch ? 1.6f : e->runInput && !c.aimHold ? 6.5f : 2.6f;  // mirando: anda devagar; agachado mais ainda
+    if (fp && c.weaponKind == WK_Pistol) c.aimTimer = std::max(c.aimTimer, 0.1f);  // primeira pessoa: pistola sempre à frente
     driveCharacter(e, c, move, speed, alive && e->jumpRequest, dt, face);
     e->jumpRequest = false;
+    if (fp) {  // primeira pessoa: o corpo vira junto com o olhar, sem atraso (a arma fica no centro da tela)
+        glm::quat q = glm::angleAxis(std::atan2(fwd.x, fwd.z), glm::vec3(0, 1, 0));
+        btTransform t = b->getWorldTransform();
+        t.setRotation({q.x, q.y, q.z, q.w});
+        b->setWorldTransform(t);
+        go->transform.setRotation(q);
+    }
 
+    e->hitMarker = std::max(0.f, e->hitMarker - dt);
+    // armas da partida: pente e reserva de cada arma; recarrega no botão ou quando o pente acaba
+    auto startReload = [&]() {
+        int n = c.reserve < 0 ? c.magSize - c.ammo : std::min(c.reserve, c.magSize - c.ammo);
+        if (n <= 0) return;
+        c.ammo += n;
+        if (c.reserve > 0) c.reserve -= n;
+        const AnimationClip* rc = c.anim && c.clipMap[CC_Reload] >= 0 ? c.anim->clipAt(c.clipMap[CC_Reload]) : nullptr;
+        c.reloadTimer = c.weaponKind == WK_Pistol ? 1.3f : rc ? rc->duration / 1.4f : 2.f;
+        playSound(e, "recarga", go->transform.position, 0.8f);
+        if (c.anim && c.clipMap[CC_Reload] >= 0 && c.weaponKind != WK_Pistol) c.anim->setClip(c.clipMap[CC_Reload]);
+    };
+    if (c.gunDmg > 0.f) {
+        if (alive && e->reloadRequest && c.reloadTimer <= 0.f) startReload();
+        if (alive && e->fireRequest && e->fireCooldown <= 0.f && c.reloadTimer <= 0.f) {
+            if (c.ammo > 0) {
+                fire(e, c, *go, b);
+                c.fireAnim = 0.35f;
+                if (--c.ammo <= 0) startReload();
+            } else startReload();
+        }
+    }
+    e->reloadRequest = false;
     // fuzil, escopeta e sniper: pente de 30 tiros; vazio, recarrega sozinho (com a animação)
     bool longGun = c.weaponKind == WK_Rifle || c.weaponKind == WK_Shotgun || c.weaponKind == WK_Sniper;
-    if (alive && e->fireRequest && e->fireCooldown <= 0.f && c.reloadTimer <= 0.f) {
+    if (c.gunDmg <= 0.f && alive && e->fireRequest && e->fireCooldown <= 0.f && c.reloadTimer <= 0.f) {
         fire(e, c, *go, b);
         if (longGun) {
             c.fireAnim = 0.35f;
@@ -1137,7 +1365,8 @@ void updatePlayer(Engine* e, float dt) {
     }
     e->fireRequest = false;
 
-    // câmera em terceira pessoa segue o jogador
+    // câmera em terceira pessoa segue o jogador (em primeira pessoa, só quando ele cai: vê o corpo de fora)
+    if (e->firstPerson) e->editorCam.distance = 3.5f;
     glm::vec3 focus = go->transform.position + glm::vec3(0, c.height * 0.85f, 0);
     e->editorCam.target = glm::mix(e->editorCam.target, focus, 1.f - std::exp(-10.f * dt));
 }

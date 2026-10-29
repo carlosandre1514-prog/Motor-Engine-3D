@@ -23,6 +23,20 @@ android {
         }
     }
 
+    // Dois APKs do mesmo código: "motor" (o editor, com assistente de IA) e "jogo" (só Polícia x Bandidos)
+    flavorDimensions 'app'
+    productFlavors {
+        motor {
+            dimension 'app'
+            applicationId 'com.mobile3d.engine'
+        }
+        jogo {
+            dimension 'app'
+            applicationId 'com.mobile3d.policiaxbandidos'
+            versionName '0.1-jogo'
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path file('../CMakeLists.txt')
@@ -56,5 +70,5 @@ android {
 
 dependencies {
     // Assistente de IA (Claude): SDK oficial da Anthropic para Java/Kotlin
-    implementation 'com.anthropic:anthropic-java:3.2.0'
+    motorImplementation 'com.anthropic:anthropic-java:3.2.0'
 }

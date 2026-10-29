@@ -1129,12 +1129,16 @@ int main(int argc, char** argv) {
                 save(out, name.c_str());
                 engine_tool_call(e, "remover_objetos", json{{"ids", {id}}}.dump().c_str());
             }
-        for (const char* g : {"pistola", "escopeta", "sniper"}) {  // armas feitas pelo motor (sem arquivo)
-            int id = engine_add_spec(e, json{{"tipo", "arma"}, {"arma", g}, {"pos", {0, 1.0, 0}}}.dump().c_str());
+        // pistola TT-33 e as skins dela (texturas do kit: armas/skins/tt33_<skin>.jpg)
+        for (const char* sk : {"", "crimson_forge", "nebula_shadow", "gold_relic"}) {
+            json spec = {{"tipo", "arma"}, {"arma", "tt33"}, {"pos", {0, 1.0, 0}}};
+            if (*sk) spec["textura"] = std::string("kit:armas/skins/tt33_") + sk + ".jpg";
+            int id = engine_add_spec(e, spec.dump().c_str());
+            if (id < 0) { std::printf("  [ERRO] tt33 %s: %s\n", sk, engine_last_error(e)); ++g_fail; continue; }
             engine_select(e, -1);
-            engine_set_camera(e, 0.f, 1.02f, 0.f, 1.5708f + 0.18f, 0.12f, std::string(g) == "pistola" ? 0.5f : 1.05f);
+            engine_set_camera(e, 0.f, 1.02f, 0.f, 1.5708f + 0.18f, 0.12f, 0.45f);
             frames(e, 3);
-            save(out, (std::string("skin_") + g + "_padrao.png").c_str());
+            save(out, (std::string("skin_tt33_") + (*sk ? sk : "padrao") + ".png").c_str());
             engine_tool_call(e, "remover_objetos", json{{"ids", {id}}}.dump().c_str());
         }
         // primeira pessoa: a arma vista de trás (como nas mãos) e a favela na altura dos olhos
@@ -1347,6 +1351,115 @@ int main(int argc, char** argv) {
         std::printf("OK\n");
         return 0;
     }
+    // Mira em primeira pessoa de cada arma (alça de mira/luneta na frente do olho): SO_ADS
+    if (std::getenv("SO_ADS")) {
+        using nlohmann::json;
+        engine_new_scene(e);
+        engine_set_grid(e, 0);
+        int id = engine_add_spec(e, json{{"tipo", "modelo"}, {"arquivo", "kit:personagens/skins/pm"}, {"personagem", true}, {"jogador", true}, {"pos", {0, 0, 0}}}.dump().c_str());
+        if (id < 0) { std::printf("[ERRO] %s\n", engine_last_error(e)); return 1; }
+        // alvo: caixa a 15 m na frente (o personagem olha para -Z com yaw 0)
+        engine_add_spec(e, json{{"tipo", "forma"}, {"forma", "cubo"}, {"fisica", false}, {"pos", {0, 1.6f, -15.f}}, {"escala", {0.4f, 0.4f, 0.4f}}, {"paleta", "laranja"}}.dump().c_str());
+        engine_add_spec(e, json{{"tipo", "forma"}, {"forma", "cubo"}, {"fisica", false}, {"pos", {0, 0.6f, -15.f}}, {"escala", {0.2f, 1.2f, 0.2f}}, {"paleta", "azul"}}.dump().c_str());
+        struct G { const char* nm; int kind; const char* file; } guns[] = {{"m4a1", 1, "kit:armas/m4a1"}, {"m4colt", 1, "kit:armas/m4colt"}, {"ak47", 1, "kit:armas/ak47"},
+            {"ak74", 1, "kit:armas/ak74"}, {"ak74_tatica", 1, "kit:armas/ak74_tatica"}, {"tt33", 0, "kit:armas/tt33"}};
+        const char* only = std::getenv("ARMA");
+        engine_set_first_person(e, 1);
+        for (auto& g : guns) {
+            if (only && std::string(only) != g.nm) continue;
+            engine_select(e, id);
+            engine_set_player(e);
+            engine_create_weapon_ex(e, g.kind, g.file, 0, 1.f, 0);
+            engine_select(e, -1);
+            engine_set_play(e, 1);
+            engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, 0.0f, 3.f);
+            engine_player_aim(e, 0);
+            frames(e, 40);
+            save(out, (std::string("ads_") + g.nm + "_quadril.png").c_str());
+            engine_player_aim(e, 1);
+            frames(e, 40);
+            save(out, (std::string("ads_") + g.nm + "_mira.png").c_str());
+            engine_player_aim(e, 0);
+            engine_set_play(e, 0);
+        }
+        engine_destroy(e);
+        std::printf("OK\n");
+        return 0;
+    }
+    // Jogo em primeira pessoa (app do jogo): escolhas antes do Play, câmera no olho, mira, troca de arma, granada e HUD
+    auto jogo = [&]() {
+        using nlohmann::json;
+        std::printf("[33] jogo em primeira pessoa\n");
+        teamProject();
+        engine_set_quality(e, 1);
+        engine_team_gun_skin(e, "tt33", "gold_relic");
+        engine_team_loadout(e, 0, 2, "m4colt", "tt33");
+        engine_set_first_person(e, 1);
+        engine_set_play(e, 1);
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, 0.05f, 3.f);
+        frames(e, 30);
+        auto hud = [&]() { return json::parse(std::string(engine_hud_json(e))); };
+        json h = hud();
+        std::printf("  HUD: %s\n", h.dump().substr(0, 400).c_str());
+        if (!h.value("ativo", false) || h["armas"][0]["arma"] != "m4colt") { std::printf("  [ERRO] arma escolhida não entrou\n"); ++g_fail; }
+        save(out, "33_quadril.png");
+        engine_player_aim(e, 1);
+        frames(e, 30);
+        save(out, "33_mira.png");
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, -0.55f, 3.f);
+        frames(e, 10);
+        save(out, "33_mira_cima.png");
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, 0.6f, 3.f);
+        frames(e, 10);
+        save(out, "33_mira_baixo.png");
+        engine_player_aim(e, 0);
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, 0.05f, 3.f);
+        for (int k = 0; k < 40; ++k) { engine_player_fire(e); frames(e, 1); if (k == 6) save(out, "33_tiro_quadril.png"); }
+        h = hud();
+        int balas = h["armas"][0]["balas"];
+        std::printf("  depois de atirar: %d balas, reserva %d\n", balas, int(h["armas"][0]["reserva"]));
+        if (balas >= 30) { std::printf("  [ERRO] as balas não gastaram\n"); ++g_fail; }
+        engine_player_reload(e);
+        frames(e, 2);
+        if (!hud().value("recarregando", false)) { std::printf("  [ERRO] não recarregou\n"); ++g_fail; }
+        frames(e, 150);
+        engine_player_swap(e);
+        frames(e, 20);
+        h = hud();
+        if (h.value("slot", 0) != 1) { std::printf("  [ERRO] troca rápida não trocou\n"); ++g_fail; }
+        save(out, "33_pistola.png");
+        engine_player_aim(e, 1);
+        frames(e, 25);
+        save(out, "33_pistola_mira.png");
+        engine_player_aim(e, 0);
+        engine_player_swap(e);
+        frames(e, 10);
+        engine_player_input(e, 0.f, 1.f, 1);
+        frames(e, 40);
+        save(out, "33_correndo.png");
+        engine_player_input(e, 0.f, 0.f, 0);
+        engine_player_crouch(e, 1);
+        frames(e, 30);
+        save(out, "33_agachado.png");
+        engine_player_crouch(e, 0);
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, -0.15f, 3.f);
+        frames(e, 5);
+        if (!engine_player_grenade(e)) { std::printf("  [ERRO] granada não saiu\n"); ++g_fail; }
+        frames(e, 25);
+        save(out, "33_granada.png");
+        frames(e, 170);
+        save(out, "33_granada_explodiu.png");
+        h = hud();
+        std::printf("  granadas: %d, placar %s\n", int(h["granadas"]), h["placar"].dump().c_str());
+        if (h["granadas"] != 1) { std::printf("  [ERRO] contador de granadas\n"); ++g_fail; }
+        for (int k = 0; k < 30 * 40; ++k) frames(e, 1, 1.f / 30.f);
+        h = hud();
+        std::printf("  após 40 s: placar %s, você %d abates %d mortes\n", h["placar"].dump().c_str(), int(h["abates"]), int(h["mortes"]));
+        save(out, "33_depois.png");
+        engine_set_play(e, 0);
+        engine_set_first_person(e, 0);
+    };
+    if (std::getenv("SO_JOGO")) { jogo(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_TIMES")) { times(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_FAVELA")) { favela(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_ESCADAS")) { stairs(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }

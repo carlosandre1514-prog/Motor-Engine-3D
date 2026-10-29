@@ -25,13 +25,19 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Compilar APK debug
-        run: gradle assembleDebug --no-daemon --stacktrace
+      # dois APKs: o jogo (só Polícia x Bandidos) e o editor (Motor 3D)
+      - name: Compilar APKs (jogo e editor)
+        run: gradle assembleJogoDebug assembleMotorDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mobile3d-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: JOGO-policia-x-bandidos-apk
+          path: app/build/outputs/apk/jogo/debug/*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-motor3d-apk
+          path: app/build/outputs/apk/motor/debug/*.apk
 
   # Compila o motor no Linux e renderiza as cenas com Mesa (GLES 3.2 por software):
   # valida shaders, física, gizmo, seleção e carregamento de glTF sem precisar do celular.

@@ -257,6 +257,26 @@ def rain():
     return loop
 
 
+def explosion():
+    """Granada: estrondo (ruído com ataque instantâneo), grave que empurra o ar, estilhaços e eco nas paredes."""
+    sec = 3.2
+    t = t_axis(sec)
+    blast = filt(noise(sec), 40, 4000) * np.exp(-t / 0.18)
+    boom = filt(np.cumsum(noise(sec)), 20, 140, order=3)
+    boom = boom / np.max(np.abs(boom)) * np.exp(-t / 0.55)
+    thump = np.sin(2 * np.pi * (48 * t - 18 * t * t)) * np.exp(-t / 0.25)
+    x = blast * 0.9 + boom * 1.1 + thump * 0.8
+    for _ in range(40):                                                 # estilhaços e pedrinhas caindo
+        f = RNG.uniform(1500, 6000)
+        d_t = t_axis(0.02)
+        d = np.sin(2 * np.pi * f * d_t) * np.exp(-d_t / 0.004) * RNG.random() * 0.25
+        place(x, d, RNG.uniform(0.15, 1.6))
+    x = x + conv(x, reverb(2.0, 1.8, 900, [(60, 0.35), (140, 0.3), (260, 0.2)]))[: len(t)] * 0.6
+    fade = np.ones(len(x))
+    fade[-int(0.5 * SR):] = np.linspace(1, 0, int(0.5 * SR))
+    return x * fade
+
+
 def save(name, x, peak_db=-1.0):
     x = np.asarray(x, dtype=np.float64)
     x = x / (np.max(np.abs(x)) + 1e-9) * 10 ** (peak_db / 20)
@@ -285,6 +305,7 @@ def main():
     save("golpe_taco", whoosh(250, 1200, 0.35), -4.0)
     save("trovao", thunder())
     save("chuva", rain(), -3.0)
+    save("explosao", explosion())
 
 
 if __name__ == "__main__":

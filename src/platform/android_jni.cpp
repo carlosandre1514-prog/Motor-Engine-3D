@@ -244,6 +244,32 @@ JNI_FN(jbyteArray, nativeShopJson)(JNIEnv* env, jclass) { return toBytes(env, g_
 JNI_FN(jbyteArray, nativeShopBuy)(JNIEnv* env, jclass, jint item) { return toBytes(env, g_engine ? engine_shop_buy(g_engine, item) : ""); }
 JNI_FN(void, nativeShopClose)(JNIEnv*, jclass) { if (g_engine) engine_shop_close(g_engine); }
 JNI_FN(void, nativePlayerAim)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_player_aim(g_engine, on ? 1 : 0); }
+JNI_FN(void, nativeSetFirstPerson)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_set_first_person(g_engine, on ? 1 : 0); }
+JNI_FN(void, nativeTeamLoadout)(JNIEnv* env, jclass, jint team, jint skin, jstring primary, jstring secondary) {
+    if (!g_engine) return;
+    const char* p = env->GetStringUTFChars(primary, nullptr);
+    const char* q = env->GetStringUTFChars(secondary, nullptr);
+    engine_team_loadout(g_engine, team, skin, p, q);
+    env->ReleaseStringUTFChars(primary, p);
+    env->ReleaseStringUTFChars(secondary, q);
+}
+JNI_FN(void, nativeTeamGunSkin)(JNIEnv* env, jclass, jstring gun, jstring skin) {
+    if (!g_engine) return;
+    const char* g = env->GetStringUTFChars(gun, nullptr);
+    const char* s = env->GetStringUTFChars(skin, nullptr);
+    engine_team_gun_skin(g_engine, g, s);
+    env->ReleaseStringUTFChars(gun, g);
+    env->ReleaseStringUTFChars(skin, s);
+}
+JNI_FN(jboolean, nativePlayerSwap)(JNIEnv*, jclass) { return g_engine && engine_player_swap(g_engine); }
+JNI_FN(jboolean, nativePlayerGrenade)(JNIEnv*, jclass) { return g_engine && engine_player_grenade(g_engine); }
+JNI_FN(void, nativePlayerReload)(JNIEnv*, jclass) { if (g_engine) engine_player_reload(g_engine); }
+JNI_FN(void, nativeSetEditorOverlay)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_set_editor_overlay(g_engine, on ? 1 : 0); }
+JNI_FN(void, nativeLook)(JNIEnv*, jclass, jfloat dx, jfloat dy) { if (g_engine) engine_look(g_engine, dx, dy); }
+JNI_FN(void, nativeSetCamera)(JNIEnv*, jclass, jfloat tx, jfloat ty, jfloat tz, jfloat yaw, jfloat pitch, jfloat dist) {
+    if (g_engine) engine_set_camera(g_engine, tx, ty, tz, yaw, pitch, dist);
+}
+JNI_FN(jbyteArray, nativeHudJson)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_hud_json(g_engine) : "{}"); }
 JNI_FN(void, nativeAnimEditGet)(JNIEnv* env, jclass, jint b, jfloatArray out3) {
     if (!g_engine || env->GetArrayLength(out3) < 3) return;
     float v[3]; engine_anim_edit_get(g_engine, b, v); env->SetFloatArrayRegion(out3, 0, 3, v);

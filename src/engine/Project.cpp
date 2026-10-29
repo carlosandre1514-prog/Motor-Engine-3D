@@ -15,6 +15,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 namespace eng {
+std::string kitPath(Engine* e, const std::string& name);  // (mais abaixo)
 
 using json = nlohmann::json;
 
@@ -86,6 +87,9 @@ std::string realWeaponFile(const std::string& s) {
     if (n.find("ak47") != std::string::npos || n == "ak") return "kit:armas/ak47";
     if (n.find("m4colt") != std::string::npos || n.find("colt") != std::string::npos) return "kit:armas/m4colt";
     if (n.find("m4") != std::string::npos) return "kit:armas/m4a1";
+    if (n.find("tt33") != std::string::npos || n.find("tokarev") != std::string::npos || n.find("pistol") != std::string::npos ||
+        n.find("revolver") != std::string::npos)
+        return "kit:armas/tt33";
     return {};
 }
 
@@ -203,7 +207,9 @@ void applyMaterialTo(Engine* e, GameObject& g, bool subtree, const json& spec) {
     }
     if (auto it = spec.find("textura"); it != spec.end() && it->is_string()) {
         int w, h, comp;
-        unsigned char* px = stbi_load(it->get<std::string>().c_str(), &w, &h, &comp, 4);
+        std::string file = it->get<std::string>();
+        if (file.rfind("kit:", 0) == 0) file = kitPath(e, file.substr(4));  // textura do kit (ex.: skin de arma)
+        unsigned char* px = stbi_load(file.c_str(), &w, &h, &comp, 4);
         if (px) {
             GLuint tex = TextureManager::instance().fromPixels(px, w, h, 4, true);
             stbi_image_free(px);
@@ -913,7 +919,7 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
         if (auto it = spec.find("arma"); it != spec.end() && it->is_string() && !it->get<std::string>().empty()) {
             WeaponLook look = weaponLookOf(spec, true);
             std::string real = realWeaponFile(it->get<std::string>());
-            int wk = real.empty() ? weaponOf(it->get<std::string>()) : int(WK_Rifle);
+            int wk = real.empty() ? weaponOf(it->get<std::string>()) : real.find("tt33") != std::string::npos ? int(WK_Pistol) : int(WK_Rifle);
             if (!real.empty() && look.file.empty()) look.file = real;
             if (wk >= 0 && createWeapon(e, wk, ci, look) < 0) e->lastError.clear();  // arquivo sumiu: fica sem arma
         }
@@ -923,7 +929,7 @@ int createFromSpecJson(Engine* e, const std::string& specJson, std::string* err)
     if (tipo == "arma") {
         std::string armaName = str(spec, "arma", str(spec, "modelo", "pistola").c_str());
         std::string real = realWeaponFile(armaName);
-        int wk = real.empty() ? weaponOf(armaName) : int(WK_Rifle);
+        int wk = real.empty() ? weaponOf(armaName) : real.find("tt33") != std::string::npos ? int(WK_Pistol) : int(WK_Rifle);
         if (wk < 0) return fail("arma desconhecida");
         if (!real.empty() && !spec.contains("arquivo")) spec["arquivo"] = real;
         if (auto it = spec.find("portador"); it != spec.end() && it->is_number()) {  // equipa num personagem
@@ -1448,6 +1454,11 @@ std::string toolCall(Engine* e, const std::string& name, const std::string& inpu
         return json{{"ok", true}}.dump();
     }
     return errJson("ferramenta desconhecida: " + name);
+}
+
+// Skin de arma: troca só a textura de cor (o resto do material e o UV continuam os do modelo)
+void applyKitTexture(Engine* e, GameObject& g, const std::string& kitName) {
+    applyMaterialTo(e, g, true, json{{"textura", kitPath(e, kitName)}});
 }
 
 }  // namespace eng

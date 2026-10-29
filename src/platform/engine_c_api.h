@@ -135,6 +135,16 @@ void    engine_player_jump(Engine*);
 void    engine_player_crouch(Engine*, int on);                  // agachar (1) / levantar (0)
 void    engine_player_fire(Engine*);
 int     engine_player_weapon(Engine*);                          // tipo da arma ou -1
+// ---- Jogo (app do jogo): primeira pessoa, escolhas antes do Play e HUD
+void    engine_set_first_person(Engine*, int on);               // câmera no olho do jogador
+void    engine_team_loadout(Engine*, int team, int skin, const char* primary, const char* secondary);  // antes do Play ("" = sem 2ª arma)
+void    engine_team_gun_skin(Engine*, const char* gun, const char* skin);  // skin da arma do jogador ("" = padrão)
+int     engine_player_swap(Engine*);                            // troca rápida principal <-> pistola
+int     engine_player_grenade(Engine*);                         // joga granada (1 se jogou)
+void    engine_player_reload(Engine*);
+const char* engine_hud_json(Engine*);                           // estado da partida para o HUD
+void    engine_look(Engine*, float dx, float dy);               // girar o olhar (pixels arrastados)
+void    engine_set_editor_overlay(Engine*, int on);             // borda do mapa, seleção e ícones do editor (jogo: 0)
 
 // Câmera do editor: alvo, ângulos (radianos) e distância
 void    engine_set_camera(Engine*, float tx, float ty, float tz, float yaw, float pitch, float distance);

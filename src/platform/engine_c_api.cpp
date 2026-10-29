@@ -131,7 +131,9 @@ void engine_frame(Engine* e, float dt) {
     e->editorCam.apply(e->camera);
     e->scene.updateTransforms();
     eng::updateAttachments(e);
+    eng::updateFirstPersonEye(e, dt);
     eng::updateSupportHands(e, dt);
+    eng::applyFirstPerson(e);
     eng::updateCuts(e);
     eng::updateLamps(e);
 
@@ -163,7 +165,7 @@ void engine_frame(Engine* e, float dt) {
 
     e->profSubmit = ms(ts, std::chrono::steady_clock::now());
     glm::mat4 vp = e->camera.viewProj();
-    if (!e->playing) {  // overlay do editor
+    if (!e->playing && e->editorOverlay) {  // overlay do editor
         if (e->showGrid && e->mapKind < 0) {
             float step = d < 25.f ? 1.f : d < 250.f ? 10.f : 100.f;
             int n = 12;
@@ -188,8 +190,8 @@ void engine_frame(Engine* e, float dt) {
             e->gizmo.draw(e->renderer, e->camera);
         }
     }
-    eng::drawEffectsOverlay(e, vp, !e->playing);
-    if (!e->playing) eng::drawAnimEditOverlay(e, vp);
+    eng::drawEffectsOverlay(e, vp, !e->playing && e->editorOverlay);
+    if (!e->playing && e->editorOverlay) eng::drawAnimEditOverlay(e, vp);
 
     // luzes: as da cena + as mais relevantes dos efeitos (fogo, magia, explosões)
     eng::PointLight lights[eng::kMaxPointLights];
@@ -702,6 +704,31 @@ void engine_player_jump(Engine* e) { if (e) e->jumpRequest = true; }
 void engine_player_crouch(Engine* e, int on) { if (e) e->crouchInput = on != 0; }
 void engine_player_fire(Engine* e) { if (e) e->fireRequest = true; }
 int engine_player_weapon(Engine* e) { return engine_has_player(e) ? e->characters[e->player].weaponKind : -1; }
+void engine_set_first_person(Engine* e, int on) {
+    if (!e) return;
+    e->firstPerson = on != 0;
+    e->fpEyeValid = false;
+    e->editorCam.turnSpeed = on ? 0.0042f : 0.008f;
+    e->editorCam.minPitch = on ? -1.25f : -1.5f;
+    e->editorCam.maxPitch = on ? 1.25f : 1.5f;
+    e->editorCam.zoomEnabled = !on;
+    if (on) e->editorCam.pitch = 0.05f;
+}
+void engine_team_loadout(Engine* e, int team, int skin, const char* primary, const char* secondary) {
+    if (e) eng::teamLoadout(e, team, skin, primary ? primary : "", secondary ? secondary : "");
+}
+void engine_team_gun_skin(Engine* e, const char* gun, const char* skin) { if (e && gun) eng::teamGunSkin(e, gun, skin ? skin : ""); }
+int engine_player_swap(Engine* e) { return e && eng::teamSwapWeapon(e) ? 1 : 0; }
+int engine_player_grenade(Engine* e) { return e && eng::teamThrowGrenade(e) ? 1 : 0; }
+void engine_player_reload(Engine* e) { if (e) e->reloadRequest = true; }
+void engine_set_editor_overlay(Engine* e, int on) { if (e) e->editorOverlay = on != 0; }
+void engine_look(Engine* e, float dx, float dy) {
+    if (!e) return;
+    eng::EditorCamera& c = e->editorCam;
+    c.yaw -= dx * c.turnSpeed;
+    c.pitch = std::clamp(c.pitch + dy * c.turnSpeed, c.minPitch, c.maxPitch);
+}
+const char* engine_hud_json(Engine* e) { if (!e) return "{}"; e->toolResult = eng::hudJson(e); return e->toolResult.c_str(); }
 
 // ---------- toque ----------
 static void handleTap(Engine* e, glm::vec2 p) {

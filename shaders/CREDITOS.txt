@@ -11,6 +11,10 @@ AK-47, M4 Colt e AK-74 (madeira e tática)
   Modelos baixados do CGTrader pelo dono do projeto (autores e licenças a confirmar e completar aqui).
   Alterações: só as malhas de uma arma montada, texturas reduzidas para 1024 px (tools/fbx_para_glb).
 
+Pistola TT-33 (kit/armas/tt33.glb) e as skins Crimson Forge, Nebula Shadow e Gold Relic (kit/armas/skins)
+  Enviadas pelo dono do projeto (autor e licença do modelo a confirmar e completar aqui).
+  Alterações: sem a bala solta que vinha no arquivo, texturas reduzidas para 1024 px (tools/fbx_para_glb).
+
 Acessórios de arma (mira red dot, trilho, coronha tática, empunhadura frontal) — arquivo "Low.fbx"
   Autor: a confirmar (pacote gratuito enviado pelo dono do projeto).
 

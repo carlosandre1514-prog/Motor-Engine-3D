@@ -42,24 +42,6 @@ import org.json.JSONObject
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
-// Estado lido do motor na thread GL e mostrado pela UI (atualizado a cada ~0,25 s)
-class EngineSnapshot {
-    @Volatile var stats = FloatArray(6)
-    @Volatile var selected = -1
-    @Volatile var selectedName = ""
-    @Volatile var transform = FloatArray(9)
-    @Volatile var playing = false
-    @Volatile var hasPlayer = false
-    @Volatile var playerWeapon = -1
-    @Volatile var ready = false
-    @Volatile var game = FloatArray(8)
-    @Volatile var objective = ""
-    @Volatile var message = ""
-    @Volatile var interact = ""
-    @Volatile var region = ""
-    @Volatile var teamMode = false
-}
-
 class MainActivity : Activity() {
     private lateinit var view: EngineView
     private val ui = Handler(Looper.getMainLooper())
@@ -139,7 +121,7 @@ class MainActivity : Activity() {
         }
         setContentView(splash)
         Thread {
-            val dir = copyShaders { done, total ->
+            val dir = EngineFiles.copy(this) { done, total ->
                 runOnUiThread { splash.text = "Preparando os arquivos do jogo…\n$done de $total\n(só depois de instalar ou atualizar)" }
             }
             runOnUiThread { if (!isFinishing && !isDestroyed) setupUi(dir) }
@@ -320,11 +302,11 @@ class MainActivity : Activity() {
     }
 
     private fun newProjectDialog() {
-        val maps = arrayOf("🌍 Planeta (globo, continentes, cidades)", "Vazio (criar do zero)", "Cidade", "Favela", "Colégio", "Bairro", "Mundo infinito")
+        val maps = arrayOf("Favela", "Vazio (criar do zero)")
         askText("Nome do novo projeto", store.uniqueName("Meu jogo")) { n ->
             list("Começar com qual mapa?", maps) { m ->
                 stopPlayIfNeeded()
-                val kind = when (m) { 0 -> 5; 1 -> -1; 2 -> 1; 3 -> 2; 4 -> 3; 5 -> 4; else -> 0 }
+                val kind = if (m == 0) 2 else -1
                 if (kind >= 0) toast("Gerando mapa…")
                 gl { saveIfChanged(); newProjectGl(store.uniqueName(n), kind) }
             }
@@ -440,42 +422,6 @@ class MainActivity : Activity() {
     }
 
     // O renderer lê os shaders por caminho de arquivo: copia os assets (.vert/.frag/.glsl) para o storage interno.
-    private fun copyShaders(progress: (Int, Int) -> Unit = { _, _ -> }): String {
-        val dir = File(filesDir, "shaders").apply { mkdirs() }
-        for (name in assets.list("").orEmpty()) {
-            if (!(name.endsWith(".vert") || name.endsWith(".frag") || name.endsWith(".glsl") || name.endsWith(".jpg"))) continue
-            assets.open(name).use { input -> File(dir, name).outputStream().use { input.copyTo(it) } }
-        }
-        // texturas do terreno e dos materiais (alguns MB): copiadas só na instalação/atualização do app
-        val installed = packageManager.getPackageInfo(packageName, 0).lastUpdateTime.toString()
-        // lista primeiro (para mostrar o progresso), depois copia só o que mudou de tamanho
-        val pending = ArrayList<Pair<String, File>>()
-        fun listTree(path: String, to: File) {
-            for (name in assets.list(path).orEmpty()) {
-                val child = "$path/$name"
-                val sub = assets.list(child).orEmpty()
-                if (sub.isNotEmpty()) listTree(child, File(to, name)) else pending.add(child to File(to, name))
-            }
-        }
-        val stamps = ArrayList<File>()
-        for (sub in listOf("terrain", "materials", "kit", "anim")) {
-            val folder = File(dir, sub)
-            val stamp = File(folder, ".versao")
-            if (stamp.exists() && stamp.readText() == installed) continue
-            listTree(sub, folder)
-            stamps.add(stamp)
-        }
-        pending.forEachIndexed { i, (asset, dst) ->
-            if (i % 10 == 0) progress(i, pending.size)
-            val size = try { assets.openFd(asset).use { it.length } } catch (_: Exception) { -1L }  // -1: comprimido no APK
-            if (size >= 0 && dst.exists() && dst.length() == size) return@forEachIndexed
-            dst.parentFile?.mkdirs()
-            assets.open(asset).use { input -> dst.outputStream().use { input.copyTo(it, 1 shl 16) } }
-        }
-        for (st in stamps) { st.parentFile?.mkdirs(); st.writeText(installed) }
-        return dir.absolutePath
-    }
-
     private fun gl(block: () -> Unit) = view.queueEvent(block)
     private fun toast(msg: String) = runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
     private fun seed() = (System.nanoTime() and 0x7fffffff).toInt()
@@ -850,7 +796,7 @@ class MainActivity : Activity() {
 
     // Armas do app (modelos realistas com textura) — só o nome na lista
     private val realWeapons = arrayOf("M4A1" to "kit:armas/m4a1", "M4 Colt" to "kit:armas/m4colt", "AK-47" to "kit:armas/ak47",
-                                      "AK-74" to "kit:armas/ak74", "AK-74 tática" to "kit:armas/ak74_tatica")
+                                      "AK-74" to "kit:armas/ak74", "AK-74 tática" to "kit:armas/ak74_tatica", "Pistola TT-33" to "kit:armas/tt33")
 
     private fun weaponMenu() {
         val items = realWeapons.map { it.first }.toTypedArray() +
@@ -858,7 +804,11 @@ class MainActivity : Activity() {
         dialog().setTitle("Arma (vai para a mão do personagem selecionado)").setItems(items) { _, k ->
             val n = realWeapons.size
             when {
-                k < n -> accessoriesDialog(WeaponChoice(1, realWeapons[k].second, false, 1f, 0)) { equipWeapon(it) }
+                k < n -> {
+                    val pistol = realWeapons[k].second.endsWith("tt33")
+                    val w = WeaponChoice(if (pistol) 0 else 1, realWeapons[k].second, false, 1f, 0)
+                    if (pistol) equipWeapon(w) else accessoriesDialog(w) { equipWeapon(it) }
+                }
                 k == n -> list("Que tipo de arma é? (define a pose, o tamanho e o dano)", weaponKinds) { t ->
                     pendingWeaponKind = t
                     pickFile(REQ_WEAPON)
@@ -1061,10 +1011,7 @@ class MainActivity : Activity() {
     private fun mapsDialog() {
         // (rótulo, ação): ação >= 0 carrega o mapa desse tipo; < 0 são as outras opções
         val entries = listOf(
-            "🌍 Planeta (globo: dê zoom até as cidades; ▶ Play = no chão)" to 5,
-            "🗺 Mapa do mundo do planeta (ir para uma cidade)…" to -2,
-            "🏙 Cidade" to 1, "🏘 Favela (campinho, praça, becos, lajes)" to 2, "🏫 Colégio" to 3, "🏡 Bairro residencial" to 4,
-            "♾ Mundo infinito (natureza sem fim)" to 0,
+            "🏘 Favela" to 2,
             "➕ Criar novo mapa / cena vazia (do zero)" to -1,
             "🔭 Visão geral do mapa atual" to -3,
             "✏ Editar este mapa peça por peça (vira o SEU mapa)…" to -4,
@@ -2203,109 +2150,5 @@ class MainActivity : Activity() {
         private const val REQ_SWAP_MODEL = 48
         private const val REQ_SWAP_TEX = 49
         private const val AUTOSAVE_MS = 30_000L
-    }
-}
-
-class EngineView(activity: Activity, private val shaderDir: String) : GLSurfaceView(activity) {
-    var afterFrame: ((Int) -> Unit)? = null
-    val snapshot = EngineSnapshot()
-    var onReady: (() -> Unit)? = null  // chamado na thread GL quando o motor é (re)criado
-    // Qualidade: resolução do desenho (fração da tela) e limite de quadros (30 = esquenta menos e não engasga)
-    @Volatile var renderScale = 1f
-    @Volatile var maxFps = 60
-    @Volatile var quality = 2
-
-    fun applyQuality(scale: Float, fps: Int, q: Int) {
-        renderScale = scale; maxFps = fps; quality = q
-        if (width > 0 && height > 0) holder.setFixedSize((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1))
-        queueEvent { NativeBridge.nativeSetQuality(q) }
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        if (renderScale < 1f) post { holder.setFixedSize((w * renderScale).toInt().coerceAtLeast(1), (h * renderScale).toInt().coerceAtLeast(1)) }
-    }
-
-    init {
-        setEGLContextClientVersion(3)
-        setEGLConfigChooser(8, 8, 8, 8, 24, 0)
-        preserveEGLContextOnPause = true  // evita recriar tudo ao voltar do segundo plano
-        setRenderer(object : Renderer {
-            private var last = 0L
-            private var frame = 0
-            private val stats = FloatArray(6)
-            private val tr = FloatArray(9)
-            private var lastSel = -2
-
-            override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-                // Contexto novo (1ª vez ou contexto perdido): recria o motor e a cena
-                if (NativeBridge.nativeCreate(shaderDir)) {
-                    snapshot.ready = true
-                    NativeBridge.nativeSetQuality(quality)
-                    onReady?.invoke() ?: NativeBridge.nativeNewScene()
-                } else {
-                    post { Toast.makeText(context, "Falha ao iniciar o motor (shaders). Veja o logcat: Mobile3D", Toast.LENGTH_LONG).show() }
-                }
-                snapshot.playing = false
-                lastSel = -2
-                last = System.nanoTime()
-            }
-            override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) = NativeBridge.nativeResize(w, h)
-            override fun onDrawFrame(gl: GL10?) {
-                if (maxFps < 60) {  // limite de quadros: espera o resto do intervalo
-                    val wait = 1_000_000_000L / maxFps - (System.nanoTime() - last)
-                    if (wait > 1_000_000L) Thread.sleep(wait / 1_000_000L)
-                }
-                val now = System.nanoTime()
-                val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
-                last = now
-                NativeBridge.nativeFrame(dt)
-                afterFrame?.invoke(frame)   // sons (tiros, chuva...) na thread GL
-                if (++frame % 15 == 0) publish()
-            }
-
-            private fun publish() {
-                NativeBridge.nativeGetStats(stats)
-                snapshot.stats = stats.copyOf()
-                val sel = NativeBridge.nativeSelected()
-                if (sel != lastSel) { snapshot.selectedName = if (sel >= 0) NativeBridge.nativeObjectName(sel) else ""; lastSel = sel }
-                if (sel >= 0 && NativeBridge.nativeGetTransform(sel, tr)) snapshot.transform = tr.copyOf()
-                snapshot.selected = sel
-                snapshot.hasPlayer = NativeBridge.nativeHasPlayer()
-                snapshot.playerWeapon = NativeBridge.nativePlayerWeapon()
-                snapshot.region = String(NativeBridge.nativeRegionName(), Charsets.UTF_8)
-                snapshot.teamMode = NativeBridge.nativeTeamMode()
-                if (snapshot.playing) {
-                    val g = FloatArray(8)
-                    NativeBridge.nativeGameStatus(g)
-                    snapshot.game = g
-                    snapshot.objective = NativeBridge.gameText(0)
-                    snapshot.message = NativeBridge.gameText(1)
-                    snapshot.interact = String(NativeBridge.nativeInteractLabel(), Charsets.UTF_8)
-                }
-            }
-        })
-        renderMode = RENDERMODE_CONTINUOUSLY
-    }
-
-    // 1 dedo: orbitar, arrastar o gizmo ou tocar para selecionar | 2 dedos: pan + pinça
-    override fun onTouchEvent(e: MotionEvent): Boolean {
-        val action = when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> 0
-            MotionEvent.ACTION_MOVE -> 1
-            else -> 2
-        }
-        val skip = if (e.actionMasked == MotionEvent.ACTION_POINTER_UP) e.actionIndex else -1
-        val ids = ArrayList<Int>()
-        val xy = ArrayList<Float>()
-        for (i in 0 until minOf(e.pointerCount, 3)) {
-            if (i == skip) continue
-            // a tela pode estar desenhada em resolução menor (qualidade): o toque vai na escala do desenho
-            ids.add(e.getPointerId(i)); xy.add(e.getX(i) * renderScale); xy.add(e.getY(i) * renderScale)
-        }
-        val idArr = ids.toIntArray()
-        val xyArr = xy.toFloatArray()
-        queueEvent { NativeBridge.nativeTouch(action, idArr, xyArr) }
-        return true
     }
 }

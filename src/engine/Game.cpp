@@ -286,16 +286,16 @@ struct SkinDef { const char* name; int price; const char* file; };
 const SkinDef kSkins[2][5] = {
     {{"PM", 0, "pm"}, {"Polícia Civil", 500, "civil"}, {"Exército", 700, "exercito"}, {"Choque", 1000, "choque"}, {"Especial", 1500, "especial"}},
     {{"Rubro", 0, "rubro"}, {"Alvinegro", 300, "alvinegro"}, {"Tricolor", 500, "tricolor"}, {"Canarinho", 800, "canarinho"}, {"Faixa", 1200, "faixa"}}};
-struct GunDef { const char* key; const char* name; int price; int team; float dmg, interval, spread; int burst, pellets; };
-const GunDef kGuns[] = {
-    {"pistola", "Pistola", 0, -1, 22.f, 0.4f, 0.03f, 2, 1},
-    {"m4a1", "M4A1", 1200, 0, 18.f, 0.11f, 0.035f, 4, 1},
-    {"m4colt", "M4 Colt", 1500, 0, 20.f, 0.12f, 0.03f, 4, 1},
-    {"sniper", "Sniper", 2500, 0, 95.f, 1.4f, 0.004f, 1, 1},
-    {"ak47", "AK-47", 1200, 1, 24.f, 0.13f, 0.045f, 3, 1},
-    {"ak74", "AK-74", 1400, 1, 21.f, 0.11f, 0.035f, 4, 1},
-    {"ak74_tatica", "AK-74 tática", 1800, 1, 22.f, 0.1f, 0.03f, 4, 1},
-    {"escopeta", "Escopeta", 1000, -1, 14.f, 0.85f, 0.07f, 1, 6},
+// Armas da partida (tabela de dano aprovada): dano no corpo (cabeça = 2,5x), intervalo entre tiros, dispersão do
+// robô, rajada do robô, bagos, pente, reserva e a partir de quantos metros o dano cai (até 30% bem de longe)
+struct GunDef { const char* key; const char* name; int price; int team; float dmg, interval, spread; int burst, pellets, mag, reserve; float falloff; };
+const GunDef kGuns[] = {  // só as armas realistas (modelos do kit)
+    {"m4a1", "M4A1", 1200, 0, 24.f, 0.1f, 0.035f, 4, 1, 30, 90, 40.f},
+    {"m4colt", "M4 Colt", 1500, 0, 26.f, 1.f / 9.f, 0.03f, 4, 1, 30, 90, 45.f},
+    {"ak47", "AK-47", 1200, 1, 30.f, 0.125f, 0.045f, 3, 1, 30, 90, 35.f},
+    {"ak74", "AK-74", 1400, 1, 27.f, 1.f / 9.f, 0.035f, 4, 1, 30, 90, 40.f},
+    {"ak74_tatica", "AK-74 tática", 1800, 1, 28.f, 1.f / 9.5f, 0.03f, 4, 1, 30, 90, 45.f},
+    {"tt33", "TT-33", 0, -1, 25.f, 1.f / 3.f, 0.03f, 2, 1, 8, 32, 20.f},  // pistola (dos dois lados)
 };
 constexpr int kGunCount = int(sizeof(kGuns) / sizeof(kGuns[0]));
 const char* kTeamName[2] = {"Polícia", "Bandidos"};
@@ -304,6 +304,15 @@ const char* kTeamIcon[2] = {"🚓", "🔫"};
 const GunDef& gunOf(const std::string& key) {
     for (const GunDef& g : kGuns) if (key == g.key) return g;
     return kGuns[0];
+}
+bool knownGun(const std::string& key) {
+    for (const GunDef& g : kGuns) if (key == g.key) return true;
+    return false;
+}
+// arma de um lado: a pedida se for do lado; senão a padrão (polícia M4A1, bandidos AK-47)
+std::string gunForTeam(const std::string& key, int team) {
+    for (const GunDef& g : kGuns) if (key == g.key && (g.team < 0 || g.team == team)) return key;
+    return team ? "ak47" : "m4a1";
 }
 int charIndexOfRoot(Engine* e, Scene::Handle root) {
     for (size_t i = 0; i < e->characters.size(); ++i) if (sameHandle(e->characters[i].root, root)) return int(i);
@@ -324,13 +333,36 @@ void equipGun(Engine* e, Fighter& f) {
     int ci = charIndexOfRoot(e, f.root);
     if (ci < 0) return;
     const std::string& k = f.weapon;
-    int kind = k == "pistola" ? WK_Pistol : k == "escopeta" ? WK_Shotgun : k == "sniper" ? WK_Sniper : WK_Rifle;
+    int kind = k == "tt33" ? WK_Pistol : WK_Rifle;
     WeaponLook look;
-    if (kind == WK_Rifle) look.file = "kit:armas/" + k;
+    look.file = std::string("kit:armas/") + gunOf(k).key;
     int w = createWeapon(e, kind, ci, look);
-    if (GameObject* wg = objectById(e, w)) e->game.spawned.push_back(Scene::handleOf(*wg));
+    if (GameObject* wg = objectById(e, w)) {
+        e->game.spawned.push_back(Scene::handleOf(*wg));
+        if (!f.bot)
+            if (auto it = e->match.gunSkins.find(gunOf(k).key); it != e->match.gunSkins.end() && !it->second.empty())
+                applyKitTexture(e, *wg, std::string("armas/skins/") + gunOf(k).key + "_" + it->second + ".jpg");
+    }
     e->lastError.clear();
+    CharacterInfo& c = e->characters[ci];
+    const GunDef& g = gunOf(k);
+    c.gunDmg = g.dmg; c.gunInterval = g.interval; c.gunSpread = g.spread; c.gunPellets = g.pellets;
+    c.gunFalloff = g.falloff; c.magSize = g.mag; c.reloadTimer = 0.f;
+    if (f.bot) { c.ammo = g.mag; c.reserve = -1; }
+    else { c.ammo = f.mag[f.slot]; c.reserve = f.reserve[f.slot]; }
 }
+
+// Balas do jogador: pente e reserva de cada arma, cheios
+void fillAmmo(Fighter& f) {
+    if (f.secondary.empty() || f.secondary == f.primary) f.slot = 0;
+    f.weapon = f.slot ? f.secondary : f.primary;
+    for (int s = 0; s < 2; ++s) {
+        const GunDef& g = gunOf(s ? f.secondary : f.primary);
+        f.mag[s] = g.mag; f.reserve[s] = g.reserve;
+    }
+    f.grenades = 2;
+}
+std::string g_killWeapon;  // arma do abate em andamento ("" = a arma de quem atirou)
 
 // Cria (ou recria, ao trocar de roupa) o personagem em jogo do lutador, em pos/yaw
 void spawnFighterBody(Engine* e, Fighter& f, glm::vec3 pos, float yaw) {
@@ -419,6 +451,16 @@ void killFighter(Engine* e, int vi, int ai) {
     if (ci >= 0) playDeath(e->characters[ci]);
     if (GameObject* g = e->scene.get(v.root); g && g->rigidBody) e->physics.setEnabled(*g->rigidBody, false);
     std::string msg;
+    {
+        TeamMatch::Feed fd;
+        fd.victim = v.name; fd.vt = v.team; fd.you = !v.bot;
+        if (ai >= 0 && ai != vi && M.f[ai].team != v.team) {
+            fd.killer = M.f[ai].name; fd.kt = M.f[ai].team; fd.you = fd.you || !M.f[ai].bot;
+            fd.weapon = g_killWeapon.empty() ? gunOf(M.f[ai].weapon).name : g_killWeapon;
+        }
+        M.feed.push_back(fd);
+        if (M.feed.size() > 5) M.feed.erase(M.feed.begin());
+    }
     if (ai >= 0 && ai != vi && M.f[ai].team != v.team) {
         Fighter& a = M.f[ai];
         ++M.score[a.team]; ++a.kills; a.money += 300;
@@ -474,10 +516,17 @@ void respawn(Engine* e, Fighter& f) {
     g->transform.setPosition(p);
     if (g->rigidBody) { e->physics.setEnabled(*g->rigidBody, true); e->physics.syncFromTransform(*g->rigidBody); g->rigidBody->setVelocity(glm::vec3(0.f)); }
     CharacterInfo& c = e->characters[ci];
-    c.dying = false; c.ammo = 30; c.reloadTimer = 0.f;
+    c.dying = false; c.ammo = c.magSize; c.reloadTimer = 0.f;
     if (c.anim && c.clipMap[CC_Idle] >= 0) { c.anim->setClip(c.clipMap[CC_Idle]); c.anim->loop = true; c.anim->speed = 1.f; }
     f.dead = false; f.hp = 100.f; f.path.clear(); f.target = -1;
-    if (!f.bot) { e->game.playerHp = e->game.playerMax; e->game.message = "De volta na base"; }
+    if (!f.bot) {
+        e->game.playerHp = e->game.playerMax; e->game.message = "De volta na base";
+        int was = f.slot;
+        f.slot = 0;
+        fillAmmo(f);
+        if (was != 0) equipGun(e, f);
+        else { c.ammo = f.mag[0]; c.reserve = f.reserve[0]; }
+    }
 }
 
 void botShoot(Engine* e, int fi, int ti) {
@@ -495,6 +544,7 @@ void botShoot(Engine* e, int fi, int ti) {
     if (GameObject* w = e->scene.get(c.weapon)) muzzle = glm::vec3(w->transform.world() * glm::vec4(c.muzzle, 1.f));
     playSound(e, c.shotSound.empty() ? "tiro_pistola" : c.shotSound.c_str(), muzzle, 1.f);
     c.aimTimer = 1.5f; c.fireAnim = 0.3f;
+    f.shotAgo = 0.f;
     for (int p = 0; p < gun.pellets; ++p) {
         float err = gun.spread + 0.012f + dist * 0.0012f;  // robô erra um pouco (mais de longe)
         glm::vec3 j(e->fxRng.range(-1.f, 1.f), e->fxRng.range(-0.7f, 0.7f), e->fxRng.range(-1.f, 1.f));
@@ -507,7 +557,8 @@ void botShoot(Engine* e, int fi, int ti) {
         if (any) {
             fxImpact(e->particles, e->fxRng, hit, dir);
             M.attacker = fi;
-            damageAt(e, obj, gun.dmg, from);
+            const float far = dist > gun.falloff ? std::max(0.3f, 1.f - 0.7f * (dist - gun.falloff) / (1.5f * gun.falloff)) : 1.f;
+            damageAt(e, obj, gun.dmg * far, from);
             M.attacker = -1;
         }
     }
@@ -607,9 +658,12 @@ void botUpdate(Engine* e, int fi, float dt) {
 
 void teamStart(Engine* e) {
     TeamMatch& M = e->match;
-    int chosen = M.playerTeam;
+    int chosen = M.playerTeam, skin = M.playerSkin;
+    std::string primary = M.playerPrimary, secondary = M.playerSecondary;
+    auto gunSkins = M.gunSkins;
     M = TeamMatch{};
-    M.playerTeam = chosen;
+    M.playerTeam = chosen; M.playerSkin = skin; M.playerPrimary = primary; M.playerSecondary = secondary;
+    M.gunSkins = gunSkins;
     if (e->rules.objetivo != "times") return;
     M.active = true;
     // bases e lojas do projeto
@@ -658,12 +712,18 @@ void teamStart(Engine* e) {
         json r = recipeOf(e, *g);
         f.name = f.bot ? std::string(g->name) : "Você";
         f.skin = std::clamp(r.value("roupa", 0), 0, 4);
+        // robôs: a arma do projeto se for do lado (pistola, escopeta e sniper saíram: viram o fuzil do lado)
+        static const char* botGuns[2][5] = {{"m4a1", "m4colt", "m4a1", "m4colt", "m4a1"}, {"ak47", "ak74", "ak74_tatica", "ak47", "ak74"}};
         std::string arma = r.value("arma", "");
-        f.weapon = arma.empty() ? "pistola" : arma;
-        if (f.weapon == "fuzil") f.weapon = f.team ? "ak47" : "m4a1";
-        bool ok = false;
-        for (const GunDef& gd : kGuns) if (f.weapon == gd.key) ok = true;
-        if (!ok) f.weapon = "pistola";
+        f.weapon = knownGun(arma) ? gunForTeam(arma, f.team) : botGuns[f.team][M.f.size() % 5];
+        if (!f.bot) {  // escolhas do jogo: roupa, arma principal e a segunda (troca rápida; "" = só uma)
+            if (M.playerSkin >= 0) f.skin = std::clamp(M.playerSkin, 0, 4);
+            if (!M.playerPrimary.empty()) f.weapon = gunForTeam(M.playerPrimary, f.team);
+            f.primary = f.weapon;
+            f.secondary = knownGun(M.playerSecondary) ? gunForTeam(M.playerSecondary, f.team) : "";
+            f.slot = 0;
+            fillAmmo(f);
+        }
         glm::vec3 p = g->transform.position;
         if (s.player && M.playerTeam >= 0) p = groundAt(e, M.spawns[s.team][0] + glm::vec3(1.5f, 0.f, 1.5f));
         glm::vec3 fw = g->transform.rotation * glm::vec3(0, 0, 1);
@@ -683,9 +743,67 @@ void teamStart(Engine* e) {
     (void)pc;
 }
 
+bool teamDamage(Engine* e, GameObject* root, float dmg);
+
+// Granada: voa com gravidade, quica no chão e nas paredes e explode em 3 s. Até 4 m abate; de 4 a 8 m, 100 a 20 de
+// dano. Parede entre a granada e a pessoa protege. Sem fogo amigo.
+void updateNades(Engine* e, float dt) {
+    TeamMatch& M = e->match;
+    for (size_t i = 0; i < M.nades.size();) {
+        TeamMatch::Nade& n = M.nades[i];
+        n.t -= dt;
+        n.vel.y -= 9.81f * dt;
+        glm::vec3 next = n.pos + n.vel * dt;
+        glm::vec3 hit; GameObject* obj = nullptr; float frac = 1.f;
+        bool rest = glm::length(n.vel) < 0.3f;
+        if (!rest && e->physics.raycast(n.pos, next + glm::normalize(n.vel) * 0.04f, hit, obj)) {
+            GameObject* r = rootOf(e, obj);
+            bool person = false;
+            for (const Fighter& f : M.f) if (e->scene.get(f.root) == r) person = true;
+            if (!person) {
+                glm::vec3 d = next - n.pos;
+                bool floor = n.vel.y < 0.f && std::abs(d.y) > 0.5f * glm::length(glm::vec2(d.x, d.z));
+                next = hit - glm::normalize(n.vel) * 0.05f;
+                if (floor) { n.vel.y = -n.vel.y * 0.3f; n.vel.x *= 0.55f; n.vel.z *= 0.55f; if (std::abs(n.vel.y) < 0.8f) n.vel.y = 0.f; }
+                else { n.vel.x = -n.vel.x * 0.35f; n.vel.z = -n.vel.z * 0.35f; }
+            }
+        }
+        (void)frac;
+        if (!rest) n.pos = next;
+        if (GameObject* g = e->scene.get(n.h)) g->transform.setPosition(n.pos);
+        if (n.t > 0.f) { ++i; continue; }
+        // explosão
+        spawnEffect(e, FX_Explosion, 0, n.pos + glm::vec3(0, 0.2f, 0));
+        playSound(e, "explosao", n.pos, 1.f);
+        g_killWeapon = "granada";
+        for (size_t k = 0; k < M.f.size(); ++k) {
+            Fighter& v = M.f[k];
+            if (v.dead || (n.owner >= 0 && n.owner < int(M.f.size()) && M.f[n.owner].team == v.team)) continue;
+            GameObject* vg = e->scene.get(v.root);
+            if (!vg) continue;
+            glm::vec3 chest = chestOf(e, v, 0.6f);
+            float d = glm::length(chest - n.pos);
+            if (d > 8.f) continue;
+            glm::vec3 from = n.pos + glm::vec3(0, 0.25f, 0);
+            if (e->physics.raycast(from, chest, hit, obj) && rootOf(e, obj) != vg) continue;  // parede protege
+            float dmg = d <= 4.f ? 250.f : 100.f - 80.f * (d - 4.f) / 4.f;
+            M.attacker = n.owner;
+            teamDamage(e, vg, dmg);
+            M.attacker = -1;
+        }
+        g_killWeapon.clear();
+        if (e->scene.get(n.h)) deleteObject(e, n.h);
+        M.nades.erase(M.nades.begin() + i);
+    }
+}
+
 void teamUpdate(Engine* e, float dt) {
     TeamMatch& M = e->match;
     GameState& G = e->game;
+    updateNades(e, dt);
+    for (auto& fd : M.feed) fd.age += dt;
+    for (auto& f : M.f) f.shotAgo += dt;
+    M.lastDamage += dt;
     for (size_t i = 0; i < M.f.size(); ++i) {
         Fighter& f = M.f[i];
         if (f.dead) {
@@ -722,6 +840,7 @@ bool teamDamage(Engine* e, GameObject* root, float dmg) {
         if (att >= 0 && att < int(M.f.size()) && M.f[att].team == f.team) return true;  // sem fogo amigo
         if (!f.bot) {
             hurtPlayer(e, dmg);
+            M.lastDamage = 0.f;
             if (e->game.playerHp <= 0.f) killFighter(e, int(i), att);
         } else {
             f.hp -= dmg;
@@ -735,9 +854,12 @@ bool teamDamage(Engine* e, GameObject* root, float dmg) {
 
 void teamStop(Engine* e) {
     TeamMatch& M = e->match;
-    int chosen = M.playerTeam;
+    int chosen = M.playerTeam, skin = M.playerSkin;
+    std::string primary = M.playerPrimary, secondary = M.playerSecondary;
+    auto gunSkins = M.gunSkins;
     M = TeamMatch{};
-    M.playerTeam = chosen;
+    M.playerTeam = chosen; M.playerSkin = skin; M.playerPrimary = primary; M.playerSecondary = secondary;
+    M.gunSkins = gunSkins;
 }
 }  // namespace
 
@@ -1057,5 +1179,132 @@ std::string shopBuy(Engine* e, int item) {
         equipGun(e, f);
     }
     return (has ? "Usando: " : "Comprou: ") + name + "  (💰 $" + std::to_string(f.money) + ")";
+}
+
+void teamLoadout(Engine* e, int team, int skin, const std::string& primary, const std::string& secondary) {
+    TeamMatch& M = e->match;
+    M.playerTeam = team < 0 ? -1 : std::clamp(team, 0, 1);
+    M.playerSkin = skin;
+    M.playerPrimary = primary;
+    M.playerSecondary = secondary;
+}
+
+void teamGunSkin(Engine* e, const std::string& gun, const std::string& skin) { e->match.gunSkins[gun] = skin; }
+
+bool teamSwapWeapon(Engine* e) {
+    TeamMatch& M = e->match;
+    int pf = playerFighter(e);
+    if (!M.active || pf < 0 || M.f[pf].dead || e->game.state != 0) return false;
+    Fighter& f = M.f[pf];
+    if (f.secondary.empty() || f.primary == f.secondary) return false;
+    int ci = charIndexOfRoot(e, f.root);
+    if (ci < 0) return false;
+    f.mag[f.slot] = e->characters[ci].ammo;
+    f.reserve[f.slot] = e->characters[ci].reserve;
+    f.slot = 1 - f.slot;
+    f.weapon = f.slot ? f.secondary : f.primary;
+    equipGun(e, f);
+    return true;
+}
+
+bool teamThrowGrenade(Engine* e) {
+    TeamMatch& M = e->match;
+    int pf = playerFighter(e);
+    if (!M.active || pf < 0 || M.f[pf].dead || e->game.state != 0 || M.f[pf].grenades <= 0) return false;
+    Fighter& f = M.f[pf];
+    glm::vec3 view = glm::normalize(e->camera.rotation * glm::vec3(0, 0, -1));
+    glm::vec3 from = e->camera.position + view * 0.45f - glm::vec3(0, 0.1f, 0);
+    if (GameObject* g = e->scene.get(f.root); g && !e->firstPerson) from = g->transform.position + glm::vec3(0, 1.5f, 0) + view * 0.5f;
+    // não nasce dentro da parede
+    glm::vec3 hit; GameObject* obj = nullptr;
+    if (GameObject* g = e->scene.get(f.root))
+        if (e->physics.raycast(g->transform.position + glm::vec3(0, 1.4f, 0), from, hit, obj) && rootOf(e, obj) != g) from = hit - view * 0.15f;
+    json spec = {{"tipo", "forma"}, {"forma", "esfera"}, {"fisica", false}, {"paleta", "metal"}, {"escala", {0.085f, 0.11f, 0.085f}},
+                 {"pos", {from.x, from.y, from.z}}, {"nome", "Granada"}};
+    Scene::Handle selected = e->selected;
+    int id = createFromSpecJson(e, spec.dump(), nullptr);
+    e->selected = selected;
+    TeamMatch::Nade n;
+    if (GameObject* g = objectById(e, id)) { n.h = Scene::handleOf(*g); e->game.spawned.push_back(n.h); }
+    n.pos = from;
+    n.vel = view * 15.f + glm::vec3(0, 3.5f, 0);
+    n.owner = pf;
+    M.nades.push_back(n);
+    --f.grenades;
+    e->lastError.clear();
+    return true;
+}
+
+// Tudo o que o HUD do jogo mostra, numa leitura por quadro
+std::string hudJson(Engine* e) {
+    const TeamMatch& M = e->match;
+    const GameState& G = e->game;
+    json j;
+    j["ativo"] = M.active;
+    if (!M.active) return j.dump();
+    int pf = playerFighter(e);
+    int need = e->rules.quantidade > 0 ? e->rules.quantidade : 25;
+    j["estado"] = G.state;
+    j["placar"] = {M.score[0], M.score[1]};
+    j["meta"] = need;
+    j["tempo"] = e->rules.tempo > 0.f ? std::max(0, int(std::ceil(e->rules.tempo - G.time))) : -1;
+    j["vida"] = int(std::ceil(G.playerHp));
+    j["vidaMax"] = int(G.playerMax);
+    j["dano"] = M.lastDamage < 0.35f;
+    j["msg"] = G.message;
+    if (pf >= 0) {
+        const Fighter& f = M.f[pf];
+        j["time"] = f.team;
+        j["abates"] = f.kills;
+        j["mortes"] = f.deaths;
+        j["morto"] = f.dead;
+        j["renasce"] = f.dead ? std::max(0, int(std::ceil(5.f - f.deadTime))) : 0;
+        j["granadas"] = f.grenades;
+        j["slot"] = f.slot;
+        json slots = json::array();
+        int ci = charIndexOfRoot(e, f.root);
+        for (int s = 0; s < (f.secondary.empty() || f.secondary == f.primary ? 1 : 2); ++s) {
+            const GunDef& g = gunOf(s ? f.secondary : f.primary);
+            int mag = f.mag[s], res = f.reserve[s];
+            if (s == f.slot && ci >= 0) { mag = e->characters[ci].ammo; res = e->characters[ci].reserve; }
+            slots.push_back({{"arma", g.key}, {"nome", g.name}, {"balas", mag}, {"reserva", res}, {"pente", g.mag}});
+        }
+        j["armas"] = slots;
+        if (ci >= 0) {
+            const CharacterInfo& c = e->characters[ci];
+            j["recarregando"] = c.reloadTimer > 0.f;
+            j["mirando"] = c.adsW > 0.5f;
+            j["luneta"] = c.scope;
+        }
+    }
+    json feed = json::array();
+    for (const auto& fd : M.feed)
+        if (fd.age < 7.f) feed.push_back({{"a", fd.killer}, {"at", fd.kt}, {"v", fd.victim}, {"vt", fd.vt}, {"arma", fd.weapon}, {"voce", fd.you}});
+    j["abatidos"] = feed;
+    json players = json::array();
+    for (const Fighter& f : M.f) players.push_back({{"nome", f.name}, {"time", f.team}, {"abates", f.kills}, {"mortes", f.deaths}, {"voce", !f.bot}});
+    j["jogadores"] = players;
+    // minimapa: companheiros (e inimigos que atiraram agora há pouco) em metros, com a frente do jogador para cima
+    json mm = json::array();
+    if (pf >= 0)
+        if (GameObject* pg = e->scene.get(M.f[pf].root)) {
+            glm::vec3 fw = glm::normalize(e->editorCam.forward() * glm::vec3(1, 0, 1) + glm::vec3(0, 0, 1e-4f));
+            glm::vec3 rt(-fw.z, 0.f, fw.x);
+            for (size_t i = 0; i < M.f.size(); ++i) {
+                const Fighter& f = M.f[i];
+                if (int(i) == pf || f.dead || (f.team != M.f[pf].team && f.shotAgo > 2.f)) continue;
+                GameObject* g = e->scene.get(f.root);
+                if (!g) continue;
+                glm::vec3 d = g->transform.position - pg->transform.position;
+                float x = glm::dot(d, rt), y = glm::dot(d, fw);
+                if (x * x + y * y > 45.f * 45.f) continue;
+                mm.push_back({std::round(x * 10.f) / 10.f, std::round(y * 10.f) / 10.f, f.team == M.f[pf].team ? 0 : 1});
+            }
+        }
+    j["mapa"] = mm;
+    j["interagir"] = interactLabel(e);
+    j["acerto"] = e->hitMarker > 0.f;
+    j["cabeca"] = e->hitHead;
+    return j.dump();
 }
 }  // namespace eng
