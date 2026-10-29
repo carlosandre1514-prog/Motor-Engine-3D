@@ -280,20 +280,12 @@ int enemyTarget(Engine* e) {
 
 
 // ================= Polícia x Bandidos (partida de times) =================
-// Roupas da partida: o personagem base (kit:personagens/base) com a roupa pintada na textura ("visual") e o
-// equipamento preso aos ossos (colete, cinto com carregadores e radinho, capacete, boné, corrente, relógio, brinco)
-struct SkinDef { const char* name; int price; const char* visual; const char* gear; };
+// Roupas da partida: as skins de personagem do jogo (kit:personagens/skins), cada uma já com farda, colete,
+// capacete, boné e acessórios no próprio modelo
+struct SkinDef { const char* name; int price; const char* file; };
 const SkinDef kSkins[2][5] = {
-    {{"PM (farda cinza-azulada)", 0, "pm", "colete_pm cinto_tatico"},
-     {"PM camuflada", 500, "pm_camuflada", "colete_pm cinto_tatico capacete_preto"},
-     {"Polícia Civil", 600, "civil", "colete_civil cinto_tatico relogio_ouro"},
-     {"BOPE", 800, "bope", "colete_bope cinto_tatico capacete_preto"},
-     {"SWAT", 1500, "swat", "colete_swat cinto_tatico capacete_azul"}},
-    {{"Camisa de time e boné", 0, "camisa_time", "bone_tras_branco corrente_ouro cinto_tatico_marrom"},
-     {"Regata, ouro e tatuagem", 300, "regata", "bone_tras_vermelho corrente_ouro_grossa relogio_ouro brinco_diamante cinto_tatico_marrom"},
-     {"Moletom", 500, "moletom", "bone_tras_preto relogio_ouro brinco_argola cinto_tatico_marrom"},
-     {"Vermelho e preto", 800, "vermelho_preto", "bone_tras_preto corrente_ouro relogio_ouro brinco_argola cinto_tatico_marrom"},
-     {"Balaclava", 1200, "balaclava_preta", "cinto_tatico relogio_ouro corrente_ouro"}}};
+    {{"PM", 0, "pm"}, {"Polícia Civil", 500, "civil"}, {"Exército", 700, "exercito"}, {"Choque", 1000, "choque"}, {"Especial", 1500, "especial"}},
+    {{"Rubro", 0, "rubro"}, {"Alvinegro", 300, "alvinegro"}, {"Tricolor", 500, "tricolor"}, {"Canarinho", 800, "canarinho"}, {"Faixa", 1200, "faixa"}}};
 struct GunDef { const char* key; const char* name; int price; int team; float dmg, interval, spread; int burst, pellets; };
 const GunDef kGuns[] = {
     {"pistola", "Pistola", 0, -1, 22.f, 0.4f, 0.03f, 2, 1},
@@ -343,14 +335,7 @@ void equipGun(Engine* e, Fighter& f) {
 // Cria (ou recria, ao trocar de roupa) o personagem em jogo do lutador, em pos/yaw
 void spawnFighterBody(Engine* e, Fighter& f, glm::vec3 pos, float yaw) {
     const SkinDef& sk = kSkins[f.team][std::clamp(f.skin, 0, 4)];
-    json gear = json::array();
-    for (const char* p = sk.gear; *p;) {
-        const char* q = std::strchr(p, ' ');
-        size_t n = q ? size_t(q - p) : std::strlen(p);
-        if (n) gear.push_back(std::string(p, n));
-        p += n + (q ? 1 : 0);
-    }
-    json spec = {{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/roupas/") + sk.visual}, {"personagem", true}, {"equipamento", gear}};
+    json spec = {{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/skins/") + sk.file}, {"personagem", true}};
     spec["pos"] = {pos.x, pos.y, pos.z};
     spec["rot_y"] = glm::degrees(yaw);
     spec["nome"] = f.name;

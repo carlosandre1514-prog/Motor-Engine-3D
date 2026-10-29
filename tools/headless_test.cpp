@@ -992,17 +992,13 @@ int main(int argc, char** argv) {
         const char* ban[] = {"Magrão", "Baixinho", "Cabeça", "Zóio", "Bigode"};
         const char* ba[] = {"ak47", "ak74", "pistola", "escopeta", "ak47"};
         for (int i = 0; i < 5; ++i) {
-            // personagem base com a roupa de cada um (a mesma da loja: "roupa" 0..4)
-            const char* pv[] = {"pm", "pm_camuflada", "civil", "bope"};
-            const char* bv[] = {"camisa_time", "regata", "moletom", "vermelho_preto"};
-            const json pg[] = {{"colete_pm", "cinto_tatico"}, {"colete_pm", "cinto_tatico", "capacete_preto"}, {"colete_civil", "cinto_tatico"},
-                               {"colete_bope", "cinto_tatico", "capacete_preto"}};
-            const json bg[] = {{"bone_tras_branco", "corrente_ouro", "cinto_tatico_marrom"}, {"bone_tras_vermelho", "corrente_ouro_grossa", "relogio_ouro", "cinto_tatico_marrom"},
-                               {"bone_tras_preto", "relogio_ouro", "cinto_tatico_marrom"}, {"bone_tras_preto", "corrente_ouro", "cinto_tatico_marrom"}};
-            objs.push_back({{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/roupas/") + pv[i % 4]}, {"personagem", true}, {"equipamento", pg[i % 4]},
-                            {"time", "policia"}, {"nome", pol[i]}, {"arma", pa[i]}, {"roupa", i % 4}, {"pos", P(-6.f + i * 3.f, 104.f)}, {"rot_y", 180}});
-            objs.push_back({{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/roupas/") + bv[i % 4]}, {"personagem", true}, {"equipamento", bg[i % 4]},
-                            {"time", "bandidos"}, {"nome", ban[i]}, {"arma", ba[i]}, {"roupa", i % 4}, {"pos", P(-4.f + i * 3.f, -38.f)}, {"rot_y", 0}});
+            // skin de cada um (a mesma da loja: "roupa" 0..4)
+            const char* pv[] = {"pm", "civil", "exercito", "choque", "especial"};
+            const char* bv[] = {"rubro", "alvinegro", "tricolor", "canarinho", "faixa"};
+            objs.push_back({{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/skins/") + pv[i]}, {"personagem", true},
+                            {"time", "policia"}, {"nome", pol[i]}, {"arma", pa[i]}, {"roupa", i}, {"pos", P(-6.f + i * 3.f, 104.f)}, {"rot_y", 180}});
+            objs.push_back({{"tipo", "modelo"}, {"arquivo", std::string("kit:personagens/skins/") + bv[i]}, {"personagem", true},
+                            {"time", "bandidos"}, {"nome", ban[i]}, {"arma", ba[i]}, {"roupa", i}, {"pos", P(-4.f + i * 3.f, -38.f)}, {"rot_y", 0}});
         }
         json res = json::parse(std::string(engine_tool_call(e, "criar_objetos", json{{"objetos", objs}}.dump().c_str())));
         if (res.contains("erros")) { std::printf("  [ERRO] Polícia x Bandidos: %s\n", res["erros"].dump().c_str()); ++g_fail; }
@@ -1293,7 +1289,7 @@ int main(int argc, char** argv) {
                 json all = json::parse(eqs);
                 if (i < all.size()) spec["equipamento"] = all[i];
             }
-            if (files[i].rfind("kit:", 0) == 0) { spec.erase("textura"); spec["arquivo"] = "kit:personagens/roupas/" + files[i].substr(4); }
+            if (files[i].rfind("kit:", 0) == 0) { spec.erase("textura"); spec["arquivo"] = "kit:personagens/skins/" + files[i].substr(4); }
             int id = engine_add_spec(e, spec.dump().c_str());
             if (id < 0) std::printf("  [ERRO] %s\n", engine_last_error(e));
         }
@@ -1319,7 +1315,7 @@ int main(int argc, char** argv) {
         using nlohmann::json;
         engine_new_scene(e);
         engine_set_grid(e, 0);
-        std::string arq = std::getenv("BASE") ? std::getenv("BASE") : std::string("kit:personagens/roupas/") + (std::getenv("VISUAL") ? std::getenv("VISUAL") : "pm");
+        std::string arq = std::getenv("BASE") ? std::getenv("BASE") : std::string("kit:personagens/skins/") + (std::getenv("VISUAL") ? std::getenv("VISUAL") : "pm");
         int id = engine_add_spec(e, json{{"tipo", "modelo"}, {"arquivo", arq}, {"personagem", true}, {"jogador", true}, {"pos", {0, 0, 0}}}.dump().c_str());
         if (id < 0) { std::printf("[ERRO] %s\n", engine_last_error(e)); return 1; }
         engine_select(e, id);

@@ -955,11 +955,10 @@ class MainActivity : Activity() {
         }.show()
     }
 
-    // Personagem base com a roupa pintada no corpo ("visual") e o equipamento preso aos ossos
-    private val visuals = arrayOf("pm" to "PM (cinza-azulada)", "pm_camuflada" to "PM camuflada", "civil" to "Polícia Civil", "bope" to "BOPE",
-                                  "swat" to "SWAT", "camisa_time" to "Camisa de time", "regata" to "Regata com tatuagens",
-                                  "moletom" to "Moletom", "vermelho_preto" to "Vermelho e preto", "tatico_preto" to "Tático preto",
-                                  "balaclava_preta" to "Balaclava e moletom preto", "regata_balaclava" to "Regata e balaclava")
+    // Skins de personagem (kit:personagens/skins): farda e acessórios já no modelo; dá pra somar equipamento preso aos ossos
+    private val visuals = arrayOf("pm" to "PM", "civil" to "Polícia Civil", "exercito" to "Exército", "choque" to "Choque",
+                                  "especial" to "Especial", "rubro" to "Rubro", "alvinegro" to "Alvinegro", "tricolor" to "Tricolor",
+                                  "canarinho" to "Canarinho", "faixa" to "Faixa")
     private val gearItems = arrayOf("colete_pm" to "Colete PM", "colete_bope" to "Colete BOPE", "colete_swat" to "Colete SWAT",
                                     "colete_civil" to "Colete Polícia Civil", "cinto_tatico" to "Cinto tático (carregadores e radinho)",
                                     "cinto_tatico_marrom" to "Cinto marrom (carregadores e radinho)", "capacete_preto" to "Capacete preto",
@@ -967,19 +966,11 @@ class MainActivity : Activity() {
                                     "bone_tras_vermelho" to "Boné pra trás vermelho", "bone_tras_branco" to "Boné pra trás branco",
                                     "corrente_ouro" to "Corrente de ouro", "corrente_ouro_grossa" to "Corrente de ouro grossa",
                                     "relogio_ouro" to "Relógio de ouro", "brinco_argola" to "Brinco de argola", "brinco_diamante" to "Brinco de diamante")
-    private val outfitPresets = arrayOf(
-        Triple("🚓 PM", "pm", "colete_pm cinto_tatico"), Triple("🚓 PM camuflada", "pm_camuflada", "colete_pm cinto_tatico capacete_preto"),
-        Triple("🚓 Polícia Civil", "civil", "colete_civil cinto_tatico relogio_ouro"), Triple("🚓 BOPE", "bope", "colete_bope cinto_tatico capacete_preto"),
-        Triple("🚓 SWAT", "swat", "colete_swat cinto_tatico capacete_azul"),
-        Triple("🔫 Camisa de time e boné", "camisa_time", "bone_tras_branco corrente_ouro cinto_tatico_marrom"),
-        Triple("🔫 Regata, ouro e tatuagem", "regata", "bone_tras_vermelho corrente_ouro_grossa relogio_ouro brinco_diamante cinto_tatico_marrom"),
-        Triple("🔫 Moletom", "moletom", "bone_tras_preto relogio_ouro brinco_argola cinto_tatico_marrom"),
-        Triple("🔫 Vermelho e preto", "vermelho_preto", "bone_tras_preto corrente_ouro relogio_ouro brinco_argola cinto_tatico_marrom"),
-        Triple("🔫 Balaclava", "balaclava_preta", "cinto_tatico relogio_ouro corrente_ouro"))
+    private val outfitPresets = visuals.mapIndexed { i, v -> Triple((if (i < 5) "🚓 " else "🔫 ") + v.second, v.first, "") }.toTypedArray()
 
     private fun addOutfitCharacter(visual: String, gear: List<String>, team: String) {
         val j = JSONObject()
-        j.put("tipo", "modelo"); j.put("arquivo", "kit:personagens/roupas/$visual"); j.put("personagem", true)
+        j.put("tipo", "modelo"); j.put("arquivo", "kit:personagens/skins/$visual"); j.put("personagem", true)
         j.put("equipamento", JSONArray(gear))
         if (team.isNotEmpty()) j.put("time", team)
         gl {
@@ -989,11 +980,11 @@ class MainActivity : Activity() {
     }
 
     private fun outfitMenu() {
-        val labels = outfitPresets.map { it.first }.toTypedArray() + "🧩 Montar: escolher roupa e equipamento…"
+        val labels = outfitPresets.map { it.first }.toTypedArray() + "🧩 Montar: skin + equipamento extra…"
         dialog().setTitle("Policial / Bandido").setItems(labels) { _, which ->
             if (which < outfitPresets.size) {
                 val p = outfitPresets[which]
-                addOutfitCharacter(p.second, p.third.split(" "), if (p.first.startsWith("🚓")) "policia" else "bandidos")
+                addOutfitCharacter(p.second, p.third.split(" ").filter { it.isNotEmpty() }, if (p.first.startsWith("🚓")) "policia" else "bandidos")
             } else {
                 dialog().setTitle("Roupa").setItems(visuals.map { it.second }.toTypedArray()) { _, v ->
                     val checked = BooleanArray(gearItems.size)
@@ -1001,7 +992,7 @@ class MainActivity : Activity() {
                         .setMultiChoiceItems(gearItems.map { it.second }.toTypedArray(), checked) { _, i, on -> checked[i] = on }
                         .setPositiveButton("Criar") { _, _ ->
                             val gear = gearItems.filterIndexed { i, _ -> checked[i] }.map { it.first }
-                            val police = visuals[v].first in setOf("pm", "pm_camuflada", "civil", "bope", "swat")
+                            val police = visuals[v].first in setOf("pm", "civil", "exercito", "choque", "especial")
                             addOutfitCharacter(visuals[v].first, gear, if (police) "policia" else "bandidos")
                         }.setNegativeButton("Cancelar", null).show()
                 }.show()

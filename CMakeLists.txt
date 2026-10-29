@@ -78,5 +78,6 @@ else()
     add_executable(personagem_fbx tools/personagem_fbx.cpp)
     target_link_libraries(personagem_fbx PRIVATE mobile3d)
     target_compile_features(personagem_fbx PRIVATE cxx_std_17)
+    # reduz roupas e acessórios de uma skin (.glb do converter_skin.py), sem mexer no corpo e no rosto
   endif()
 endif()
