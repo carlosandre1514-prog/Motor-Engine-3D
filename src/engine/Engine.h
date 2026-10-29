@@ -71,6 +71,7 @@ struct CharacterInfo {
     // pente e balas de reserva (-1 = sem fim). gunDmg 0 = armas fora da partida (tabela antiga por tipo)
     float gunDmg = 0.f, gunInterval = 0.1f, gunSpread = 0.f, gunFalloff = 1e9f;
     int gunPellets = 1, magSize = 30, reserve = -1;
+    int shots = 0;             // tiros dados (online: os outros celulares mostram o tiro quando o número sobe)
 };
 // Animação de morte (não repete); sem ela, congela parado
 void playDeath(CharacterInfo& c);
@@ -160,6 +161,14 @@ struct Fighter {
     float think = 0.f, fireTimer = 0.f, stuckTimer = 0.f, strafe = 1.f, strafeTimer = 0.f;
     int burst = 0;
     float shotAgo = 99.f;          // segundos desde o último tiro (aparece no minimapa do inimigo)
+    // online: lutador comandado por outro celular (jogador da sala, ou robô de quem criou a sala)
+    bool remote = false, left = false;
+    std::string netId;             // id na sala (jogador: id do Firebase; robô: "b<time>_<n>")
+    glm::vec3 netPos{0.f};
+    float netYaw = 0.f, netPitch = 0.f;
+    bool netHas = false, netAlive = true, netCrouch = false, netAim = false;
+    int netShots = 0;
+    std::string netWeapon;
     glm::vec3 lastPos{0.f}, goal{0.f};
 };
 struct ShopRT { Scene::Handle obj; int kind = 0; int team = 0; };  // kind 0 armas, 1 roupas
@@ -180,11 +189,16 @@ struct TeamMatch {
     int playerSkin = -1;
     std::string playerPrimary, playerSecondary;
     std::map<std::string, std::string> gunSkins;   // skin escolhida de cada arma do jogador
-    struct Nade { Scene::Handle h; glm::vec3 pos{0.f}, vel{0.f}; float t = 3.f; int owner = -1; };
+    struct Nade { Scene::Handle h; glm::vec3 pos{0.f}, vel{0.f}; float t = 3.f; int owner = -1; bool visual = false; };
     std::vector<Nade> nades;                   // granadas no ar/no chão (explodem em 3 s)
     struct Feed { std::string killer, victim, weapon; int kt = 0, vt = 0; bool you = false; float age = 0.f; };
     std::vector<Feed> feed;                    // últimos abates (quadro do HUD)
     float lastDamage = 0.f;                    // tempo desde o último dano no jogador
+    // partida online (sala do Firebase): quem é o jogador local, se ele criou a sala (comanda os robôs),
+    // os jogadores da sala e os eventos a enviar (dano, abate, granada) em JSON
+    bool online = false, host = false;
+    std::string localId, roster;
+    std::vector<std::string> netOut;
 };
 
 // Animações criadas no editor (ou carregadas do projeto) acrescentadas à lista de um Animator
@@ -445,6 +459,7 @@ bool pickEmitter(Engine* e, glm::vec3 o, glm::vec3 d, float& t, GameObject*& hit
 
 // ---- personagens: movimento compartilhado por jogador e inimigos (Engine.cpp)
 bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt, glm::vec3 face = glm::vec3(0.f));
+void animateCharacter(CharacterInfo& c, const glm::quat& rot, glm::vec3 vel, bool grounded, bool airborne);  // animação pela velocidade
 void deleteObject(Engine* e, Scene::Handle h);
 
 // ---- animações (AnimEdit.cpp)
@@ -522,6 +537,12 @@ void teamGunSkin(Engine* e, const std::string& gun, const std::string& skin);  /
 void applyKitTexture(Engine* e, GameObject& g, const std::string& kitName);    // textura de cor do kit no objeto
 bool teamThrowGrenade(Engine* e);   // joga granada para onde a câmera olha
 std::string hudJson(Engine* e);     // estado da partida para o HUD do jogo (JSON)
+// Online (antes do Play): sala com jogadores [{"id","nome","time","skin","arma"}]; "" sai do modo online
+void netRoster(Engine* e, bool host, const std::string& localId, const std::string& rosterJson);
+std::string netCollect(Engine* e);                     // estado dos meus lutadores: {"id":{p,y,pi,c,a,w,v,n}}
+void netApply(Engine* e, const std::string& states);   // estado dos lutadores dos outros celulares
+std::string netTakeEvents(Engine* e);                  // eventos a enviar (array JSON) e limpa a fila
+void netEvent(Engine* e, const std::string& ev);       // evento recebido (dano, abate, granada, saiu)
 std::string shopLabel(Engine* e);            // botão perto de uma loja ("" = nenhuma)
 bool shopInteract(Engine* e);
 std::string shopJson(Engine* e);             // loja aberta: itens, preços, dinheiro ("" = nenhuma)

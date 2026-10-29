@@ -1063,6 +1063,7 @@ static void fireGun(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* 
     }
     e->fireCooldown = c.gunInterval;
     c.aimTimer = 1.5f;
+    ++c.shots;
     float spread = c.gunSpread * (c.aimHold ? 0.1f : 1.f);  // mirando: a bala vai praticamente na bolinha da mira
     if (c.weaponKind == WK_Sniper && !c.aimHold) spread = 0.06f;
     if (c.gunPellets > 1) spread = c.gunSpread;
@@ -1222,6 +1223,37 @@ bool interact(Engine* e) {
     return true;
 }
 
+// Escolhe a animação pela velocidade (parado, andando, correndo, de lado, de costas, agachado, pulando, recarregando)
+void animateCharacter(CharacterInfo& c, const glm::quat& rot, glm::vec3 v, bool grounded, bool airborne) {
+    if (c.anim && !c.dying) {
+        float hs = std::sqrt(v.x * v.x + v.z * v.z);
+        int base = armedClipBase(c.weaponKind);
+        bool aiming = c.aimTimer > 0.f || c.aimHold;
+        int clip = hs < 0.4f ? CC_Idle : hs < 4.f ? CC_Walk : CC_Run;
+        if (base >= 0)
+            clip = base + (hs < 0.4f ? (aiming ? AP_Aim : AP_Idle) : (aiming ? AP_AimWalk : hs < 4.f ? AP_Walk : AP_Run));
+        if (base == CC_Rifle) {
+            // mirando com fuzil: anda de costas e de lado olhando para o alvo; parado, o tiro tem coice
+            glm::vec3 local = glm::inverse(rot) * glm::vec3(v.x, 0.f, v.z);
+            if (aiming && hs >= 0.4f) {
+                if (local.z < -0.5f * hs) clip = CC_RifleBack;
+                else if (std::abs(local.x) > std::abs(local.z)) clip = local.x > 0.f ? CC_RifleLeft : CC_RifleRight;
+            }
+            if (aiming && hs < 0.4f && c.fireAnim > 0.f) clip = CC_RifleFire;
+            if (c.reloadTimer > 0.f && hs < 4.f) clip = CC_Reload;
+            if (c.crouch && c.reloadTimer <= 0.f) clip = CC_CrouchWalk;  // agachado: parado, andando e mirando
+        }
+        if (airborne) clip = CC_Jump;
+        int mapped = c.clipMap[clip];
+        if (mapped < 0 && clip >= CC_Death) mapped = c.clipMap[base >= 0 ? base + AP_Aim : CC_Idle];  // modelo sem essa animação
+        if ((grounded || airborne) && mapped >= 0 && c.anim->clipIndex != mapped) c.anim->setClip(mapped);
+        c.anim->loop = true;
+        c.anim->speed = clip == CC_CrouchWalk ? (hs < 0.3f ? 0.f : std::clamp(hs / 1.6f, 0.6f, 1.4f))
+                      : clip == CC_Reload ? 1.4f : clip == CC_Jump || clip == CC_RifleFire ? 1.f
+                      : hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
+    }
+}
+
 // Move um personagem (jogador ou inimigo): velocidade horizontal, pulo, virar para o movimento e animação
 bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bool jump, float dt, glm::vec3 face) {
     GameObject* go = e->scene.get(c.root);
@@ -1253,34 +1285,7 @@ bool driveCharacter(Engine* e, CharacterInfo& c, glm::vec3 move, float speed, bo
     }
     c.fireAnim = std::max(0.f, c.fireAnim - dt);
     c.reloadTimer = std::max(0.f, c.reloadTimer - dt);
-    if (c.anim && !c.dying) {
-        float hs = std::sqrt(nv.x() * nv.x() + nv.z() * nv.z());
-        int base = armedClipBase(c.weaponKind);
-        bool aiming = c.aimTimer > 0.f || c.aimHold;
-        int clip = hs < 0.4f ? CC_Idle : hs < 4.f ? CC_Walk : CC_Run;
-        if (base >= 0)
-            clip = base + (hs < 0.4f ? (aiming ? AP_Aim : AP_Idle) : (aiming ? AP_AimWalk : hs < 4.f ? AP_Walk : AP_Run));
-        if (base == CC_Rifle) {
-            // mirando com fuzil: anda de costas e de lado olhando para o alvo; parado, o tiro tem coice
-            glm::vec3 local = glm::inverse(go->transform.rotation) * glm::vec3(nv.x(), 0.f, nv.z());
-            if (aiming && hs >= 0.4f) {
-                if (local.z < -0.5f * hs) clip = CC_RifleBack;
-                else if (std::abs(local.x) > std::abs(local.z)) clip = local.x > 0.f ? CC_RifleLeft : CC_RifleRight;
-            }
-            if (aiming && hs < 0.4f && c.fireAnim > 0.f) clip = CC_RifleFire;
-            if (c.reloadTimer > 0.f && hs < 4.f) clip = CC_Reload;
-            if (c.crouch && c.reloadTimer <= 0.f) clip = CC_CrouchWalk;  // agachado: parado, andando e mirando
-        }
-        bool airborne = !grounded && std::abs(float(vel.y())) > 1.5f;
-        if (airborne) clip = CC_Jump;
-        int mapped = c.clipMap[clip];
-        if (mapped < 0 && clip >= CC_Death) mapped = c.clipMap[base >= 0 ? base + AP_Aim : CC_Idle];  // modelo sem essa animação
-        if ((grounded || airborne) && mapped >= 0 && c.anim->clipIndex != mapped) c.anim->setClip(mapped);
-        c.anim->loop = true;
-        c.anim->speed = clip == CC_CrouchWalk ? (hs < 0.3f ? 0.f : std::clamp(hs / 1.6f, 0.6f, 1.4f))
-                      : clip == CC_Reload ? 1.4f : clip == CC_Jump || clip == CC_RifleFire ? 1.f
-                      : hs < 0.4f ? 1.f : hs < 4.f ? std::clamp(hs / 2.6f, 0.6f, 1.6f) : std::clamp(hs / 6.5f, 0.7f, 1.4f);
-    }
+    animateCharacter(c, go->transform.rotation, glm::vec3(nv.x(), nv.y(), nv.z()), grounded, !grounded && std::abs(float(vel.y())) > 1.5f);
     return grounded;
 }
 

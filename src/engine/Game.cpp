@@ -469,6 +469,9 @@ void killFighter(Engine* e, int vi, int ai) {
     } else msg = std::string(kTeamIcon[v.team]) + " " + v.name + " caiu";
     if (!v.bot) msg = "Você foi abatido! Renasce na base em 5 s";
     e->game.message = msg;
+    if (M.online && !v.remote)  // online: quem caiu aqui avisa os outros celulares
+        M.netOut.push_back(json{{"t", "abate"}, {"v", v.netId}, {"a", ai >= 0 && ai < int(M.f.size()) ? M.f[ai].netId : ""},
+                                {"arma", g_killWeapon.empty() && ai >= 0 && ai < int(M.f.size()) ? gunOf(M.f[ai].weapon).name : g_killWeapon}}.dump());
 }
 
 // Distância até o inimigo vivo mais perto
@@ -545,6 +548,7 @@ void botShoot(Engine* e, int fi, int ti) {
     playSound(e, c.shotSound.empty() ? "tiro_pistola" : c.shotSound.c_str(), muzzle, 1.f);
     c.aimTimer = 1.5f; c.fireAnim = 0.3f;
     f.shotAgo = 0.f;
+    ++c.shots;
     for (int p = 0; p < gun.pellets; ++p) {
         float err = gun.spread + 0.012f + dist * 0.0012f;  // robô erra um pouco (mais de longe)
         glm::vec3 j(e->fxRng.range(-1.f, 1.f), e->fxRng.range(-0.7f, 0.7f), e->fxRng.range(-1.f, 1.f));
@@ -661,9 +665,12 @@ void teamStart(Engine* e) {
     int chosen = M.playerTeam, skin = M.playerSkin;
     std::string primary = M.playerPrimary, secondary = M.playerSecondary;
     auto gunSkins = M.gunSkins;
+    bool online = M.online, host = M.host;
+    std::string localId = M.localId, roster = M.roster;
     M = TeamMatch{};
     M.playerTeam = chosen; M.playerSkin = skin; M.playerPrimary = primary; M.playerSecondary = secondary;
     M.gunSkins = gunSkins;
+    M.online = online; M.host = host; M.localId = localId; M.roster = roster;
     if (e->rules.objetivo != "times") return;
     M.active = true;
     // bases e lojas do projeto
@@ -691,6 +698,34 @@ void teamStart(Engine* e) {
     // com o jogador num time, um robô desse time sai (5 x 5)
     int perTeam[2] = {0, 0};
     for (auto& s : slots) ++perTeam[s.team];
+    std::vector<json> slotRemote(slots.size());
+    std::vector<int> slotBot(slots.size(), -1);
+    if (M.online) {
+        // online: os robôs de cada time, na ordem do projeto (igual em todos os celulares). Os primeiros dão
+        // lugar às pessoas da sala desse time (os outros jogadores entram no lugar deles; a vaga do jogador
+        // local some); os que sobram continuam robôs, comandados por quem criou a sala.
+        json ro = json::parse(M.roster, nullptr, false);
+        std::vector<json> remote[2];
+        int total[2] = {0, 0};
+        if (ro.is_array())
+            for (const json& h : ro) {
+                if (!h.is_object()) continue;
+                int t = std::clamp(h.value("time", 0), 0, 1);
+                ++total[t];
+                if (h.value("id", "") != M.localId) remote[t].push_back(h);
+            }
+        int idx[2] = {0, 0};
+        for (size_t k = 0; k < slots.size(); ++k) {
+            Slot& sl = slots[k];
+            if (sl.player || sl.team < 0) continue;
+            int t = sl.team, i = idx[t]++;
+            slotBot[k] = i;
+            if (i < total[t]) {
+                if (i < int(remote[t].size())) slotRemote[k] = remote[t][i];
+                else sl.team = -1;
+            }
+        }
+    } else
     for (auto& s : slots) if (s.player && perTeam[s.team] > 5) {
         for (auto& b : slots) if (!b.player && b.team == s.team) { b.team = -1; --perTeam[s.team]; break; }
     }
@@ -724,12 +759,30 @@ void teamStart(Engine* e) {
             f.slot = 0;
             fillAmmo(f);
         }
+        if (M.online) {
+            const size_t k = size_t(&s - slots.data());
+            if (s.player) f.netId = M.localId;
+            else if (slotRemote[k].is_object()) {  // outra pessoa da sala
+                const json& h = slotRemote[k];
+                f.remote = true;
+                f.netId = h.value("id", "");
+                f.name = h.value("nome", "Jogador");
+                f.skin = std::clamp(h.value("skin", 0), 0, 4);
+                f.weapon = gunForTeam(h.value("arma", ""), f.team);
+            } else {
+                f.netId = "b" + std::to_string(f.team) + "_" + std::to_string(slotBot[k]);
+                f.remote = !M.host;  // os robôs são de quem criou a sala
+            }
+            f.netWeapon = f.weapon;
+        }
         glm::vec3 p = g->transform.position;
         if (s.player && M.playerTeam >= 0) p = groundAt(e, M.spawns[s.team][0] + glm::vec3(1.5f, 0.f, 1.5f));
         glm::vec3 fw = g->transform.rotation * glm::vec3(0, 0, 1);
         M.f.push_back(f);
         spawnFighterBody(e, M.f.back(), p, std::atan2(fw.x, fw.z));
         M.f.back().lastPos = p;
+        if (M.f.back().remote)  // comandado pela rede: o corpo só segue as posições que chegam
+            if (GameObject* rg = e->scene.get(M.f.back().root); rg && rg->rigidBody) e->physics.setKinematic(*rg->rigidBody, true);
         ++pc;
     }
     if (e->mapKind == MAP_Favela) favelaNavGraph(e, M.nav, M.navAdj);
@@ -744,6 +797,62 @@ void teamStart(Engine* e) {
 }
 
 bool teamDamage(Engine* e, GameObject* root, float dmg);
+
+// Tiro de um lutador de outro celular: só o efeito (clarão, som, traçante até onde bateria); o dano vem pela rede
+void remoteShotFx(Engine* e, Fighter& f, CharacterInfo& c, GameObject& g) {
+    glm::vec3 fw = g.transform.rotation * glm::vec3(0, 0, 1);
+    glm::vec3 dir = glm::normalize(fw * std::cos(f.netPitch) + glm::vec3(0, std::sin(f.netPitch), 0));
+    glm::vec3 from = g.transform.position + glm::vec3(0, c.height * (c.crouch ? 0.55f : 0.85f), 0);
+    glm::vec3 muzzle = from + dir * 0.6f;
+    if (GameObject* w = e->scene.get(c.weapon)) muzzle = glm::vec3(w->transform.world() * glm::vec4(c.muzzle, 1.f));
+    glm::vec3 hit; GameObject* obj = nullptr; float frac = 1.f;
+    btRigidBody* self = g.rigidBody ? g.rigidBody->body : nullptr;
+    bool any = e->physics.raycastIgnoring(from, from + dir * 200.f, self, hit, obj, frac);
+    glm::vec3 end = any ? hit : from + dir * 200.f;
+    addFlash(e, fxMuzzleFlash(e->particles, e->fxRng, muzzle, glm::normalize(end - muzzle)), 0.06f);
+    fxBullet(e->particles, muzzle, end);
+    if (any) fxImpact(e->particles, e->fxRng, hit, dir);
+    playSound(e, c.shotSound.empty() ? "tiro_m4" : c.shotSound.c_str(), muzzle, 1.f);
+    c.fireAnim = 0.3f;
+    c.aimTimer = 1.f;
+}
+
+// Lutador de outro celular: vai suavemente até a última posição recebida, vira para onde ele olha, anima pela
+// velocidade, troca de arma junto e mostra os tiros. Cai pelo evento de abate e volta quando chega "vivo" de novo.
+void remoteUpdate(Engine* e, Fighter& f, float dt) {
+    GameObject* g = e->scene.get(f.root);
+    int ci = charIndexOfRoot(e, f.root);
+    if (!g || ci < 0 || f.left) return;
+    CharacterInfo& c = e->characters[ci];
+    c.fireAnim = std::max(0.f, c.fireAnim - dt);
+    c.aimTimer = std::max(0.f, c.aimTimer - dt);
+    if (!f.netHas) return;
+    if (f.dead) {
+        if (!f.netAlive) return;
+        f.dead = false; f.hp = 100.f; f.deadTime = 0.f;  // renasceu lá
+        c.dying = false;
+        g->transform.setPosition(f.netPos);
+        if (g->rigidBody) { e->physics.setEnabled(*g->rigidBody, true); e->physics.setKinematic(*g->rigidBody, true); }
+        if (c.anim && c.clipMap[CC_Idle] >= 0) { c.anim->setClip(c.clipMap[CC_Idle]); c.anim->loop = true; c.anim->speed = 1.f; }
+    } else if (!f.netAlive) return;  // caiu lá: espera o evento de abate
+    glm::vec3 cur = g->transform.position;
+    glm::vec3 next = glm::length(f.netPos - cur) > 4.f ? f.netPos : glm::mix(cur, f.netPos, 1.f - std::exp(-14.f * dt));
+    glm::vec3 v = dt > 1e-4f ? (next - cur) / dt : glm::vec3(0.f);
+    g->transform.setPosition(next);
+    glm::quat q = glm::angleAxis(f.netYaw, glm::vec3(0, 1, 0));
+    g->transform.setRotation(glm::normalize(glm::slerp(g->transform.rotation, q, 1.f - std::exp(-16.f * dt))));
+    if (g->rigidBody) e->physics.syncFromTransform(*g->rigidBody);
+    c.crouch = f.netCrouch;
+    c.aimHold = f.netAim;
+    c.viewPitch = f.netPitch;
+    if (f.netWeapon != f.weapon && knownGun(f.netWeapon)) { f.weapon = f.netWeapon; equipGun(e, f); }
+    animateCharacter(c, g->transform.rotation, v, true, false);
+    if (f.netShots > c.shots) {
+        int n = std::min(3, f.netShots - c.shots);
+        c.shots = f.netShots;
+        for (int k = 0; k < n; ++k) remoteShotFx(e, f, c, *g);
+    }
+}
 
 // Granada: voa com gravidade, quica no chão e nas paredes e explode em 3 s. Até 4 m abate; de 4 a 8 m, 100 a 20 de
 // dano. Parede entre a granada e a pessoa protege. Sem fogo amigo.
@@ -775,6 +884,11 @@ void updateNades(Engine* e, float dt) {
         // explosão
         spawnEffect(e, FX_Explosion, 0, n.pos + glm::vec3(0, 0.2f, 0));
         playSound(e, "explosao", n.pos, 1.f);
+        if (n.visual) {  // granada de outro celular: o dano é calculado lá
+            if (e->scene.get(n.h)) deleteObject(e, n.h);
+            M.nades.erase(M.nades.begin() + i);
+            continue;
+        }
         g_killWeapon = "granada";
         for (size_t k = 0; k < M.f.size(); ++k) {
             Fighter& v = M.f[k];
@@ -806,6 +920,7 @@ void teamUpdate(Engine* e, float dt) {
     M.lastDamage += dt;
     for (size_t i = 0; i < M.f.size(); ++i) {
         Fighter& f = M.f[i];
+        if (f.remote) { remoteUpdate(e, f, dt); continue; }
         if (f.dead) {
             if ((f.deadTime += dt) > 5.f) respawn(e, f);
             continue;
@@ -838,6 +953,12 @@ bool teamDamage(Engine* e, GameObject* root, float dmg) {
         if (e->scene.get(f.root) != root) continue;
         if (f.dead) return true;
         if (att >= 0 && att < int(M.f.size()) && M.f[att].team == f.team) return true;  // sem fogo amigo
+        if (f.remote) {  // online: o dano vai para o celular de quem levou o tiro (lá ele perde vida e cai)
+            if (M.online && att >= 0 && att < int(M.f.size()) && !M.f[att].remote)
+                M.netOut.push_back(json{{"t", "dano"}, {"alvo", f.netId}, {"dano", std::round(dmg * 10.f) / 10.f}, {"de", M.f[att].netId},
+                                        {"arma", g_killWeapon.empty() ? gunOf(M.f[att].weapon).name : g_killWeapon}}.dump());
+            return true;
+        }
         if (!f.bot) {
             hurtPlayer(e, dmg);
             M.lastDamage = 0.f;
@@ -857,9 +978,12 @@ void teamStop(Engine* e) {
     int chosen = M.playerTeam, skin = M.playerSkin;
     std::string primary = M.playerPrimary, secondary = M.playerSecondary;
     auto gunSkins = M.gunSkins;
+    bool online = M.online, host = M.host;
+    std::string localId = M.localId, roster = M.roster;
     M = TeamMatch{};
     M.playerTeam = chosen; M.playerSkin = skin; M.playerPrimary = primary; M.playerSecondary = secondary;
     M.gunSkins = gunSkins;
+    M.online = online; M.host = host; M.localId = localId; M.roster = roster;
 }
 }  // namespace
 
@@ -1231,6 +1355,8 @@ bool teamThrowGrenade(Engine* e) {
     n.owner = pf;
     M.nades.push_back(n);
     --f.grenades;
+    if (M.online)
+        M.netOut.push_back(json{{"t", "granada"}, {"de", f.netId}, {"p", {n.pos.x, n.pos.y, n.pos.z}}, {"v", {n.vel.x, n.vel.y, n.vel.z}}}.dump());
     e->lastError.clear();
     return true;
 }
@@ -1306,5 +1432,139 @@ std::string hudJson(Engine* e) {
     j["acerto"] = e->hitMarker > 0.f;
     j["cabeca"] = e->hitHead;
     return j.dump();
+}
+
+// ---------------- partida online ----------------
+namespace {
+int fighterByNet(const TeamMatch& M, const std::string& id) {
+    if (id.empty()) return -1;
+    for (size_t i = 0; i < M.f.size(); ++i) if (M.f[i].netId == id) return int(i);
+    return -1;
+}
+double r2(float x) { return std::round(double(x) * 100.0) / 100.0; }
+}  // namespace
+
+void netRoster(Engine* e, bool host, const std::string& localId, const std::string& rosterJson) {
+    TeamMatch& M = e->match;
+    M.online = !rosterJson.empty() && !localId.empty();
+    M.host = host;
+    M.localId = M.online ? localId : "";
+    M.roster = M.online ? rosterJson : "";
+    M.netOut.clear();
+}
+
+std::string netCollect(Engine* e) {
+    const TeamMatch& M = e->match;
+    json out = json::object();
+    if (!M.active || !M.online) return out.dump();
+    for (const Fighter& f : M.f) {
+        if (f.remote || f.netId.empty()) continue;
+        GameObject* g = e->scene.get(f.root);
+        int ci = charIndexOfRoot(e, f.root);
+        if (!g || ci < 0) continue;
+        const CharacterInfo& c = e->characters[ci];
+        glm::vec3 p = g->transform.position, fw = g->transform.rotation * glm::vec3(0, 0, 1);
+        out[f.netId] = {{"p", {r2(p.x), r2(p.y), r2(p.z)}}, {"y", r2(std::atan2(fw.x, fw.z))}, {"pi", r2(c.viewPitch)},
+                        {"c", c.crouch}, {"a", c.aimHold || c.aimTimer > 0.f}, {"w", f.weapon}, {"v", !f.dead}, {"n", c.shots}};
+    }
+    return out.dump();
+}
+
+void netApply(Engine* e, const std::string& states) {
+    TeamMatch& M = e->match;
+    if (!M.active || !M.online) return;
+    json j = json::parse(states, nullptr, false);
+    if (!j.is_object()) return;
+    for (auto it = j.begin(); it != j.end(); ++it) {
+        int i = fighterByNet(M, it.key());
+        if (i < 0 || !M.f[i].remote || !it->is_object()) continue;
+        Fighter& f = M.f[i];
+        const json& st = *it;
+        if (auto p = st.find("p"); p != st.end() && p->is_array() && p->size() == 3)
+            f.netPos = {(*p)[0].get<float>(), (*p)[1].get<float>(), (*p)[2].get<float>()};
+        f.netYaw = st.value("y", f.netYaw);
+        f.netPitch = st.value("pi", f.netPitch);
+        f.netCrouch = st.value("c", false);
+        f.netAim = st.value("a", false);
+        f.netAlive = st.value("v", true);
+        f.netWeapon = st.value("w", f.netWeapon);
+        int shots = st.value("n", f.netShots);
+        if (!f.netHas) {  // primeira vez: não repete os tiros antigos
+            int ci = charIndexOfRoot(e, f.root);
+            if (ci >= 0) e->characters[ci].shots = shots;
+            if (GameObject* g = e->scene.get(f.root)) g->transform.setPosition(f.netPos);
+        }
+        f.netShots = shots;
+        f.netHas = true;
+    }
+}
+
+std::string netTakeEvents(Engine* e) {
+    TeamMatch& M = e->match;
+    std::string out = "[";
+    for (size_t i = 0; i < M.netOut.size(); ++i) out += (i ? "," : "") + M.netOut[i];
+    M.netOut.clear();
+    return out + "]";
+}
+
+void netEvent(Engine* e, const std::string& evJson) {
+    TeamMatch& M = e->match;
+    if (!M.active || !M.online) return;
+    json ev = json::parse(evJson, nullptr, false);
+    if (!ev.is_object()) return;
+    const std::string t = ev.value("t", "");
+    if (t == "dano") {  // levei tiro (eu ou um robô meu)
+        int vi = fighterByNet(M, ev.value("alvo", "")), ai = fighterByNet(M, ev.value("de", ""));
+        if (vi < 0 || M.f[vi].remote || M.f[vi].dead || e->game.state != 0) return;
+        Fighter& v = M.f[vi];
+        if (ai >= 0 && M.f[ai].team == v.team) return;
+        float dmg = ev.value("dano", 0.f);
+        g_killWeapon = ev.value("arma", "");
+        if (!v.bot) {
+            hurtPlayer(e, dmg);
+            M.lastDamage = 0.f;
+            if (e->game.playerHp <= 0.f) killFighter(e, vi, ai);
+        } else {
+            v.hp -= dmg;
+            if (ai >= 0) { v.target = ai; v.think = 0.3f; }
+            if (v.hp <= 0.f) killFighter(e, vi, ai);
+        }
+        g_killWeapon.clear();
+    } else if (t == "abate") {  // alguém de outro celular caiu
+        int vi = fighterByNet(M, ev.value("v", "")), ai = fighterByNet(M, ev.value("a", ""));
+        if (vi < 0 || !M.f[vi].remote || M.f[vi].dead) return;
+        g_killWeapon = ev.value("arma", "");
+        killFighter(e, vi, ai);
+        M.f[vi].netAlive = false;
+        g_killWeapon.clear();
+    } else if (t == "granada") {  // granada de outro celular: só o efeito
+        int oi = fighterByNet(M, ev.value("de", ""));
+        if (oi < 0 || !M.f[oi].remote) return;
+        auto vec = [&](const char* k) {
+            const json& a = ev[k];
+            return a.is_array() && a.size() == 3 ? glm::vec3(a[0].get<float>(), a[1].get<float>(), a[2].get<float>()) : glm::vec3(0.f);
+        };
+        TeamMatch::Nade n;
+        n.pos = vec("p"); n.vel = vec("v"); n.owner = oi; n.visual = true;
+        json spec = {{"tipo", "forma"}, {"forma", "esfera"}, {"fisica", false}, {"paleta", "metal"}, {"escala", {0.085f, 0.11f, 0.085f}},
+                     {"pos", {n.pos.x, n.pos.y, n.pos.z}}, {"nome", "Granada"}};
+        Scene::Handle selected = e->selected;
+        int id = createFromSpecJson(e, spec.dump(), nullptr);
+        e->selected = selected;
+        if (GameObject* g = objectById(e, id)) { n.h = Scene::handleOf(*g); e->game.spawned.push_back(n.h); }
+        M.nades.push_back(n);
+        e->lastError.clear();
+    } else if (t == "saiu") {  // a pessoa saiu da sala: o corpo some
+        int i = fighterByNet(M, ev.value("id", ""));
+        if (i < 0 || !M.f[i].remote) return;
+        Fighter& f = M.f[i];
+        f.left = true; f.dead = true;
+        if (GameObject* g = e->scene.get(f.root)) {
+            setSubtreeActive(*g, false);
+            if (g->rigidBody) e->physics.setEnabled(*g->rigidBody, false);
+        }
+        int ci = charIndexOfRoot(e, f.root);
+        if (ci >= 0) if (GameObject* w = e->scene.get(e->characters[ci].weapon)) setSubtreeActive(*w, false);
+    }
 }
 }  // namespace eng

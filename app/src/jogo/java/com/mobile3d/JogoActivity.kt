@@ -19,6 +19,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -27,6 +28,8 @@ import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 
@@ -92,6 +95,8 @@ class JogoActivity : Activity() {
     private var matchEnded = false
     private var chosenTeam = 0
     private var hud: Hud? = null
+    // multiplayer: sala do Firebase em que estou (null = jogando offline)
+    private var room: OnlineRoom? = null
     private val images = HashMap<String, Bitmap?>()
 
     private var coins: Int
@@ -147,6 +152,7 @@ class JogoActivity : Activity() {
         when {
             !::screen.isInitialized -> return
             inMatch && !matchEnded -> showPause()
+            screen.childCount > 0 && screen.getChildAt(0).tag == "sala" -> confirmLeave()
             screen.childCount > 0 && screen.getChildAt(0).tag != "inicio" -> showHome()
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
@@ -289,9 +295,8 @@ class JogoActivity : Activity() {
         grid.addView(View(this), lp(dp(8), 1))
         grid.addView(button("Gráficos", 0x1AFFFFFF, textMain) { qualityDialog() }, lp(0, dp(46), 1f))
         left.addView(grid, lp(dp(270), -2))
-        left.addView(button("Multiplayer (em breve: criar sala / entrar com código)", 0x0DFFFFFF, 0xFF9CA3AF.toInt(), 11f) {
-            toast("Multiplayer online: em breve")
-        }.apply { minHeight = dp(36) }, lp(dp(270), -2).apply { topMargin = dp(8) })
+        left.addView(button("👥  MULTIPLAYER  (criar sala / entrar com código)", 0x26FFFFFF, textMain, 12f) { showMultiplayer() }
+            .apply { minHeight = dp(42) }, lp(dp(270), -2).apply { topMargin = dp(8) })
         root.addView(left, FrameLayout.LayoutParams(-2, -1, Gravity.START))
         root.addView(coinChip(), FrameLayout.LayoutParams(-2, dp(36), Gravity.TOP or Gravity.END).apply { topMargin = dp(16); rightMargin = dp(20) })
         // destaque: a skin mais cara que ainda falta
@@ -368,7 +373,8 @@ class JogoActivity : Activity() {
     }
 
     // ---------------- skins do lado + arma principal ----------------
-    private fun showSkins(team: Int) {
+    // onReady != null: veio da sala do multiplayer (o botão vira PRONTO e volta para a sala)
+    private fun showSkins(team: Int, onReady: ((Skin, Gun, Gun?) -> Unit)? = null) {
         menuSpin = true
         val mine = skins.filter { it.team == team }
         var selected = prefs.getString("skin_$team", mine[0].key)!!.let { k -> mine.firstOrNull { it.key == k && ownsSkin(it) } ?: mine.first { ownsSkin(it) } }
@@ -377,7 +383,7 @@ class JogoActivity : Activity() {
         var second: Gun? = prefs.getString("arma2_$team", "tt33")!!.let { k -> primaries.firstOrNull { it.key == k && ownsGun(it) && it != gun } }
 
         val root = vbox().apply { setBackgroundColor(bg); setPadding(dp(20), dp(12), dp(20), dp(12)) }
-        root.addView(header(if (team == 0) "SUA FARDA · POLÍCIA" else "SUA ROUPA · BANDIDOS") { showSide() })
+        root.addView(header(if (team == 0) "SUA FARDA · POLÍCIA" else "SUA ROUPA · BANDIDOS") { if (onReady != null) showLobby() else showSide() })
         val cards = hbox()
         val cardViews = ArrayList<View>()
         fun refresh() {
@@ -394,7 +400,7 @@ class JogoActivity : Activity() {
                 isClickable = true
                 setOnClickListener {
                     if (ownsSkin(s)) { selected = s; refresh() }
-                    else buyDialog("a skin ${s.name}", s.price, "skin:" + s.key) { showSkins(team) }
+                    else buyDialog("a skin ${s.name}", s.price, "skin:" + s.key) { showSkins(team, onReady) }
                 }
             }
             val img = ImageView(this).apply {
@@ -433,7 +439,7 @@ class JogoActivity : Activity() {
                 isClickable = true
                 setOnClickListener {
                     if (ownsGun(g)) { gun = g; refreshGuns() }
-                    else buyDialog("a ${g.name}", g.price, "arma:" + g.key) { showSkins(team) }
+                    else buyDialog("a ${g.name}", g.price, "arma:" + g.key) { showSkins(team, onReady) }
                 }
             }
             chips[g] = t
@@ -458,10 +464,10 @@ class JogoActivity : Activity() {
             addView(HorizontalScrollView(this@JogoActivity).apply { isHorizontalScrollBarEnabled = false; addView(chipRow2) }, lp(0, -2, 1f))
         }
         gunRow.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chipRow) }, lp(0, -2, 1f))
-        gunRow.addView(button("COMEÇAR  ▶", gold, 0xFF111827.toInt(), 17f) {
+        gunRow.addView(button(if (onReady != null) "PRONTO  ✓" else "COMEÇAR  ▶", gold, 0xFF111827.toInt(), 17f) {
             prefs.edit().putString("skin_$team", selected.key).putString("arma_$team", gun.key)
                 .putString("arma2_$team", second?.key ?: "").putInt("lado", team).apply()
-            startMatch(team, selected, gun, second)
+            if (onReady != null) onReady(selected, gun, second) else startMatch(team, selected, gun, second)
         }.apply { typeface = condensed }, lp(dp(170), dp(50)))
         root.addView(gunRow)
         root.addView(secondRow)
@@ -557,7 +563,7 @@ class JogoActivity : Activity() {
     }
 
     // ---------------- partida ----------------
-    private fun startMatch(team: Int, skin: Skin, gun: Gun, second: Gun?) {
+    private fun startMatch(team: Int, skin: Skin, gun: Gun, second: Gun?, online: OnlineRoom? = null) {
         menuSpin = false
         inMatch = true
         matchEnded = false
@@ -566,7 +572,11 @@ class JogoActivity : Activity() {
         hud = h
         show(h.root, "hud")
         val chosenSkins = guns.map { it.key to gunSkinOf(it.key) }
+        val roster = online?.roster() ?: ""
+        val myId = online?.fb?.uid ?: ""
+        val host = online?.isHost ?: false
         gl {
+            NativeBridge.nativeNetRoster(host, myId.toByteArray(), roster.toByteArray())
             for ((g, sk) in chosenSkins) NativeBridge.nativeTeamGunSkin(g, sk)
             NativeBridge.nativeTeamLoadout(team, skin.index, gun.key, second?.key ?: "")
             NativeBridge.nativeSetFirstPerson(true)
@@ -574,6 +584,20 @@ class JogoActivity : Activity() {
             // polícia olha para o morro; bandidos, para a rua de baixo
             NativeBridge.nativeSetCamera(0f, 0f, 0f, if (team == 0) 0f else 3.14159f, 0.05f, 3f)
         }
+        online?.startSync(
+            collect = {
+                val latch = CountDownLatch(1)
+                var st = "{}"
+                var ev = "[]"
+                gl {
+                    st = String(NativeBridge.nativeNetCollect(), Charsets.UTF_8)
+                    ev = String(NativeBridge.nativeNetEvents(), Charsets.UTF_8)
+                    latch.countDown()
+                }
+                if (latch.await(500, TimeUnit.MILLISECONDS)) st to ev else null
+            },
+            apply = { states -> gl { NativeBridge.nativeNetApply(states.toByteArray()) } },
+            event = { ev -> gl { NativeBridge.nativeNetEvent(ev.toByteArray()) } })
         pollHud()
     }
 
@@ -599,12 +623,14 @@ class JogoActivity : Activity() {
 
     private fun stopEngineMatch() {
         firing = false
+        room?.stopSync()
         gl {
             NativeBridge.nativePlayerInput(0f, 0f, false)
             NativeBridge.nativePlayerAim(false)
             NativeBridge.nativePlayerCrouch(false)
             NativeBridge.nativeSetPlay(false)
             NativeBridge.nativeSetFirstPerson(false)
+            NativeBridge.nativeNetRoster(false, ByteArray(0), ByteArray(0))
             overviewCamera()
         }
     }
@@ -614,7 +640,12 @@ class JogoActivity : Activity() {
         AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Pausa")
             .setItems(arrayOf("Continuar", "Sair da partida")) { _, which ->
-                if (which == 1) { inMatch = false; stopEngineMatch(); showHome() }
+                if (which == 1) {
+                    inMatch = false
+                    stopEngineMatch()
+                    leaveRoom()
+                    showHome()
+                }
             }.show()
     }
 
@@ -672,10 +703,218 @@ class JogoActivity : Activity() {
         root.addView(ScrollView(this).apply { addView(tables) }, lp(-1, 0, 1f))
         root.addView(hbox().apply {
             gravity = Gravity.END
-            addView(button("Menu inicial", 0x14FFFFFF, textMain) { showHome() }, lp(-2, dp(46)).apply { rightMargin = dp(10) })
-            addView(button("JOGAR DE NOVO", gold, 0xFF111827.toInt()) { showSkins(chosenTeam) }, lp(-2, dp(46)))
+            val r = room
+            if (r != null) {  // multiplayer: volta para a sala (quem criou reabre a sala de espera)
+                addView(button("Sair da sala", 0x14FFFFFF, textMain) { leaveRoom(); showHome() }, lp(-2, dp(46)).apply { rightMargin = dp(10) })
+                addView(button("VOLTAR À SALA", gold, 0xFF111827.toInt()) {
+                    if (r.isHost) Thread { r.backToLobby() }.start()
+                    showLobby()
+                }, lp(-2, dp(46)))
+            } else {
+                addView(button("Menu inicial", 0x14FFFFFF, textMain) { showHome() }, lp(-2, dp(46)).apply { rightMargin = dp(10) })
+                addView(button("JOGAR DE NOVO", gold, 0xFF111827.toInt()) { showSkins(chosenTeam) }, lp(-2, dp(46)))
+            }
         })
         show(root, "fim")
+    }
+
+    // ---------------- multiplayer (salas no Firebase) ----------------
+    private fun fbConfig(): Pair<String, String>? {
+        val k = prefs.getString("fb_key", "") ?: ""
+        val u = prefs.getString("fb_url", "") ?: ""
+        return if (k.isNotEmpty() && u.isNotEmpty()) k to u else null
+    }
+
+    // A configuração do Firebase fica só neste celular (não vai para o GitHub)
+    private fun configDialog(then: () -> Unit) {
+        val box = EditText(this).apply {
+            hint = "Cole aqui o firebaseConfig do console do Firebase"
+            minLines = 4
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Configurar o online (Firebase)")
+            .setMessage("Cole o trecho \"const firebaseConfig = {…}\" (precisa ter apiKey e databaseURL). Fica guardado só neste celular.")
+            .setView(box)
+            .setPositiveButton("Salvar") { _, _ ->
+                val cfg = Firebase.parseConfig(box.text.toString())
+                if (cfg == null) toast("Não achei apiKey e databaseURL no texto")
+                else { prefs.edit().putString("fb_key", cfg.first).putString("fb_url", cfg.second).apply(); toast("Online configurado!"); then() }
+            }.setNegativeButton("Cancelar", null).show()
+    }
+
+    // O que vai para a sala sobre mim: nome, lado, skin e armas (as escolhidas para o lado)
+    private fun myEntry(team: Int): JSONObject {
+        val mine = skins.filter { it.team == team }
+        val sk = prefs.getString("skin_$team", "")!!.let { k -> mine.firstOrNull { it.key == k && ownsSkin(it) } ?: mine.first { ownsSkin(it) } }
+        val prim = guns.filter { it.team == team || it.team == -1 }
+        val g = prefs.getString("arma_$team", "")!!.let { k -> prim.firstOrNull { it.key == k && ownsGun(it) } ?: prim.first { ownsGun(it) } }
+        return JSONObject().put("nome", prefs.getString("nome", "Jogador")).put("time", team).put("skin", sk.index)
+            .put("arma", g.key).put("arma2", prefs.getString("arma2_$team", "tt33"))
+    }
+
+    private fun showMultiplayer() {
+        menuSpin = true
+        if (fbConfig() == null) { configDialog { showMultiplayer() }; return }
+        if (!prefs.contains("nome")) prefs.edit().putString("nome", "Jogador" + (100..999).random()).apply()
+        val root = vbox().apply { setBackgroundColor(bg); setPadding(dp(24), dp(14), dp(24), dp(14)) }
+        root.addView(header("MULTIPLAYER") { showHome() })
+        val status = label("", 13f, yellowLight, true).apply { setPadding(0, dp(6), 0, 0) }
+        val name = EditText(this).apply {
+            setText(prefs.getString("nome", ""))
+            setTextColor(textMain); setHintTextColor(0xFF6B7280.toInt())
+            hint = "Seu nome no jogo"
+            setSingleLine()
+        }
+        val code = EditText(this).apply {
+            hint = "CÓDIGO"
+            setTextColor(textMain); setHintTextColor(0xFF6B7280.toInt())
+            setSingleLine()
+            filters = arrayOf(android.text.InputFilter.AllCaps(), android.text.InputFilter.LengthFilter(6))
+            textSize = 22f
+            typeface = condensed
+        }
+        val row = hbox().apply { setPadding(0, dp(10), 0, 0) }
+        val create = vbox().apply { background = round(panel, 16f, 1, 0x33FBBF24); setPadding(dp(16), dp(12), dp(16), dp(12)) }
+        create.addView(title("CRIAR SALA", 28f, gold))
+        create.addView(label("Gera um código. Mande para os amigos: até 10 pessoas na mesma sala. As vagas que sobrarem viram robôs.", 12f, textDim))
+        create.addView(View(this), lp(1, 0, 1f))
+        val join = vbox().apply { background = round(panel, 16f, 1, 0x3360A5FA); setPadding(dp(16), dp(12), dp(16), dp(12)) }
+        join.addView(title("ENTRAR COM CÓDIGO", 28f, 0xFF60A5FA.toInt()))
+        join.addView(code, lp(-1, -2))
+        join.addView(View(this), lp(1, 0, 1f))
+        fun busy(on: Boolean) { create.isEnabled = !on; join.isEnabled = !on }
+        fun connect(action: (Firebase) -> Pair<OnlineRoom?, String>) {
+            val nm = name.text.toString().trim().ifEmpty { "Jogador" }.take(16)
+            prefs.edit().putString("nome", nm).apply()
+            val cfg = fbConfig() ?: return
+            status.text = "Conectando…"
+            busy(true)
+            Thread {
+                val fb = Firebase(cfg.first, cfg.second)
+                val saved = prefs.getString("uid_local", null) ?: Firebase.randomId().also { prefs.edit().putString("uid_local", it).apply() }
+                val warn = fb.signIn(saved)
+                val (r, err) = try { action(fb) } catch (e: Exception) { null to "sem conexão: ${e.message}" }
+                runOnUiThread {
+                    busy(false)
+                    if (r == null) status.text = err + if (warn != null) "\n($warn)" else ""
+                    else { room = r; r.listenRoom(); hookRoom(r); showLobby() }
+                }
+            }.start()
+        }
+        create.addView(button("CRIAR", gold, 0xFF111827.toInt(), 16f) { connect { fb -> OnlineRoom.create(fb, myEntry(prefs.getInt("lado", 0))) } }, lp(-1, dp(48)))
+        join.addView(button("ENTRAR", 0xFF3B82F6.toInt(), textMain, 16f) {
+            val c = code.text.toString().trim()
+            if (c.length != 6) { status.text = "O código tem 6 letras/números"; return@button }
+            connect { fb -> OnlineRoom.join(fb, c, myEntry(prefs.getInt("lado", 0))) }
+        }, lp(-1, dp(48)))
+        row.addView(create, lp(0, -1, 1f))
+        row.addView(View(this), lp(dp(14), 1))
+        row.addView(join, lp(0, -1, 1f))
+        root.addView(hbox().apply {
+            addView(label("Seu nome:  ", 13f, textDim, true))
+            addView(name, lp(0, -2, 1f))
+            addView(button("Firebase…", 0x14FFFFFF, textDim, 12f) { configDialog { showMultiplayer() } }, lp(-2, dp(40)))
+        })
+        root.addView(row, lp(-1, 0, 1f))
+        root.addView(status)
+        show(root, "multiplayer")
+    }
+
+    // Avisos da sala (chegam pela rede): lista de jogadores, começo da partida, sala fechada, alguém saiu
+    private fun hookRoom(r: OnlineRoom) {
+        r.onPlayers = { runOnUiThread { if (screen.childCount > 0 && screen.getChildAt(0).tag == "sala") showLobby() } }
+        r.onEstado = { st ->
+            runOnUiThread {
+                if (room === r && st == "jogo" && !inMatch) startOnline(r)
+            }
+        }
+        r.onGone = {
+            runOnUiThread {
+                if (room !== r) return@runOnUiThread
+                room = null
+                toast("A sala fechou (quem criou saiu)")
+                if (inMatch) { inMatch = false; stopEngineMatch() }
+                showHome()
+            }
+        }
+        r.onLeft = { id -> gl { NativeBridge.nativeNetEvent(JSONObject().put("t", "saiu").put("id", id).toString().toByteArray()) } }
+    }
+
+    private fun leaveRoom() {
+        val r = room ?: return
+        room = null
+        Thread { try { r.leave() } catch (_: Exception) {} }.start()
+    }
+
+    private fun showLobby() {
+        val r = room ?: run { showHome(); return }
+        menuSpin = true
+        val players = r.snapshot()
+        val me = players.firstOrNull { it.first == r.fb.uid }?.second
+        val myTeam = me?.optInt("time", 0) ?: prefs.getInt("lado", 0)
+        val root = vbox().apply { setBackgroundColor(bg); setPadding(dp(22), dp(12), dp(22), dp(12)) }
+        root.addView(hbox().apply {
+            addView(button("‹", 0x14FFFFFF, textMain, 22f) { confirmLeave() }, lp(dp(44), dp(44)))
+            addView(vbox().apply {
+                setPadding(dp(12), 0, 0, 0)
+                addView(label("CÓDIGO DA SALA", 11f, textDim, true).apply { letterSpacing = 0.12f })
+                addView(title(r.code, 40f, gold).apply { letterSpacing = 0.2f })
+            })
+            addView(label("  Mande o código para os amigos · ${players.size}/${OnlineRoom.MAX} na sala", 12f, textDim), lp(0, -2, 1f))
+        })
+        val cols = hbox().apply { setPadding(0, dp(8), 0, dp(8)) }
+        for (team in 0..1) {
+            val col = vbox().apply {
+                background = round(if (team == 0) 0xFF0F1D36.toInt() else 0xFF2A1C08.toInt(), 14f)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+            }
+            col.addView(label(if (team == 0) "POLÍCIA" else "BANDIDOS", 12f, if (team == 0) blueLight else yellowLight, true))
+            val mine = players.filter { it.second.optInt("time") == team }
+            for ((id, p) in mine) {
+                val isMe = id == r.fb.uid
+                col.addView(label((if (isMe) "▶ " else "") + p.optString("nome", "Jogador") + (if (isMe) "  (você)" else ""),
+                                  14f, textMain, isMe).apply { setPadding(0, dp(4), 0, dp(4)) })
+            }
+            val bots = 5 - mine.size
+            if (bots > 0) col.addView(label("+ $bots robô(s)", 12f, textDim))
+            cols.addView(col, lp(0, -1, 1f).apply { if (team == 0) rightMargin = dp(12) })
+        }
+        root.addView(cols, lp(-1, 0, 1f))
+        root.addView(hbox().apply {
+            val other = 1 - myTeam
+            addView(button(if (other == 0) "Ir para a Polícia" else "Ir para os Bandidos", 0x14FFFFFF, textMain, 13f) {
+                prefs.edit().putInt("lado", other).apply()
+                Thread { r.updateMe(myEntry(other)) }.start()
+            }, lp(-2, dp(46)).apply { rightMargin = dp(8) })
+            addView(button("Skin e armas", 0x14FFFFFF, textMain, 13f) {
+                showSkins(myTeam) { _, _, _ -> Thread { r.updateMe(myEntry(myTeam)) }.start(); showLobby() }
+            }, lp(-2, dp(46)))
+            addView(View(context), lp(0, 1, 1f))
+            if (r.isHost) addView(button("INICIAR PARTIDA  ▶", gold, 0xFF111827.toInt(), 16f) {
+                Thread { if (!r.start()) runOnUiThread { toast("Não consegui iniciar (sem conexão?)") } }.start()
+            }.apply { typeface = condensed }, lp(-2, dp(50)))
+            else addView(label("Esperando quem criou a sala iniciar…", 13f, textDim))
+        })
+        show(root, "sala")
+    }
+
+    private fun confirmLeave() {
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Sair da sala?")
+            .setMessage(if (room?.isHost == true) "Você criou a sala: ela fecha para todos." else "Você sai da sala.")
+            .setPositiveButton("Sair") { _, _ -> leaveRoom(); showHome() }
+            .setNegativeButton("Ficar", null).show()
+    }
+
+    // A partida começou na sala: entra com o lado, a skin e as armas que estão na sala
+    private fun startOnline(r: OnlineRoom) {
+        val me = r.snapshot().firstOrNull { it.first == r.fb.uid }?.second ?: myEntry(prefs.getInt("lado", 0))
+        val team = me.optInt("time", 0)
+        val skin = skins.firstOrNull { it.team == team && it.index == me.optInt("skin") } ?: skins.first { it.team == team }
+        val gun = guns.firstOrNull { it.key == me.optString("arma") } ?: guns.first { it.team == team }
+        val second = guns.firstOrNull { it.key == me.optString("arma2") && it != gun }
+        startMatch(team, skin, gun, second, r)
     }
 
     // ---------------- HUD em primeira pessoa ----------------

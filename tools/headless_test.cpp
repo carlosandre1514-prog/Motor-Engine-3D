@@ -1459,6 +1459,76 @@ int main(int argc, char** argv) {
         engine_set_play(e, 0);
         engine_set_first_person(e, 0);
     };
+    // Partida online simulada: eu (quem criou a sala), um aliado e um adversário "de outro celular"
+    auto online = [&]() {
+        using nlohmann::json;
+        std::printf("[34] online (rede simulada)\n");
+        teamProject();
+        json roster = json::array({{{"id", "eu"}, {"nome", "Eu"}, {"time", 0}, {"skin", 1}, {"arma", "m4a1"}},
+                                   {{"id", "amigo"}, {"nome", "Amigo"}, {"time", 1}, {"skin", 2}, {"arma", "ak74"}},
+                                   {{"id", "aliado"}, {"nome", "Aliado"}, {"time", 0}, {"skin", 3}, {"arma", "m4colt"}}});
+        engine_net_roster(e, 1, "eu", roster.dump().c_str());
+        engine_team_loadout(e, 0, 1, "m4a1", "tt33");
+        engine_set_first_person(e, 1);
+        engine_set_play(e, 1);
+        engine_set_camera(e, 0.f, 0.f, 0.f, 0.f, 0.f, 3.f);
+        frames(e, 20);
+        auto hud = [&]() { return json::parse(std::string(engine_hud_json(e))); };
+        json h = hud();
+        int n = 0; bool amigo = false;
+        for (auto& p : h["jogadores"]) { ++n; if (p["nome"] == "Amigo") amigo = true; }
+        std::printf("  lutadores: %d (Amigo na partida: %s)\n", n, amigo ? "sim" : "não");
+        if (n != 10 || !amigo) { std::printf("  [ERRO] escalação online\n"); ++g_fail; }
+        json mine = json::parse(std::string(engine_net_collect(e)));
+        std::printf("  meus lutadores (eu + robôs): %zu\n", mine.size());
+        if (mine.size() != 8 || !mine.contains("eu")) { std::printf("  [ERRO] estado enviado\n"); ++g_fail; }
+        // o amigo aparece 9 m na minha frente
+        float p[3], r[3], sc[3];
+        engine_get_transform(e, engine_player_id(e), p, r, sc);
+        json st = {{"amigo", {{"p", {p[0], p[1], p[2] - 9.f}}, {"y", 0.0}, {"pi", 0.0}, {"c", false}, {"a", true}, {"w", "ak74"}, {"v", true}, {"n", 0}}}};
+        engine_net_apply(e, st.dump().c_str());
+        frames(e, 20);
+        st["amigo"]["n"] = 3;  // ele atirou 3 vezes
+        engine_net_apply(e, st.dump().c_str());
+        frames(e, 3);
+        save(out, "34_amigo.png");
+        engine_net_events(e);  // limpa
+        engine_player_aim(e, 1);
+        frames(e, 25);
+        for (int k = 0; k < 20; ++k) { engine_player_fire(e); frames(e, 1); }
+        json ev = json::parse(std::string(engine_net_events(e)));
+        int danos = 0;
+        for (auto& x : ev) if (x["t"] == "dano" && x["alvo"] == "amigo") ++danos;
+        std::printf("  tiros que acertaram o amigo (eventos de dano): %d\n", danos);
+        if (danos == 0) { std::printf("  [ERRO] tiro no jogador remoto não virou evento\n"); ++g_fail; }
+        // o amigo me acerta: caio e aviso todo mundo
+        engine_net_event(e, json{{"t", "dano"}, {"alvo", "eu"}, {"dano", 150}, {"de", "amigo"}, {"arma", "AK-74"}}.dump().c_str());
+        frames(e, 2);
+        ev = json::parse(std::string(engine_net_events(e)));
+        bool abate = false;
+        for (auto& x : ev) if (x["t"] == "abate" && x["v"] == "eu" && x["a"] == "amigo") abate = true;
+        h = hud();
+        std::printf("  depois do tiro do amigo: morto=%d placar %s, aviso de abate %s\n", int(h.value("morto", false)), h["placar"].dump().c_str(), abate ? "sim" : "não");
+        if (!abate || h["placar"][1] != 1) { std::printf("  [ERRO] abate do jogador local\n"); ++g_fail; }
+        // eu abato o amigo (aviso que chegou do celular dele)
+        engine_net_event(e, json{{"t", "abate"}, {"v", "amigo"}, {"a", "eu"}, {"arma", "M4A1"}}.dump().c_str());
+        frames(e, 2);
+        h = hud();
+        std::printf("  depois de abater o amigo: placar %s, meus abates %d\n", h["placar"].dump().c_str(), int(h["abates"]));
+        if (h["placar"][0] != 1 || h["abates"] != 1) { std::printf("  [ERRO] abate recebido\n"); ++g_fail; }
+        st["amigo"]["v"] = true; st["amigo"]["p"] = {p[0] + 3.f, p[1], p[2] - 12.f};
+        engine_net_apply(e, st.dump().c_str());
+        frames(e, 30);
+        engine_net_event(e, json{{"t", "granada"}, {"de", "amigo"}, {"p", {p[0], p[1] + 1.5f, p[2] - 6.f}}, {"v", {0, 3, 4}}}.dump().c_str());
+        frames(e, 200);
+        engine_net_event(e, json{{"t", "saiu"}, {"id", "amigo"}}.dump().c_str());
+        frames(e, 10);
+        save(out, "34_depois.png");
+        engine_set_play(e, 0);
+        engine_set_first_person(e, 0);
+        engine_net_roster(e, 0, "", "");
+    };
+    if (std::getenv("SO_ONLINE")) { online(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_JOGO")) { jogo(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_TIMES")) { times(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }
     if (std::getenv("SO_FAVELA")) { favela(); engine_destroy(e); std::printf(g_fail ? "FALHOU\n" : "OK\n"); return g_fail ? 1 : 0; }

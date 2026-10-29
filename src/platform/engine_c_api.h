@@ -144,6 +144,12 @@ int     engine_player_grenade(Engine*);                         // joga granada 
 void    engine_player_reload(Engine*);
 const char* engine_hud_json(Engine*);                           // estado da partida para o HUD
 void    engine_look(Engine*, float dx, float dy);               // girar o olhar (pixels arrastados)
+// ---- Online (sala do Firebase): o app leva e traz os dados; o motor só sabe quem é quem
+void    engine_net_roster(Engine*, int host, const char* local_id, const char* roster_json);  // antes do Play ("" = offline)
+const char* engine_net_collect(Engine*);                        // estado dos meus lutadores (JSON)
+void    engine_net_apply(Engine*, const char* states_json);     // estado dos lutadores dos outros
+const char* engine_net_events(Engine*);                         // eventos a enviar (array JSON)
+void    engine_net_event(Engine*, const char* event_json);      // evento recebido
 void    engine_set_editor_overlay(Engine*, int on);             // borda do mapa, seleção e ícones do editor (jogo: 0)
 
 // Câmera do editor: alvo, ângulos (radianos) e distância

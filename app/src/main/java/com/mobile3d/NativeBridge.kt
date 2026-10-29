@@ -114,6 +114,12 @@ object NativeBridge {
     @JvmStatic external fun nativeHudJson(): ByteArray
     @JvmStatic external fun nativeLook(dx: Float, dy: Float)
     @JvmStatic external fun nativeSetEditorOverlay(on: Boolean)
+    // online: o app leva e traz os dados da sala (textos JSON em UTF-8)
+    @JvmStatic external fun nativeNetRoster(host: Boolean, id: ByteArray, roster: ByteArray)
+    @JvmStatic external fun nativeNetCollect(): ByteArray
+    @JvmStatic external fun nativeNetApply(states: ByteArray)
+    @JvmStatic external fun nativeNetEvents(): ByteArray
+    @JvmStatic external fun nativeNetEvent(ev: ByteArray)
     @JvmStatic external fun nativeSetCamera(tx: Float, ty: Float, tz: Float, yaw: Float, pitch: Float, dist: Float)
     @JvmStatic external fun nativeInteractLabel(): ByteArray
     @JvmStatic external fun nativeInteract(): Boolean

@@ -722,6 +722,11 @@ int engine_player_swap(Engine* e) { return e && eng::teamSwapWeapon(e) ? 1 : 0; 
 int engine_player_grenade(Engine* e) { return e && eng::teamThrowGrenade(e) ? 1 : 0; }
 void engine_player_reload(Engine* e) { if (e) e->reloadRequest = true; }
 void engine_set_editor_overlay(Engine* e, int on) { if (e) e->editorOverlay = on != 0; }
+void engine_net_roster(Engine* e, int host, const char* id, const char* roster) { if (e) eng::netRoster(e, host != 0, id ? id : "", roster ? roster : ""); }
+const char* engine_net_collect(Engine* e) { if (!e) return "{}"; e->toolResult = eng::netCollect(e); return e->toolResult.c_str(); }
+void engine_net_apply(Engine* e, const char* s) { if (e && s) eng::netApply(e, s); }
+const char* engine_net_events(Engine* e) { if (!e) return "[]"; e->toolResult = eng::netTakeEvents(e); return e->toolResult.c_str(); }
+void engine_net_event(Engine* e, const char* s) { if (e && s) eng::netEvent(e, s); }
 void engine_look(Engine* e, float dx, float dy) {
     if (!e) return;
     eng::EditorCamera& c = e->editorCam;

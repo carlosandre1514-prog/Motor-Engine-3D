@@ -264,6 +264,20 @@ JNI_FN(void, nativeTeamGunSkin)(JNIEnv* env, jclass, jstring gun, jstring skin) 
 JNI_FN(jboolean, nativePlayerSwap)(JNIEnv*, jclass) { return g_engine && engine_player_swap(g_engine); }
 JNI_FN(jboolean, nativePlayerGrenade)(JNIEnv*, jclass) { return g_engine && engine_player_grenade(g_engine); }
 JNI_FN(void, nativePlayerReload)(JNIEnv*, jclass) { if (g_engine) engine_player_reload(g_engine); }
+static std::string jstr(JNIEnv* env, jbyteArray a) {
+    if (!a) return {};
+    jsize n = env->GetArrayLength(a);
+    std::string s(size_t(n), '\0');
+    env->GetByteArrayRegion(a, 0, n, reinterpret_cast<jbyte*>(s.data()));
+    return s;
+}
+JNI_FN(void, nativeNetRoster)(JNIEnv* env, jclass, jboolean host, jbyteArray id, jbyteArray roster) {
+    if (g_engine) engine_net_roster(g_engine, host ? 1 : 0, jstr(env, id).c_str(), jstr(env, roster).c_str());
+}
+JNI_FN(jbyteArray, nativeNetCollect)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_net_collect(g_engine) : "{}"); }
+JNI_FN(void, nativeNetApply)(JNIEnv* env, jclass, jbyteArray s) { if (g_engine) engine_net_apply(g_engine, jstr(env, s).c_str()); }
+JNI_FN(jbyteArray, nativeNetEvents)(JNIEnv* env, jclass) { return toBytes(env, g_engine ? engine_net_events(g_engine) : "[]"); }
+JNI_FN(void, nativeNetEvent)(JNIEnv* env, jclass, jbyteArray s) { if (g_engine) engine_net_event(g_engine, jstr(env, s).c_str()); }
 JNI_FN(void, nativeSetEditorOverlay)(JNIEnv*, jclass, jboolean on) { if (g_engine) engine_set_editor_overlay(g_engine, on ? 1 : 0); }
 JNI_FN(void, nativeLook)(JNIEnv*, jclass, jfloat dx, jfloat dy) { if (g_engine) engine_look(g_engine, dx, dy); }
 JNI_FN(void, nativeSetCamera)(JNIEnv*, jclass, jfloat tx, jfloat ty, jfloat tz, jfloat yaw, jfloat pitch, jfloat dist) {
