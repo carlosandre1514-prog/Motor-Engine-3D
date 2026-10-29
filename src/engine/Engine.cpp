@@ -1063,7 +1063,7 @@ static void fireGun(Engine* e, CharacterInfo& c, GameObject& root, btRigidBody* 
     }
     e->fireCooldown = c.gunInterval;
     c.aimTimer = 1.5f;
-    float spread = c.gunSpread * (c.aimHold ? 0.25f : 1.f);
+    float spread = c.gunSpread * (c.aimHold ? 0.1f : 1.f);  // mirando: a bala vai praticamente na bolinha da mira
     if (c.weaponKind == WK_Sniper && !c.aimHold) spread = 0.06f;
     if (c.gunPellets > 1) spread = c.gunSpread;
     glm::vec3 muzzle = from + aim;

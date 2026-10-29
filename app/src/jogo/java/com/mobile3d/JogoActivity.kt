@@ -834,7 +834,9 @@ class JogoActivity : Activity() {
             val ads = j.optBoolean("mirando")
             val scoped = ads && j.optBoolean("luneta")
             scope.visibility = if (scoped) View.VISIBLE else View.GONE
-            crosshair.visibility = if (ads) View.INVISIBLE else View.VISIBLE
+            // mirando: a cruz vira uma bolinha no ponto exato do tiro (na luneta, a própria luneta tem o ponto)
+            crosshair.visibility = if (scoped) View.INVISIBLE else View.VISIBLE
+            crosshair.aiming = ads
             crosshair.hit = j.optBoolean("acerto")
             crosshair.head = j.optBoolean("cabeca")
             crosshair.invalidate()
@@ -946,10 +948,12 @@ class JogoActivity : Activity() {
         synchronized(lookLock) { lookDx += dx * k; lookDy += dy * k }
     }
 
-    // Mira no centro; vermelha quando acerta (cabeça: maior)
+    // Mira no centro: cruz sem mirar; mirando, uma bolinha onde a bala vai. Marca de acerto (cabeça: maior e vermelha)
     inner class Crosshair : View(this) {
         var hit = false
         var head = false
+        var aiming = false
+        private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = dpf(2f); style = Paint.Style.STROKE }
         override fun onDraw(c: Canvas) {
             val cx = width / 2f
@@ -958,9 +962,14 @@ class JogoActivity : Activity() {
             val l = dpf(9f)
             p.color = Color.WHITE
             p.setShadowLayer(2f, 0f, 0f, Color.BLACK)
-            c.drawLine(cx, cy - g - l, cx, cy - g, p); c.drawLine(cx, cy + g, cx, cy + g + l, p)
-            c.drawLine(cx - g - l, cy, cx - g, cy, p); c.drawLine(cx + g, cy, cx + g + l, cy, p)
-            c.drawCircle(cx, cy, dpf(1.2f), p)
+            if (aiming) {
+                dot.color = 0xFF000000.toInt(); c.drawCircle(cx, cy, dpf(3.6f), dot)   // contorno escuro: aparece em céu e parede clara
+                dot.color = 0xFFFF2A1F.toInt(); c.drawCircle(cx, cy, dpf(2.6f), dot)
+            } else {
+                c.drawLine(cx, cy - g - l, cx, cy - g, p); c.drawLine(cx, cy + g, cx, cy + g + l, p)
+                c.drawLine(cx - g - l, cy, cx - g, cy, p); c.drawLine(cx + g, cy, cx + g + l, cy, p)
+                c.drawCircle(cx, cy, dpf(1.2f), p)
+            }
             if (hit) {
                 p.color = if (head) 0xFFFF3B30.toInt() else 0xFFFFFFFF.toInt()
                 val a = dpf(if (head) 13f else 10f)
