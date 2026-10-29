@@ -605,7 +605,7 @@ int createWeapon(Engine* e, int kind, int ch, const WeaponLook& look) {
         if (ext.x > ext.z) R = glm::rotate(glm::mat4(1.f), -1.5707963f, glm::vec3(0, 1, 0));
         if (look.flip) R = glm::rotate(glm::mat4(1.f), 3.14159265f, glm::vec3(0, 1, 0)) * R;
         AABB rb = transformAABB(b, R);
-        static const float kLen[WK_Count] = {0.21f, 0.95f, 1.f, 1.15f, 0.3f, 0.85f};
+        static const float kLen[WK_Count] = {0.25f, 0.95f, 1.f, 1.15f, 0.3f, 0.85f};  // pistola um pouco maior: na mão do personagem a TT-33 ficava pequena
         static const float kGrip[WK_Count] = {0.25f, 0.35f, 0.35f, 0.35f, 0.12f, 0.12f};  // mão a partir de trás
         float s = kLen[kind] * std::clamp(look.size, 0.2f, 5.f) / std::max(1e-4f, rb.max.z - rb.min.z);
         rb.min *= s; rb.max *= s;
