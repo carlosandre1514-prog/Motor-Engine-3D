@@ -709,10 +709,14 @@ class JogoActivity : Activity() {
 
         init {
             // fundo: arrastar em qualquer lugar livre gira o olhar
-            root.addView(LookArea(), FrameLayout.LayoutParams(-1, -1))
+            // tela dividida: metade esquerda anda (o analógico aparece onde o dedo encostar), metade direita gira a câmera
+            root.addView(hbox().apply {
+                addView(MoveArea(), lp(0, -1, 1f))
+                addView(LookArea(), lp(0, -1, 1f))
+            }, FrameLayout.LayoutParams(-1, -1))
             root.addView(scope, FrameLayout.LayoutParams(-1, -1))
             root.addView(hurt, FrameLayout.LayoutParams(-1, -1))
-            root.addView(crosshair, FrameLayout.LayoutParams(dp(60), dp(60), Gravity.CENTER))
+            root.addView(crosshair, FrameLayout.LayoutParams(dp(80), dp(80), Gravity.CENTER))
 
             // canto superior esquerdo: vida, abates, minimapa
             val tl = vbox()
@@ -764,8 +768,6 @@ class JogoActivity : Activity() {
             root.addView(wr, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(10) })
 
             // joystick (corre sozinho com o dedo no máximo para a frente) e o tiro do lado esquerdo
-            val stick = JoystickView(this@JogoActivity) { x, y -> gl { NativeBridge.nativePlayerInput(x, y, y > 0.93f) } }
-            root.addView(stick, FrameLayout.LayoutParams(dp(130), dp(130), Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(26); bottomMargin = dp(16) })
             root.addView(FireButton(dp(56)), FrameLayout.LayoutParams(dp(56), dp(56), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(46) })
 
             // lado direito: atirar, mirar, pular, agachar, granada e recarregar
@@ -876,7 +878,56 @@ class JogoActivity : Activity() {
             minimap.invalidate()
         }
 
-        // Fundo do HUD: arrastar gira o olhar (cada dedo separado)
+        // Metade esquerda: analógico flutuante. Onde o dedo encosta vira o centro; arrastar anda (até o fim para a
+        // frente: corre). Parado, o analógico fica desenhado clarinho no canto para mostrar que ali se anda.
+        inner class MoveArea : View(this@JogoActivity) {
+            private var id = -1
+            private var ox = 0f
+            private var oy = 0f
+            private var kx = 0f
+            private var ky = 0f
+            private val base = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x2EFFFFFF }
+            private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x73FFFFFF; style = Paint.Style.STROKE; strokeWidth = dpf(2f) }
+            private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99FFFFFF.toInt() }
+            private val r get() = dpf(58f)
+            private fun send(x: Float, y: Float) = gl { NativeBridge.nativePlayerInput(x, y, y > 0.93f) }
+            override fun onDraw(c: Canvas) {
+                val cx = if (id >= 0) ox else dpf(26f) + r
+                val cy = if (id >= 0) oy else height - dpf(20f) - r
+                base.alpha = if (id >= 0) 0x2E else 0x18
+                c.drawCircle(cx, cy, r, base)
+                c.drawCircle(cx, cy, r, ring)
+                c.drawCircle(cx + kx * r, cy + ky * r, r * 0.4f, knob)
+            }
+            override fun onTouchEvent(e: MotionEvent): Boolean {
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> if (id < 0) {
+                        val i = e.actionIndex
+                        id = e.getPointerId(i); ox = e.getX(i); oy = e.getY(i); kx = 0f; ky = 0f
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val i = e.findPointerIndex(id)
+                        if (i >= 0) {
+                            var dx = (e.getX(i) - ox) / r
+                            var dy = (e.getY(i) - oy) / r
+                            val len = kotlin.math.sqrt(dx * dx + dy * dy)
+                            if (len > 1f) {  // dedo passou da borda: o centro acompanha (não precisa voltar)
+                                ox += (dx - dx / len) * r; oy += (dy - dy / len) * r
+                                dx /= len; dy /= len
+                            }
+                            kx = dx; ky = dy
+                            send(dx, -dy)
+                        }
+                    }
+                    MotionEvent.ACTION_POINTER_UP -> if (e.getPointerId(e.actionIndex) == id) { id = -1; kx = 0f; ky = 0f; send(0f, 0f) }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { id = -1; kx = 0f; ky = 0f; send(0f, 0f) }
+                }
+                invalidate()
+                return true
+            }
+        }
+
+        // Metade direita: arrastar gira o olhar (cada dedo separado)
         inner class LookArea : View(this@JogoActivity) {
             private val last = HashMap<Int, Pair<Float, Float>>()
             override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -958,17 +1009,25 @@ class JogoActivity : Activity() {
         override fun onDraw(c: Canvas) {
             val cx = width / 2f
             val cy = height / 2f
-            val g = dpf(5f)
-            val l = dpf(9f)
+            val g = dpf(7f)
+            val l = dpf(11f)
             p.color = Color.WHITE
             p.setShadowLayer(2f, 0f, 0f, Color.BLACK)
             if (aiming) {
                 dot.color = 0xFF000000.toInt(); c.drawCircle(cx, cy, dpf(3.6f), dot)   // contorno escuro: aparece em céu e parede clara
                 dot.color = 0xFFFF2A1F.toInt(); c.drawCircle(cx, cy, dpf(2.6f), dot)
             } else {
-                c.drawLine(cx, cy - g - l, cx, cy - g, p); c.drawLine(cx, cy + g, cx, cy + g + l, p)
-                c.drawLine(cx - g - l, cy, cx - g, cy, p); c.drawLine(cx + g, cy, cx + g + l, cy, p)
-                c.drawCircle(cx, cy, dpf(1.2f), p)
+                // cruz bem visível: traços brancos com contorno escuro e um ponto no meio (é onde o tiro vai)
+                for (pass in 0..1) {
+                    p.color = if (pass == 0) 0xB3000000.toInt() else Color.WHITE
+                    p.strokeWidth = dpf(if (pass == 0) 4.5f else 2.5f)
+                    p.strokeCap = Paint.Cap.ROUND
+                    c.drawLine(cx, cy - g - l, cx, cy - g, p); c.drawLine(cx, cy + g, cx, cy + g + l, p)
+                    c.drawLine(cx - g - l, cy, cx - g, cy, p); c.drawLine(cx + g, cy, cx + g + l, cy, p)
+                }
+                dot.color = 0xB3000000.toInt(); c.drawCircle(cx, cy, dpf(2.6f), dot)
+                dot.color = Color.WHITE; c.drawCircle(cx, cy, dpf(1.6f), dot)
+                p.strokeWidth = dpf(2f)
             }
             if (hit) {
                 p.color = if (head) 0xFFFF3B30.toInt() else 0xFFFFFFFF.toInt()
